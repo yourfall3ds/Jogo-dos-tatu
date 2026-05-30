@@ -64,8 +64,24 @@ export class BuildMode {
     // ── Teclas (borda e held) ──────────────────────────────────────
     this._keys = {};
     this._prev = {};
-    window.addEventListener('keydown', e => { this._keys[e.code] = true;  });
-    window.addEventListener('keyup',   e => { this._keys[e.code] = false; });
+
+    const _isTyping = () => {
+      const tag = document.activeElement?.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA';
+    };
+    window.addEventListener('keydown', e => {
+      if (_isTyping()) return;
+      this._keys[e.code] = true;
+    });
+    window.addEventListener('keyup', e => {
+      if (_isTyping()) return;
+      this._keys[e.code] = false;
+    });
+    // Limpa teclas presas quando usuário foca num campo de texto
+    document.addEventListener('focusin', e => {
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') this._keys = {};
+    });
 
     // ── Init ───────────────────────────────────────────────────────
     this._catalog = [];

@@ -295,6 +295,8 @@ async function init() {
 
   // ── Tecla J: fallback para abrir a Máquina de Criação de qualquer lugar ──
   window.addEventListener('keydown', e => {
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.code === 'KeyJ' && $('start-screen').style.display === 'none' && !e.repeat) {
       meshyPanel.toggle();
     }
