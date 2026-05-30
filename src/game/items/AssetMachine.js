@@ -65,6 +65,9 @@ export class AssetMachine {
     this._preview3DRoot   = null;
     this._preview3DMeshes = null;
 
+    // true = holograma fica visível mesmo sem geração ativa (tem imagem/3D)
+    this._hasContent = false;
+
     this._wasE     = false;
     this._promptEl = null;
 
@@ -201,9 +204,11 @@ export class AssetMachine {
 
   startGenerating() {
     this._generating = true;
+    this._hasContent = false;   // será setado quando imagem/3D chegar
     this._holoFadeIn = 0;
     this._imgPlane.setEnabled(false);
     this._imgBg.material.alpha = 0;
+    this._disposePreview3D();
     this._holoColor('blue');
     this._holoPs.start();
   }
@@ -241,6 +246,7 @@ export class AssetMachine {
     // Só mostra APÓS textura estar pronta — evita checkerboard temporário
     this._imgBg.material.alpha = 0.82;
     this._imgPlane.setEnabled(true);
+    this._hasContent = true;    // mantém holograma visível mesmo sem _generating
     this._glow.addIncludedOnlyMesh(this._imgPlane);
   }
 
@@ -304,12 +310,50 @@ export class AssetMachine {
 
       this._preview3DRoot   = root;
       this._preview3DMeshes = result.meshes;
+      this._hasContent      = true;
       console.log('[AssetMachine] 🎲 Preview 3D carregado (scale:', scale.toFixed(3), ')');
     } catch (e) {
       console.warn('[AssetMachine] Preview 3D falhou:', e.message);
       // Se falhar, restaura a imagem 2D
       this._imgPlane.setEnabled(true);
       this._imgBg.material.alpha = 0.82;
+    }
+  }
+
+  /** Restaura o último estado da biblioteca ao religar/dar F5 */
+  async _restoreLastSession() {
+    try {
+      const sessions = await this.getSessions();
+      if (!sessions.length) return;
+      const last = sessions[0];   // mais recente primeiro
+      if (!last.image && !last.glb3d && !last.glbTextured) return;
+
+      console.log('[AssetMachine] 🔄 Restaurando sessão:', last.id);
+
+      // Ativa o holograma imediatamente (sem partículas — geração já terminou)
+      this._hasContent = true;
+      this._holoFadeIn = 1;
+      this._holoColor(last.glbTextured ? 'green' : (last.glb3d ? 'green' : 'green'));
+
+      // Restaura imagem 2D primeiro (rápido)
+      if (last.image) {
+        await this.showImage(last.image).catch(() => {});
+      }
+
+      // Tenta restaurar o melhor GLB disponível
+      const glbUrl = last.glbTextured || last.glbRemesh || last.glb3d;
+      if (glbUrl) {
+        await this.show3D(glbUrl).catch(() => {
+          // Se 3D falhar (URL expirada etc.), mantém só a imagem
+          console.warn('[AssetMachine] Preview 3D expirou, mostrando só imagem');
+          if (last.image) {
+            this._imgPlane.setEnabled(true);
+            this._imgBg.material.alpha = 0.82;
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('[AssetMachine] Falha ao restaurar sessão:', e.message);
     }
   }
 
@@ -517,6 +561,8 @@ export class AssetMachine {
       this._phase     = 'ready';
       this._t         = 0;
       this._idleTimer = 0;
+      // Restaura última sessão da biblioteca (imagem/3D gerados antes do F5)
+      this._restoreLastSession();
     }
   }
 
@@ -554,8 +600,8 @@ export class AssetMachine {
 
   // ── Hologram update (animação dos discos, luz, fade) ──────────────
   _updateHologram(dt) {
-    // Fade in quando _generating liga
-    const targetAlpha = this._generating ? 1 : 0;
+    // Holograma ativo se gerando OU se tem conteúdo (imagem/3D a exibir)
+    const targetAlpha = (this._generating || this._hasContent) ? 1 : 0;
     this._holoFadeIn += (targetAlpha - this._holoFadeIn) * Math.min(1, dt * 4);
     const a = this._holoFadeIn;
 
