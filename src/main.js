@@ -27,6 +27,7 @@ import { EnemyManager }         from './game/enemies/EnemyManager.js';
 import { CatalogUI }            from './game/ui/CatalogUI.js';
 import { BuildMode }            from './game/build/BuildMode.js';
 import { MeshyPanel }           from './game/meshy/MeshyPanel.js';
+import { AssetMachine }         from './game/items/AssetMachine.js';
 import { PlayerStats }          from './game/stats/PlayerStats.js';
 import { SkillSystem }          from './game/skills/SkillSystem.js';
 import { Inventory }            from './game/items/Inventory.js';
@@ -182,6 +183,13 @@ async function init() {
   const meshyPanel = new MeshyPanel(scene, buildMode);
   window._meshyPanel = meshyPanel;
 
+  // ── Máquina de Criação como item de mapa (pressione E perto dela) ─
+  const assetMachine = new AssetMachine(
+    scene, meshyPanel, player, input,
+    new BABYLON.Vector3(8, 0, 8),   // posição no mapa — ajuste conforme necessário
+  );
+  window._assetMachine = assetMachine;
+
   // ── Sistemas RPG: Stats + Skills + Inventário ────────────────────
   const stats = new PlayerStats();
   try { stats.load(JSON.parse(localStorage.getItem('digifps_stats') || 'null')); } catch (_) {}
@@ -264,6 +272,8 @@ async function init() {
       // Catálogo aberto: cursor livre, mas inimigos/cena continuam vivos para teste
       level.update(dt);
     }
+    // AssetMachine: animação de deploy + interação E (sempre ativo)
+    assetMachine.update(dt);
     moveListUI.update(dt);
     catalogUI.update();
     buildMode.update();
@@ -280,8 +290,7 @@ async function init() {
   window._gameLoader = loader;
   window._gameLevel  = level;
 
-  // ── Tecla J: abre/fecha a Máquina de Criação (Meshy AI) ──────────
-  //  (atalho direto até o GLB da máquina existir no mapa p/ interação E)
+  // ── Tecla J: fallback para abrir a Máquina de Criação de qualquer lugar ──
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyJ' && $('start-screen').style.display === 'none' && !e.repeat) {
       meshyPanel.toggle();
