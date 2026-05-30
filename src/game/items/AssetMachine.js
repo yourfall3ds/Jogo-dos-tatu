@@ -173,6 +173,7 @@ export class AssetMachine {
     this._imgPlane.position.set(p.x, p.y + 3.1, p.z);
     this._imgPlane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y;
     this._imgPlane.isPickable    = false;
+    this._imgPlane.setEnabled(false);   // oculto até showImage() ser chamado
     // material definido em showImage()
   }
 

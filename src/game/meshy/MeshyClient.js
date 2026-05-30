@@ -113,7 +113,7 @@ export class MeshyClient {
     const create = await this._req('POST', '/openapi/v1/text-to-image', {
       prompt: full,
       art_style: 'realistic',
-      n: 1,
+      ai_model: 'meshy-4',
     });
     const id = create.result || create.id;
     const done = await this._poll(`/openapi/v1/text-to-image/${id}`, onProgress);
