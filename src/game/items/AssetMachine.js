@@ -104,11 +104,13 @@ export class AssetMachine {
   _buildHologram() {
     const p = this.position;
 
-    // Feixe vertical de luz
+    // Feixe vertical de luz (nasce do centro da plataforma em Y=0)
+    // BJS posiciona cilindros pelo centro — offset de height/2 para alinhar base
+    const BEAM_H = 5.5;
     this._beam = BABYLON.MeshBuilder.CreateCylinder('mac_beam', {
-      height: 5.0, diameterTop: 0.22, diameterBottom: 0.22, tessellation: 10,
+      height: BEAM_H, diameterTop: 0.18, diameterBottom: 0.18, tessellation: 10,
     }, this.scene);
-    this._beam.position.set(p.x, p.y + 2.6, p.z);
+    this._beam.position.set(p.x, p.y + BEAM_H / 2, p.z);
     this._beam.isPickable = false;
     const bm = new BABYLON.StandardMaterial('mac_beamMat', this.scene);
     bm.emissiveColor   = new BABYLON.Color3(0.25, 0.65, 1.0);
@@ -118,9 +120,9 @@ export class AssetMachine {
     this._beam.material = bm;
     this._glow.addIncludedOnlyMesh(this._beam);
 
-    // Disco superior (rotaciona)
+    // Disco superior (rotaciona) — no topo do feixe
     this._disc = BABYLON.MeshBuilder.CreateDisc('mac_disc', { radius: 1.1, tessellation: 40 }, this.scene);
-    this._disc.position.set(p.x, p.y + 5.1, p.z);
+    this._disc.position.set(p.x, p.y + BEAM_H, p.z);
     this._disc.rotation.x = Math.PI / 2;
     this._disc.isPickable  = false;
     const dm = new BABYLON.StandardMaterial('mac_discMat', this.scene);
@@ -133,7 +135,7 @@ export class AssetMachine {
 
     // Hexágono interno (counter-rotaciona)
     this._disc2 = BABYLON.MeshBuilder.CreateDisc('mac_disc2', { radius: 0.55, tessellation: 6 }, this.scene);
-    this._disc2.position.set(p.x, p.y + 5.2, p.z);
+    this._disc2.position.set(p.x, p.y + BEAM_H + 0.1, p.z);
     this._disc2.rotation.x = Math.PI / 2;
     this._disc2.isPickable  = false;
     const dm2 = new BABYLON.StandardMaterial('mac_disc2Mat', this.scene);
@@ -149,7 +151,7 @@ export class AssetMachine {
 
     // Partículas subindo pelo feixe
     this._holoPs = new BABYLON.ParticleSystem('mac_holoPs', 120, this.scene);
-    this._holoPs.emitter = new BABYLON.Vector3(p.x, p.y + 0.4, p.z);
+    this._holoPs.emitter = new BABYLON.Vector3(p.x, p.y + 0.2, p.z);  // base da plataforma
     this._holoPs.createCylinderEmitter(0.12, 0.4, 0.1, 0);
     this._holoPs.minEmitPower = 0.4;  this._holoPs.maxEmitPower = 1.8;
     this._holoPs.minLifeTime  = 1.6;  this._holoPs.maxLifeTime  = 3.2;
@@ -165,8 +167,8 @@ export class AssetMachine {
 
     // Plano da imagem (billboard — sempre de frente pro player)
     this._imgBg = BABYLON.MeshBuilder.CreatePlane('mac_imgBg', { width: 2.0, height: 2.0 }, this.scene);
-    this._imgBg.position.set(p.x, p.y + 3.1, p.z);
-    this._imgBg.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y;
+    this._imgBg.position.set(p.x, p.y + BEAM_H * 0.5, p.z);   // centro do feixe
+    this._imgBg.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL; // sempre de frente
     this._imgBg.isPickable    = false;
     const bgm = new BABYLON.StandardMaterial('mac_imgBgMat', this.scene);
     bgm.emissiveColor   = new BABYLON.Color3(0.03, 0.03, 0.12);
@@ -176,8 +178,8 @@ export class AssetMachine {
     this._imgBg.material = bgm;
 
     this._imgPlane = BABYLON.MeshBuilder.CreatePlane('mac_imgPlane', { width: 1.85, height: 1.85 }, this.scene);
-    this._imgPlane.position.set(p.x, p.y + 3.1, p.z);
-    this._imgPlane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y;
+    this._imgPlane.position.set(p.x, p.y + BEAM_H * 0.5, p.z);
+    this._imgPlane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL; // sempre de frente
     this._imgPlane.isPickable    = false;
     this._imgPlane.setEnabled(false);   // oculto até showImage() ser chamado
     // material definido em showImage()
@@ -206,16 +208,27 @@ export class AssetMachine {
     this._holoPs.start();
   }
 
-  showImage(imageUrl) {
+  async showImage(imageUrl) {
     if (!imageUrl) return;
     this._holoColor('green');
 
-    // Mostra o fundo imediatamente — textura carrega async
-    this._imgBg.material.alpha = 0.82;
-    this._imgPlane.setEnabled(true);
+    // ── WebGL tem CORS mais rígido que <img> ────────────────────────
+    // Baixa via fetch() → blob URL same-origin → Babylon carrega sem erro
+    let texUrl = imageUrl;
+    try {
+      const resp = await fetch(imageUrl);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        texUrl = URL.createObjectURL(blob);
+        // revoga após 60s (texture já foi enviada p/ GPU)
+        setTimeout(() => { try { URL.revokeObjectURL(texUrl); } catch (_) {} }, 60000);
+      }
+    } catch (e) {
+      console.warn('[AssetMachine] fetch imagem CORS, tentando URL direta:', e.message);
+    }
 
     const mat = new BABYLON.StandardMaterial('mac_img_' + Date.now(), this.scene);
-    const tex = new BABYLON.Texture(imageUrl, this.scene, false, false);
+    const tex = new BABYLON.Texture(texUrl, this.scene, false, false);
     tex.hasAlpha = false;
     mat.diffuseTexture  = tex;
     mat.emissiveTexture = tex;
@@ -224,6 +237,10 @@ export class AssetMachine {
     mat.disableLighting = true;
     if (this._imgPlane.material) this._imgPlane.material.dispose();
     this._imgPlane.material = mat;
+
+    // Só mostra APÓS textura estar pronta — evita checkerboard temporário
+    this._imgBg.material.alpha = 0.82;
+    this._imgPlane.setEnabled(true);
     this._glow.addIncludedOnlyMesh(this._imgPlane);
   }
 
@@ -560,11 +577,12 @@ export class AssetMachine {
     this._disc.rotation.y  += dt * 1.3;
     this._disc2.rotation.y -= dt * 2.2;
 
-    // Bob da imagem 2D
+    // Bob da imagem 2D (centro do feixe)
     if (this._imgPlane.isEnabled()) {
-      const bob = Math.sin(this._idleTimer * 1.8) * 0.12;
-      this._imgPlane.position.y = this.position.y + 3.1 + bob;
-      this._imgBg.position.y    = this._imgPlane.position.y;
+      const center = this.position.y + 5.5 * 0.5;
+      const bob    = Math.sin(this._idleTimer * 1.8) * 0.15;
+      this._imgPlane.position.y = center + bob;
+      this._imgBg.position.y    = center + bob;
     }
 
     // Rotação + bob do preview 3D
