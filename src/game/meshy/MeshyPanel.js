@@ -258,28 +258,33 @@ export class MeshyPanel {
     } catch (e) { this._machine('stopGenerating'); this._status('❌ ' + e.message); }
   }
   async _step2() {
+    this._machine('startProcessing');   // 🔵 azul + imagem de referência visível
     this._status('🧊 convertendo p/ 3D…');
     try {
       const r = await this.client.imageTo3D(this._state.imageUrl, { onProgress: (p, s) => this._prog(p, '🧊 3D ' + s + ' ' + p + '%') });
       this._state.modelTaskId = r.taskId; this._state.glbUrl = r.glbUrl;
+      this._machine('doneProcessing');  // 🟢 verde
       this._enable('meshy-s3'); this._status('✅ modelo 3D pronto — etapa 3 liberada');
     } catch (e) { this._status('❌ ' + e.message); }
   }
   async _step3() {
+    this._machine('startProcessing');   // 🔵 azul
     this._status('🔧 retopologia…');
     try {
       const r = await this.client.remesh(this._state.modelTaskId, { onProgress: (p, s) => this._prog(p, '🔧 remesh ' + s + ' ' + p + '%') });
       this._state.modelTaskId = r.taskId; this._state.glbUrl = r.glbUrl || this._state.glbUrl;
+      this._machine('doneProcessing');  // 🟢 verde
       this._enable('meshy-s4'); this._status('✅ otimizado — etapa 4 liberada');
     } catch (e) { this._status('❌ ' + e.message); }
   }
   async _step4() {
     const prompt = this._el.querySelector('#meshy-prompt').value.trim();
+    this._machine('startProcessing');   // 🔵 azul
     this._status('🖌️ texturizando…');
     try {
       const r = await this.client.textureModel(this._state.modelTaskId, prompt, { onProgress: (p, s) => this._prog(p, '🖌️ textura ' + s + ' ' + p + '%') });
       this._state.glbUrl = r.glbUrl || this._state.glbUrl;
-      this._machine('stopGenerating');
+      this._machine('stopGenerating');  // feixe some, imagem fica
       this._showSave(prompt);
       this._status('✅ ASSET PRONTO! dê um nome e salve no catálogo');
     } catch (e) { this._status('❌ ' + e.message); }

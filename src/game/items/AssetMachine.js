@@ -49,7 +49,6 @@ export class AssetMachine {
     this._beam        = null;
     this._disc        = null;
     this._disc2       = null;
-    this._holoLight   = null;
     this._holoPs      = null;
     this._imgPlane    = null;
     this._imgBg       = null;
@@ -133,13 +132,8 @@ export class AssetMachine {
     this._disc2.material = dm2;
     this._glow.addIncludedOnlyMesh(this._disc2);
 
-    // Luz pontual que ilumina o ambiente
-    this._holoLight = new BABYLON.PointLight('mac_hlight',
-      new BABYLON.Vector3(p.x, p.y + 5.2, p.z), this.scene);
-    this._holoLight.diffuse   = new BABYLON.Color3(0.3, 0.7, 1.0);
-    this._holoLight.specular  = new BABYLON.Color3(0.2, 0.5, 0.8);
-    this._holoLight.intensity = 0;
-    this._holoLight.range     = 10;
+    // Sem PointLight — cada luz extra estoura o limite de uniform blocks
+    // do WebGL2 quando há múltiplas máquinas no mapa. O GlowLayer cobre.
 
     // Partículas subindo pelo feixe
     this._holoPs = new BABYLON.ParticleSystem('mac_holoPs', 120, this.scene);
@@ -181,43 +175,39 @@ export class AssetMachine {
   //  API pública — chamada pelo MeshyPanel
   // ══════════════════════════════════════════════════════════════════
 
-  /** Ativa o holograma + partículas (geração começou) */
+  // ══════════════════════════════════════════════════════════════════
+  //  API pública — chamada pelo MeshyPanel
+  //
+  //  Fluxo de cores:
+  //    startGenerating()  → 🔵 azul, sem imagem       (step 1: gerando)
+  //    showImage(url)     → 🟢 verde + imagem         (step 1 concluído)
+  //    startProcessing()  → 🔵 azul + imagem mantida  (steps 2/3/4)
+  //    stopGenerating()   → feixe some, imagem fica   (tudo pronto)
+  // ══════════════════════════════════════════════════════════════════
+
   startGenerating() {
     this._generating = true;
     this._holoFadeIn = 0;
-    // Esconde imagem anterior
     this._imgPlane.setEnabled(false);
     this._imgBg.material.alpha = 0;
-    // Cores azuis (gerando)
-    this._setHoloColor(new BABYLON.Color3(0.25, 0.65, 1.0), new BABYLON.Color3(0.55, 0.25, 1.0));
-    this._holoPs.color1 = new BABYLON.Color4(0.25, 0.7, 1.0, 1.0);
-    this._holoPs.color2 = new BABYLON.Color4(0.6,  0.3, 1.0, 0.8);
+    this._holoColor('blue');
     this._holoPs.start();
-    this._holoLight.diffuse = new BABYLON.Color3(0.3, 0.7, 1.0);
   }
 
-  /** Exibe a imagem gerada no holograma */
   showImage(imageUrl) {
     if (!imageUrl) return;
-    // Muda cor para verde (imagem pronta)
-    this._setHoloColor(new BABYLON.Color3(0.2, 1.0, 0.4), new BABYLON.Color3(0.4, 1.0, 0.2));
-    this._holoPs.color1 = new BABYLON.Color4(0.2, 1.0, 0.4, 1.0);
-    this._holoPs.color2 = new BABYLON.Color4(0.4, 1.0, 0.2, 0.8);
-    this._holoLight.diffuse = new BABYLON.Color3(0.2, 1.0, 0.4);
+    this._holoColor('green');
 
-    // Carrega textura da imagem no plano
+    // Mostra o fundo imediatamente — textura carrega async
+    this._imgBg.material.alpha = 0.82;
+    this._imgPlane.setEnabled(true);
+
     const mat = new BABYLON.StandardMaterial('mac_img_' + Date.now(), this.scene);
-    const tex = new BABYLON.Texture(imageUrl, this.scene, false, false,
-      BABYLON.Texture.BILINEAR_SAMPLINGMODE,
-      () => {   // onLoad: mostra o plano
-        this._imgPlane.setEnabled(true);
-        this._imgBg.material.alpha = 0.82;
-      },
-    );
+    const tex = new BABYLON.Texture(imageUrl, this.scene, false, false);
     tex.hasAlpha = false;
     mat.diffuseTexture  = tex;
     mat.emissiveTexture = tex;
-    mat.emissiveColor   = new BABYLON.Color3(0.85, 0.85, 0.85);
+    mat.emissiveColor   = new BABYLON.Color3(0.9, 0.9, 0.9);
     mat.backFaceCulling = false;
     mat.disableLighting = true;
     if (this._imgPlane.material) this._imgPlane.material.dispose();
@@ -225,18 +215,34 @@ export class AssetMachine {
     this._glow.addIncludedOnlyMesh(this._imgPlane);
   }
 
-  /** Para o holograma (geração concluída/cancelada) */
+  /** Volta para azul (step 2/3/4 iniciou) mas mantém a imagem visível */
+  startProcessing() {
+    this._holoColor('blue');
+    // _imgPlane permanece visível mostrando a imagem de referência
+  }
+
+  /** Fica verde novamente quando step 2/3/4 concluiu */
+  doneProcessing() {
+    this._holoColor('green');
+  }
+
   stopGenerating() {
     this._generating = false;
     this._holoPs.stop();
-    // Mantém imagem visível; feixe e discos somem via fade no update
+    // feixe e discos somem via fade; imagem permanece
   }
 
-  // ── Helper: muda a cor de todos os elementos do holograma ─────────
-  _setHoloColor(colorMain, colorInner) {
-    this._beam.material.emissiveColor  = colorMain;
-    this._disc.material.emissiveColor  = colorMain;
-    this._disc2.material.emissiveColor = colorInner;
+  _holoColor(c) {
+    const blue  = [new BABYLON.Color3(0.25, 0.65, 1.0), new BABYLON.Color3(0.55, 0.25, 1.0),
+                   new BABYLON.Color4(0.25, 0.7, 1.0, 1.0), new BABYLON.Color4(0.6, 0.3, 1.0, 0.8)];
+    const green = [new BABYLON.Color3(0.2, 1.0, 0.4),  new BABYLON.Color3(0.4, 1.0, 0.2),
+                   new BABYLON.Color4(0.2, 1.0, 0.4, 1.0), new BABYLON.Color4(0.4, 1.0, 0.2, 0.8)];
+    const [main, inner, pc1, pc2] = c === 'green' ? green : blue;
+    this._beam.material.emissiveColor  = main;
+    this._disc.material.emissiveColor  = main;
+    this._disc2.material.emissiveColor = inner;
+    this._holoPs.color1 = pc1;
+    this._holoPs.color2 = pc2;
   }
 
   // ── Carrega os dois GLBs ──────────────────────────────────────────
@@ -473,7 +479,7 @@ export class AssetMachine {
       return;
     }
 
-    // Anima feixe, discos e luz
+    // Anima feixe, discos
     const pulse = 0.5 + Math.sin(this._idleTimer * 6) * 0.18;
 
     this._beam.material.alpha  = a * 0.28;
@@ -482,8 +488,6 @@ export class AssetMachine {
 
     this._disc.rotation.y  += dt * 1.3;
     this._disc2.rotation.y -= dt * 2.2;
-
-    this._holoLight.intensity = a * 2.0 * (0.8 + pulse * 0.4);
 
     // Bob da imagem
     if (this._imgPlane.isEnabled()) {
@@ -496,15 +500,14 @@ export class AssetMachine {
   // ── Dispose ───────────────────────────────────────────────────────
   dispose() {
     this._promptEl?.remove();
-    try { this._glow?.dispose(); }       catch (_) {}
-    try { this._p1Root?.dispose(); }     catch (_) {}
-    try { this._p2Root?.dispose(); }     catch (_) {}
-    try { this._beam?.dispose(); }       catch (_) {}
-    try { this._disc?.dispose(); }       catch (_) {}
-    try { this._disc2?.dispose(); }      catch (_) {}
-    try { this._holoLight?.dispose(); }  catch (_) {}
-    try { this._holoPs?.dispose(); }     catch (_) {}
-    try { this._imgPlane?.dispose(); }   catch (_) {}
-    try { this._imgBg?.dispose(); }      catch (_) {}
+    try { this._glow?.dispose(); }      catch (_) {}
+    try { this._p1Root?.dispose(); }    catch (_) {}
+    try { this._p2Root?.dispose(); }    catch (_) {}
+    try { this._beam?.dispose(); }      catch (_) {}
+    try { this._disc?.dispose(); }      catch (_) {}
+    try { this._disc2?.dispose(); }     catch (_) {}
+    try { this._holoPs?.dispose(); }    catch (_) {}
+    try { this._imgPlane?.dispose(); }  catch (_) {}
+    try { this._imgBg?.dispose(); }     catch (_) {}
   }
 }
