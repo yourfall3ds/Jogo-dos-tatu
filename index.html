@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TransFPS 🧀</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: 'Segoe UI', monospace; }
+    #renderCanvas { width: 100vw; height: 100vh; display: block; touch-action: none; }
+
+    /* cursor some quando jogo está ativo — no body E todos os filhos */
+    body.game-active,
+    body.game-active * { cursor: none !important; }
+
+    /* ── Crosshair ── */
+    #crosshair {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none; color: #fff;
+      font-size: 18px; text-shadow: 0 0 4px #000; line-height: 1;
+      display: none;
+    }
+    body.game-active #crosshair { display: block; }
+
+    /* ── Aim indicator (ponto de mira ADS) ── */
+    #aim-indicator {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none; opacity: 0;
+      transition: opacity 0.15s;
+      display: none;
+    }
+    body.game-active #aim-indicator { display: block; }
+    #aim-indicator::before {
+      content: '';
+      display: block; width: 6px; height: 6px;
+      background: #ff4444; border-radius: 50%;
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.8), 0 0 8px rgba(255,50,50,0.9);
+    }
+
+    /* ── Indicador de Combo (centro superior) ── */
+    #combo-indicator {
+      position: fixed; top: 60px; left: 50%;
+      transform: translateX(-50%);
+      pointer-events: none; color: #fff;
+      font-size: 22px; font-weight: 900;
+      text-shadow: 0 0 12px #ff9900, 0 2px 6px #000;
+      opacity: 0; transition: opacity 0.2s;
+      letter-spacing: 2px;
+    }
+
+    /* ── Dash indicator ── */
+    #dash-flash {
+      position: fixed; inset: 0; pointer-events: none;
+      background: linear-gradient(to bottom, rgba(100,200,255,0.08), transparent 40%);
+      opacity: 0; transition: opacity 0.05s;
+      z-index: 45;
+    }
+
+    /* ── Wall-jump indicator ── */
+    #wj-indicator {
+      position: fixed; top: 24px; left: 50%;
+      transform: translateX(-50%);
+      color: #fff; font-size: 17px; font-weight: 700;
+      text-shadow: 0 0 6px #000; pointer-events: none;
+    }
+
+    /* ── HUD bottom-left ── */
+    #hud {
+      position: fixed; bottom: 20px; left: 20px;
+      color: #e0e0e0; font-size: 13px;
+      text-shadow: 0 0 4px #000; pointer-events: none; line-height: 1.8;
+    }
+
+    /* ── Ammo bottom-right ── */
+    #ammo-hud {
+      position: fixed; bottom: 20px; right: 24px;
+      color: #fff; font-size: 26px; font-weight: 700;
+      text-shadow: 0 0 6px #000; pointer-events: none;
+      text-align: right; line-height: 1.3;
+    }
+    #ammo-hud .reload-msg { font-size: 15px; color: #ffcc44; }
+
+    /* ── Hit marker ── */
+    #hit-marker {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: #f55; font-size: 22px;
+      pointer-events: none; opacity: 0; transition: opacity .05s;
+    }
+
+    /* ── HP HUD (bottom-center) ── */
+    #hp-hud {
+      position: fixed; bottom: 22px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; align-items: center; gap: 10px;
+      pointer-events: none; color: #fff;
+      font-size: 15px; font-weight: 700;
+      text-shadow: 0 0 6px #000;
+    }
+    #hp-bar-bg {
+      width: 180px; height: 14px;
+      background: rgba(0,0,0,.55);
+      border: 1.5px solid rgba(255,255,255,.25);
+      border-radius: 7px; overflow: hidden;
+    }
+    #hp-bar {
+      height: 100%; width: 100%;
+      background: linear-gradient(90deg, #22dd44, #66ff88);
+      border-radius: 7px;
+      transition: width .12s, background .25s;
+    }
+
+    /* ── Damage vignette ── */
+    #damage-vignette {
+      position: fixed; inset: 0; pointer-events: none;
+      background: radial-gradient(ellipse at center,
+        transparent 40%, rgba(200,0,0,0.72) 100%);
+      opacity: 0; transition: opacity .08s;
+      z-index: 50;
+    }
+
+    /* ── Death screen ── */
+    #death-screen {
+      display: none;
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(120,0,0,.70);
+      align-items: center; justify-content: center;
+      flex-direction: column; color: #fff;
+      backdrop-filter: blur(4px);
+      pointer-events: none;
+    }
+    #death-screen.visible { display: flex; }
+    #death-screen h2 { font-size: 3em; color: #ff4444; text-shadow: 0 0 20px #f00; margin-bottom: 12px; }
+    #death-screen p  { font-size: 1.1em; color: #ffaaaa; }
+
+    /* ═══════════════════════════════════════════════════════════
+       BOTÃO FOCAR / PAUSAR  (sempre visível durante o jogo)
+       ═══════════════════════════════════════════════════════════ */
+    #focus-btn {
+      display: none;                     /* aparece após JOGAR */
+      position: fixed; top: 12px; right: 14px; z-index: 300;
+      background: rgba(0,0,0,.55);
+      border: 1.5px solid rgba(255,255,255,.25);
+      color: #fff; font-size: 13px; font-weight: 700;
+      padding: 6px 13px; border-radius: 8px;
+      cursor: pointer !important;       /* sempre visível mesmo com game-active */
+      letter-spacing: .5px;
+      transition: background .15s, border-color .15s;
+      pointer-events: all !important;
+    }
+    body.game-active #focus-btn { display: block; cursor: default !important; }
+    /* quando desfocado, o botão fica mais chamativo */
+    body:not(.game-active) #focus-btn {
+      display: block;
+      background: rgba(255, 200, 0, .85);
+      border-color: #ffcc00;
+      color: #111;
+      font-size: 14px;
+      padding: 8px 20px;
+    }
+    #focus-btn:hover { filter: brightness(1.15); }
+
+    /* ═══════════════════════════════════════════════════════════
+       OVERLAY DE PAUSA
+       ═══════════════════════════════════════════════════════════ */
+    #pause-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,.65);
+      align-items: center; justify-content: center;
+      flex-direction: column;
+      backdrop-filter: blur(3px);
+    }
+    #pause-overlay.visible { display: flex; }
+
+    #pause-overlay h2 {
+      color: #fff; font-size: 2.2em; margin-bottom: 28px;
+      text-shadow: 0 2px 12px #000; letter-spacing: 2px;
+    }
+    #pause-overlay .resume-btn {
+      padding: 14px 48px; font-size: 1.25em; font-weight: 800;
+      background: #ffcc00; border: none; border-radius: 10px;
+      color: #222; cursor: pointer; letter-spacing: 1px;
+      transition: transform .1s;
+    }
+    #pause-overlay .resume-btn:hover { transform: scale(1.06); }
+    #pause-overlay .tip {
+      margin-top: 18px; color: #aaa; font-size: .88em;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       CATÁLOGO DE MONSTROS
+       ═══════════════════════════════════════════════════════════ */
+    #monster-catalog-btn {
+      margin-top: 12px; padding: 10px 24px; font-size: 1em;
+      background: rgba(255,255,255,.1); border: 1.5px solid rgba(255,255,255,.3);
+      color: #fff; border-radius: 8px; cursor: pointer;
+      transition: background .2s;
+    }
+    #monster-catalog-btn:hover { background: rgba(255,255,255,.2); }
+
+    #monster-catalog-overlay {
+      display: none; position: fixed; inset: 0; z-index: 300;
+      background: rgba(0,0,0,.85); backdrop-filter: blur(8px);
+      align-items: center; justify-content: center; color: #fff;
+    }
+    #monster-catalog-overlay.visible { display: flex; }
+
+    #catalog-content {
+      width: 80%; max-width: 900px; height: 80%;
+      background: #1a1a1a; border: 2px solid #ffcc00;
+      border-radius: 16px; display: flex; overflow: hidden;
+      box-shadow: 0 0 40px rgba(0,0,0,.8);
+    }
+    #catalog-list {
+      width: 280px; background: #121212; border-right: 1px solid #333;
+      overflow-y: auto; padding: 20px 0;
+    }
+    .catalog-item {
+      padding: 15px 25px; border-bottom: 1px solid #222; cursor: pointer;
+      transition: background .2s; color: #888;
+    }
+    .catalog-item:hover { background: #1a1a1a; color: #fff; }
+    .catalog-item.active { background: #ffcc00; color: #000; font-weight: 700; }
+
+    #catalog-details {
+      flex: 1; padding: 40px; overflow-y: auto;
+    }
+    #catalog-details h2 { font-size: 2.4em; color: #ffcc00; margin-bottom: 10px; }
+    .monster-desc { color: #aaa; margin-bottom: 30px; line-height: 1.6; }
+    
+    .attacks-section h3 { margin-bottom: 15px; border-bottom: 2px solid #333; padding-bottom: 5px; }
+    .attack-card {
+      background: #222; border-radius: 8px; padding: 15px; margin-bottom: 12px;
+      border-left: 4px solid #ffcc00;
+    }
+    .attack-card strong { color: #ffcc00; display: block; margin-bottom: 4px; }
+    .attack-card p { font-size: 0.9em; color: #ddd; }
+
+    .close-catalog {
+      position: absolute; top: 20px; right: 30px; font-size: 32px;
+      cursor: pointer; color: #666; transition: color .2s;
+    }
+    .close-catalog:hover { color: #fff; }
+
+    /* ── Loading bar ── */
+    #loading-bar-wrap {
+      display: none;
+      position: fixed; bottom: 0; left: 0; right: 0;
+      height: 4px; background: rgba(255,255,255,.1); z-index: 500;
+    }
+    #loading-bar-wrap.visible { display: block; }
+    #loading-bar {
+      height: 100%; width: 0%; background: #ffcc00;
+      transition: width .3s; border-radius: 0 2px 2px 0;
+    }
+    #loading-label {
+      display: none;
+      position: fixed; bottom: 8px; right: 10px; z-index: 501;
+      color: #aaa; font-size: 11px; pointer-events: none;
+    }
+    #loading-label.visible { display: block; }
+
+    /* ══════════════════════════════════════════════════════════
+       ENGINE MODE — viewport + editor side by side
+       ══════════════════════════════════════════════════════════ */
+
+    /* Barra de topo do editor */
+    #engine-bar {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0; height: 36px;
+      background: #06071a; border-bottom: 1.5px solid #28f;
+      z-index: 9800; align-items: center; justify-content: space-between;
+      padding: 0 10px 0 14px;
+      font-family: ui-monospace, monospace; font-size: 12px; color: #88c;
+    }
+    body.engine-mode #engine-bar { display: flex; }
+
+    /* Botões de aba do engine mode */
+    .engine-tab {
+      background: #12122a; color: #778; border: 1px solid #2a3;
+      padding: 4px 12px; border-radius: 4px; cursor: pointer;
+      font-family: ui-monospace, monospace; font-size: 11px;
+      transition: background .15s;
+    }
+    .engine-tab:hover { background: #1a1a40; color: #aac; }
+    .engine-tab-active {
+      background: #1e4a9e !important;
+      color: #fff !important;
+      border-color: #4af !important;
+    }
+
+    /* Canvas encolhe para dar lugar ao painel */
+    body.engine-mode #renderCanvas {
+      width: calc(100vw - 360px) !important;
+      height: calc(100vh - 36px) !important;
+      margin-top: 36px;
+    }
+
+    /* Painel de armas — coluna direita */
+    body.engine-mode #wed-panel {
+      top: 36px !important;
+      height: calc(100vh - 36px) !important;
+      width: 360px !important;
+      border-left: 2px solid #28f;
+    }
+
+    /* Scene Editor — painel direito */
+    body.engine-mode #sed-right {
+      top: 36px !important;
+      height: calc(100vh - 36px) !important;
+      width: 300px !important;
+    }
+
+    /* Scene Editor — painel esquerdo */
+    body.engine-mode #sed-left {
+      top: 36px !important;
+      height: calc(100vh - 36px) !important;
+      width: 280px !important;
+    }
+
+    /* Canvas em modo cena: fica entre os dois painéis */
+    body.engine-scene #renderCanvas {
+      margin-left: 280px !important;
+      width: calc(100vw - 280px - 300px) !important;
+    }
+
+    /* Esconde elementos incompatíveis com engine mode */
+    body.engine-mode #pause-overlay  { display: none !important; }
+    body.engine-mode #focus-btn      { display: none !important; }
+    body.engine-mode #crosshair      { display: none !important; }
+
+    /* HUD ajustado para não sair do viewport */
+    body.engine-mode #hud,
+    body.engine-mode #hp-hud,
+    body.engine-mode #ammo-hud { right: auto; }
+    body.engine-mode #ammo-hud { right: 310px; }
+
+    /* ── Start screen ── */
+    #start-screen {
+      position: fixed; inset: 0; z-index: 400;
+      background: rgba(0,0,0,.9);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; color: #fff;
+    }
+    #start-screen h1 { font-size: 3.2em; color: #ffcc00; margin-bottom: 6px; letter-spacing: 2px; }
+    #start-screen .subtitle { color: #aaa; font-size: .95em; margin-bottom: 24px; }
+    #start-screen .controls {
+      background: rgba(255,255,255,.07); border-radius: 10px;
+      padding: 16px 28px; margin-bottom: 10px;
+    }
+    #start-screen .controls table { border-collapse: collapse; }
+    #start-screen .controls td { padding: 4px 14px 4px 0; font-size: .92em; }
+    #start-screen .controls td:first-child { color: #ffcc44; font-weight: 700; }
+    #start-screen .wj-box {
+      border: 2px solid #ffcc44; border-radius: 8px;
+      padding: 12px 22px; margin: 12px 0; font-size: .88em;
+      line-height: 1.8; max-width: 460px; text-align: center;
+    }
+    #start-screen .wj-box strong { color: #ffcc44; }
+    #start-screen .play-btn {
+      margin-top: 16px; padding: 13px 42px; font-size: 1.2em;
+      background: #ffcc00; border: none; border-radius: 8px;
+      font-weight: 800; cursor: pointer; color: #222;
+      letter-spacing: 1px; transition: transform .1s;
+    }
+    #start-screen .play-btn:hover { transform: scale(1.05); }
+  </style>
+</head>
+<body>
+  <!-- ── Engine Mode bar (aparece quando o jogo é "congelado") ── -->
+  <div id="engine-bar">
+    <span style="font-size:11px">⚙️ <b style="color:#7af">ENGINE MODE</b>
+      <span style="color:#445;font-size:9px;margin-left:4px">jogo congelado</span>
+    </span>
+    <div style="display:flex;gap:5px;align-items:center">
+      <!-- Abas -->
+      <button id="engine-tab-weapons" class="engine-tab engine-tab-active"
+        onclick="window.setEngineTab('weapons')">⚔️ Armas</button>
+      <button id="engine-tab-scene" class="engine-tab"
+        onclick="window.setEngineTab('scene')">🗺️ Cena</button>
+      <!-- Voltar ao jogo -->
+      <button onclick="window.exitEngineMode()"
+        style="background:#ffcc00;color:#111;border:none;padding:4px 14px;
+               border-radius:5px;font-family:inherit;font-size:12px;
+               font-weight:700;cursor:pointer;margin-left:6px">▶ Jogar</button>
+    </div>
+  </div>
+
+  <canvas id="renderCanvas"></canvas>
+
+  <div id="crosshair">+</div>
+  <div id="aim-indicator"></div>
+  <div id="combo-indicator"></div>
+  <div id="dash-flash"></div>
+  <div id="wj-indicator"></div>
+
+  <div id="hud">
+    <div id="hud-state"></div>
+    <div id="hud-speed"></div>
+  </div>
+
+  <div id="ammo-hud">
+    <div id="ammo-count"></div>
+    <div id="ammo-reload" class="reload-msg"></div>
+  </div>
+
+  <div id="hit-marker">✕</div>
+
+  <!-- ── HP HUD ── -->
+  <div id="hp-hud">
+    ❤️ <span id="hp-text">100</span>
+    <div id="hp-bar-bg"><div id="hp-bar"></div></div>
+  </div>
+
+  <!-- ── Damage vignette ── -->
+  <div id="damage-vignette"></div>
+
+  <!-- ── Death screen ── -->
+  <div id="death-screen">
+    <h2>💀 VOCÊ MORREU</h2>
+    <p>Respawnando em instantes…</p>
+  </div>
+
+  <!-- ── Botão Focar/Pausar (canto superior direito) ── -->
+  <button id="focus-btn" onclick="window.toggleFocus()">⏸ Pausar</button>
+
+  <!-- ── Overlay de pausa ── -->
+  <div id="pause-overlay">
+    <h2>⏸ Pausado</h2>
+    <button class="resume-btn" style="margin-bottom: 15px;" onclick="window.toggleFocus()">▶ Voltar ao Jogo</button>
+    <button id="animator-mode-btn" style="background: #0088ff; color: white; margin-bottom: 10px;">🎬 Abrir Animador</button>
+    <button onclick="window.openMonsterDebug('monsterPlant')" style="background: #1a5a20; color: #5fa; margin-bottom: 15px; font-family: inherit; font-size: 1em; padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; letter-spacing: .5px;">🐛 Debug Monstros</button>
+    <button id="weapon-editor-btn" style="background: #e05000; color: white; margin-bottom: 10px; font-family: inherit; font-size: 1em; padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; letter-spacing: .5px;" onclick="window._weaponEditor?.toggle()">🔧 Ajustar Armas  <span style="font-size:.78em;opacity:.75">(F4)</span></button>
+    <button id="scene-editor-btn" style="background: #006e30; color: white; margin-bottom: 15px; font-family: inherit; font-size: 1em; padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; letter-spacing: .5px;" onclick="window.enterEngineMode('scene')">🗺️ Editor de Cena</button>
+    <button id="monster-catalog-btn">📖 Catálogo de Monstros</button>
+    <p class="tip">ESC  ou  clique no botão  para pausar / resumir</p>
+  </div>
+
+  <!-- ══ Catálogo de Monstros ══ -->
+  <div id="monster-catalog-overlay">
+    <div class="close-catalog" id="catalog-close-x">×</div>
+    <div id="catalog-content">
+      <div id="catalog-list">
+        <!-- Itens preenchidos via JS -->
+      </div>
+      <div id="catalog-details">
+        <div id="catalog-empty-msg" style="text-align: center; margin-top: 100px; color: #666;">
+          Selecione um monstro para ver detalhes
+        </div>
+        <div id="catalog-monster-info" style="display: none;">
+          <h2 id="catalog-name">---</h2>
+          <p id="catalog-desc" class="monster-desc">---</p>
+          
+          <div class="attacks-section">
+            <h3>⚔️ Habilidades e Ataques</h3>
+            <div id="catalog-attacks-list">
+              <!-- Cards de ataque -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Barra de loading assets ── -->
+  <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+  <div id="loading-label">Carregando assets…</div>
+
+  <!-- ══ Start Screen ══ -->
+  <div id="start-screen">
+    <h1>🧀 TransFPS</h1>
+    <p class="subtitle">Transformice mas com armas</p>
+
+    <div class="controls">
+      <table>
+        <tr><td>WASD</td><td>Mover</td></tr>
+        <tr><td>W W (duplo)</td><td>⚡ Dash</td></tr>
+        <tr><td>ESPAÇO</td><td>Pular / Wall Jump</td></tr>
+        <tr><td>SHIFT</td><td>Esquiva</td></tr>
+        <tr><td>LMB</td><td>Soco combo / Atirar</td></tr>
+        <tr><td>RMB</td><td>Chute combo / Mirar (ADS)</td></tr>
+        <tr><td>G</td><td>Sacar / Guardar arma</td></tr>
+        <tr><td>R</td><td>Recarregar</td></tr>
+        <tr><td>1 / 2</td><td>Trocar arma</td></tr>
+        <tr><td>V</td><td>Câmera FPS / 3ª Pessoa</td></tr>
+        <tr><td>M</td><td>📋 Move List completa</td></tr>
+        <tr><td>ESC</td><td>Pausar / Engine Mode</td></tr>
+      </table>
+    </div>
+
+    <div class="wj-box">
+      🧱 <strong>Wall Jump</strong><br>
+      1. Aproxime de uma parede<br>
+      2. Olhe <strong>para trás</strong> (away da parede)<br>
+      3. Olhe <strong>para frente</strong> (de volta para a parede)<br>
+      4. Pressione <strong>ESPAÇO</strong> → decola! 🚀
+    </div>
+
+    <button class="play-btn" onclick="startGame()">▶ JOGAR</button>
+  </div>
+
+  <!-- Babylon.js via CDN -->
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

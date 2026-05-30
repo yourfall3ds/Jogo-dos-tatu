@@ -1,0 +1,10 @@
+{
+  "name": "transfps",
+  "version": "1.0.0",
+  "description": "TransFPS — Babylon.js FPS game",
+  "scripts": {
+    "start": "node tools/config-server.js & npx serve -s .",
+    "server": "npx serve -s .",
+    "config": "node tools/config-server.js"
+  }
+}

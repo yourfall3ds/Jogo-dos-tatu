@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TransFPS — Admin</title>
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+  <style>
+    :root {
+      --bg:       #0c0e12;
+      --surface:  #13161d;
+      --surface2: #1a1e28;
+      --surface3: #222736;
+      --accent:   #4af09a;
+      --accent2:  #ff7043;
+      --text:     #e2e8f0;
+      --dim:      #8892a4;
+      --border:   #252d3d;
+      --red:      #f87171;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #151922, #0c0e12);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo { font-size: 30px; line-height: 1; }
+    .logo-text h1 { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: -0.3px; }
+    .logo-text p  { font-size: 12px; color: var(--dim); margin-top: 2px; }
+    .back-link {
+      margin-left: auto;
+      color: var(--dim);
+      font-size: 13px;
+      text-decoration: none;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      transition: all .15s;
+    }
+    .back-link:hover { color: var(--text); border-color: var(--dim); }
+
+    /* ── Tab Bar ── */
+    .tab-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      padding: 0 24px;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--dim);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 13px 22px;
+      border-bottom: 2px solid transparent;
+      transition: all .15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* ── Tab Panels ── */
+    .tab-panel { display: none; padding: 28px; max-width: 1200px; margin: 0 auto; }
+    .tab-panel.active { display: block; }
+
+    .section-title {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 20px;
+      color: var(--text);
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      margin-bottom: 22px;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-icon { font-size: 36px; line-height: 1; flex-shrink: 0; }
+    .card-meta h2 { font-size: 18px; font-weight: 700; }
+    .card-meta p  { font-size: 12px; color: var(--dim); margin-top: 3px; }
+    .badge {
+      margin-left: auto;
+      background: var(--accent);
+      color: #000;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      text-transform: uppercase;
+    }
+    .badge.inactive { background: var(--surface3); color: var(--dim); }
+
+    /* ── Card layout ── */
+    .card-layout {
+      display: flex;
+      gap: 22px;
+      align-items: flex-start;
+    }
+
+    /* ── 3D Canvases ── */
+    .preview-wrap {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    .preview-canvas {
+      display: block;
+      width: 190px;
+      height: 190px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #08090e;
+    }
+    .preview-label { font-size: 11px; color: var(--dim); }
+
+    /* ── Stats ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+    .stat-box {
+      background: var(--surface2);
+      border-radius: 10px;
+      padding: 10px 14px;
+    }
+    .stat-label { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 5px; }
+    .stat-value { font-size: 20px; font-weight: 700; color: var(--accent); }
+    .stat-value.sm { font-size: 14px; }
+
+    /* ── Sounds ── */
+    .sounds-title {
+      font-size: 11px;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sound-slot {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 6px;
+      transition: border-color .15s;
+    }
+    .sound-slot:hover { border-color: var(--accent); }
+    .sound-id   { font-family: 'Courier New', monospace; font-size: 12px; color: var(--accent); min-width: 152px; }
+    .sound-name { font-size: 12px; color: var(--dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sound-name.ok { color: #4af09a; }
+
+    input[type="file"] { display: none; }
+
+    /* ── Buttons ── */
+    .btn {
+      background: var(--surface3);
+      border: 1px solid var(--border);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 5px 12px;
+      border-radius: 7px;
+      transition: all .15s;
+      white-space: nowrap;
+      line-height: 1.4;
+    }
+    .btn:hover         { border-color: var(--accent); color: var(--accent); }
+    .btn:disabled      { opacity: .4; cursor: default; pointer-events: none; }
+    .btn.danger:hover  { border-color: var(--red); color: var(--red); }
+    .btn.primary       { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+    .btn.primary:hover { background: #3de08a; }
+
+    /* ── Path hint ── */
+    .path-hint {
+      margin-top: 14px;
+      background: var(--surface2);
+      border-left: 3px solid var(--accent);
+      padding: 8px 14px;
+      border-radius: 0 8px 8px 0;
+      font-size: 11px;
+      color: var(--dim);
+      font-family: 'Courier New', monospace;
+      line-height: 1.8;
+    }
+
+    /* ── Animation Mapper ── */
+    .anim-layout {
+      display: grid;
+      grid-template-columns: 1fr 310px;
+      gap: 22px;
+      align-items: flex-start;
+    }
+    .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: var(--surface2); }
+    th { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--dim); padding: 10px 14px; text-align: left; font-weight: 600; }
+    td { padding: 9px 14px; font-size: 13px; border-top: 1px solid var(--border); }
+    tbody tr { cursor: pointer; transition: background .1s; }
+    tbody tr:hover td { background: var(--surface2); }
+    tbody tr.selected td { background: rgba(74,240,154,.1); }
+    code { font-family: 'Courier New', monospace; font-size: 11px; }
+    .code-accent { color: var(--accent); }
+    .code-dim    { color: var(--dim); }
+
+    .char-preview {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      position: sticky;
+      top: 80px;
+    }
+    #charCanvas {
+      display: block;
+      width: 278px;
+      height: 320px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #08090e;
+    }
+    .char-status   { font-size: 11px; color: var(--dim); text-align: center; }
+    .char-anim-name { font-size: 13px; font-weight: 700; color: var(--accent); text-align: center; min-height: 20px; }
+    .anim-hint { font-size: 11px; color: var(--dim); margin-top: -4px; }
+
+    /* ── Placeholder card ── */
+    .card.placeholder {
+      border-style: dashed;
+      opacity: .45;
+    }
+
+    /* ── Toast ── */
+    @keyframes slideUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+
+    @media (max-width: 900px) {
+      .card-layout   { flex-direction: column; }
+      .anim-layout   { grid-template-columns: 1fr; }
+      .stats-grid    { grid-template-columns: repeat(2,1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="logo">🎮</div>
+  <div class="logo-text">
+    <h1>TransFPS Admin</h1>
+    <p>Catálogo de Inimigos · Armas · Mapa de Ações</p>
+  </div>
+  <a class="back-link" href="/">← Voltar ao jogo</a>
+</header>
+
+<!-- ── Tab Bar ── -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="showTab('enemies')">🌱 Inimigos</button>
+  <button class="tab-btn" onclick="showTab('weapons')">🔫 Armas</button>
+  <button class="tab-btn" onclick="showTab('controls')">🎮 Controles</button>
+</div>
+
+<!-- ══════════════════ INIMIGOS ══════════════════ -->
+<div id="tab-enemies" class="tab-panel active">
+  <div class="section-title">Catálogo de Inimigos</div>
+
+  <!-- Planta Monstro -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon">🌱</div>
+      <div class="card-meta">
+        <h2>Planta Monstro</h2>
+        <p>Criatura #001 · <code>MonsterPlant</code> · monster_plant.glb</p>
+      </div>
+      <span class="badge">Ativo</span>
+    </div>
+
+    <div class="card-layout">
+      <!-- Preview 3D -->
+      <div class="preview-wrap">
+        <canvas id="plantCanvas" class="preview-canvas"></canvas>
+        <span class="preview-label">Clique e arraste para girar</span>
+      </div>
+
+      <!-- Stats + Sons -->
+      <div style="flex:1; min-width:0">
+        <div class="stats-grid">
+          <div class="stat-box"><div class="stat-label">HP</div><div class="stat-value">100</div></div>
+          <div class="stat-box"><div class="stat-label">Dano / Ataque</div><div class="stat-value">20</div></div>
+          <div class="stat-box"><div class="stat-label">Alcance</div><div class="stat-value">2.8<span style="font-size:13px;color:var(--dim)">m</span></div></div>
+          <div class="stat-box"><div class="stat-label">Cooldown Hop</div><div class="stat-value sm">1.9s · 0.55s</div></div>
+          <div class="stat-box"><div class="stat-label">Aggro timer</div><div class="stat-value">4s</div></div>
+          <div class="stat-box"><div class="stat-label">Knockback</div><div class="stat-value">30%</div></div>
+        </div>
+
+        <div class="sounds-title">🔊 Sons</div>
+        <div id="sounds-enemy-plant"></div>
+
+        <div class="path-hint">
+          📁 Pasta padrão:<br>
+          <strong>sounds/enemies/monsterPlant/</strong><br>
+          hop.ogg · damage.ogg · death.ogg · attack.ogg
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slot futuro -->
+  <div class="card placeholder">
+    <div class="card-header">
+      <div class="card-icon">❓</div>
+      <div class="card-meta">
+        <h2>Próximo Inimigo</h2>
+        <p>Em breve · adicione um novo tipo pelo código</p>
+      </div>
+      <span class="badge inactive">Em breve</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ ARMAS ══════════════════ -->
+<div id="tab-weapons" class="tab-panel">
+  <div class="section-title">Catálogo de Armas</div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon">🔫</div>
+      <div class="card-meta">
+        <h2>Arma Inicial</h2>
+        <p>Arma #001 · <code>weaponOld</code> · Arma inicial.glb</p>
+      </div>
+      <span class="badge">Equipada</span>
+    </div>
+
+    <div class="card-layout">
+      <div class="preview-wrap">
+        <canvas id="weaponCanvas" class="preview-canvas"></canvas>
+        <span class="preview-label">Clique e arraste para girar</span>
+      </div>
+
+      <div style="flex:1; min-width:0">
+        <div class="stats-grid">
+          <div class="stat-box"><div class="stat-label">Dano</div><div class="stat-value">25</div></div>
+          <div class="stat-box"><div class="stat-label">Cadência</div><div class="stat-value sm">0.09s</div></div>
+          <div class="stat-box"><div class="stat-label">Munição</div><div class="stat-value">30</div></div>
+          <div class="stat-box"><div class="stat-label">Recarga</div><div class="stat-value sm">1.6s</div></div>
+          <div class="stat-box"><div class="stat-label">Força Impacto</div><div class="stat-value">6</div></div>
+          <div class="stat-box"><div class="stat-label">Tipo</div><div class="stat-value sm">Rifle</div></div>
+        </div>
+
+        <div class="sounds-title">🔊 Sons</div>
+        <div id="sounds-weapon-main"></div>
+
+        <div class="path-hint">
+          📁 Pasta padrão: <strong>sounds/weapons/</strong><br>
+          fire.ogg · reload.ogg · empty.ogg
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ CONTROLES ══════════════════ -->
+<div id="tab-controls" class="tab-panel">
+  <div class="section-title">Mapa de Animações</div>
+
+  <div class="anim-layout">
+    <!-- Tabela -->
+    <div>
+      <div class="table-card">
+        <table id="animTable">
+          <thead>
+            <tr>
+              <th>Gatilho</th>
+              <th>Estado interno</th>
+              <th>Animação no GLB</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p style="font-size:11px;color:var(--dim);margin-top:8px">
+        🖱️ Clique em uma linha para ver a animação no preview ao lado.
+      </p>
+    </div>
+
+    <!-- Preview -->
+    <div class="char-preview">
+      <canvas id="charCanvas"></canvas>
+      <div class="char-anim-name" id="charAnimName">—</div>
+      <div class="char-status" id="charStatus">Clique em "Controles" para carregar</div>
+      <div class="anim-hint">Clique e arraste para girar · Scroll para zoom</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ JAVASCRIPT ══════════════════ -->
+<script>
+// ─── IndexedDB Helpers ────────────────────────────────────────────
+const DB_NAME  = 'transfps-sounds';
+const DB_VER   = 1;
+const DB_STORE = 'sounds';
+let db = null;
+
+function openDB() {
+  return new Promise(res => {
+    try {
+      const req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = e => e.target.result.createObjectStore(DB_STORE);
+      req.onsuccess  = e => { db = e.target.result; res(db); };
+      req.onerror    = () => res(null);
+    } catch(e) { res(null); }
+  });
+}
+function dbGet(id) {
+  return new Promise(res => {
+    if (!db) return res(null);
+    try {
+      const req = db.transaction(DB_STORE,'readonly').objectStore(DB_STORE).get(id);
+      req.onsuccess = () => res(req.result ?? null);
+      req.onerror   = () => res(null);
+    } catch(e) { res(null); }
+  });
+}
+function dbPut(id, blob) {
+  return new Promise(res => {
+    if (!db) return res(false);
+    try {
+      const req = db.transaction(DB_STORE,'readwrite').objectStore(DB_STORE).put(blob, id);
+      req.onsuccess = () => res(true);
+      req.onerror   = () => res(false);
+    } catch(e) { res(false); }
+  });
+}
+function dbDel(id) {
+  return new Promise(res => {
+    if (!db) return res(false);
+    try {
+      const req = db.transaction(DB_STORE,'readwrite').objectStore(DB_STORE).delete(id);
+      req.onsuccess = () => res(true);
+      req.onerror   = () => res(false);
+    } catch(e) { res(false); }
+  });
+}
+
+// ─── Tab navigation ───────────────────────────────────────────────
+const TAB_NAMES = ['enemies','weapons','controls'];
+function showTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach((b,i) => {
+    b.classList.toggle('active', TAB_NAMES[i] === name);
+  });
+  document.getElementById('tab-' + name)?.classList.add('active');
+  if (name === 'enemies')  initPlantPreview();
+  if (name === 'weapons')  initWeaponPreview();
+  if (name === 'controls') initCharPreview();
+}
+
+// ─── Sound slots ─────────────────────────────────────────────────
+const SOUND_DEFS = {
+  'enemy-plant': [
+    { id: 'plant_hop',    label: '🐸 Pulo (hop)'        },
+    { id: 'plant_damage', label: '💥 Dano recebido'      },
+    { id: 'plant_death',  label: '💀 Morte'              },
+    { id: 'plant_attack', label: '🌿 Ataque ao jogador'  },
+  ],
+  'weapon-main': [
+    { id: 'weapon_fire',   label: '🔫 Disparo'    },
+    { id: 'weapon_reload', label: '🔄 Recarga'    },
+    { id: 'weapon_empty',  label: '🔕 Sem munição' },
+  ],
+};
+
+async function buildSoundSlots(containerId, groupKey) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = '';
+
+  for (const def of (SOUND_DEFS[groupKey] ?? [])) {
+    const blob     = await dbGet(def.id);
+    const hasSound = !!blob;
+
+    const slot  = document.createElement('div');
+    slot.className = 'sound-slot';
+    slot.id = `slot-${def.id}`;
+    slot.innerHTML = `
+      <span class="sound-id">${def.id}</span>
+      <span class="sound-name ${hasSound ? 'ok' : ''}" id="fn-${def.id}">
+        ${def.label}${hasSound ? ' ✓' : ''}
+      </span>
+      <input type="file" id="file-${def.id}" accept="audio/*,audio/ogg,audio/mp3,audio/wav">
+      <button class="btn" onclick="triggerUpload('${def.id}')">⬆ Upload</button>
+      <button class="btn" id="play-${def.id}" onclick="playSound('${def.id}')"${!hasSound ? ' disabled' : ''}>▶ Testar</button>
+      <button class="btn danger" onclick="deleteSound('${def.id}')"${!hasSound ? ' disabled' : ''}>🗑</button>
+    `;
+    container.appendChild(slot);
+
+    document.getElementById(`file-${def.id}`)
+      .addEventListener('change', e => doUpload(def.id, e.target));
+  }
+}
+
+function triggerUpload(id) { document.getElementById(`file-${id}`)?.click(); }
+
+async function doUpload(id, fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const buf  = await file.arrayBuffer();
+  const blob = new Blob([buf], { type: file.type });
+  await dbPut(id, blob);
+
+  // Update UI
+  const fn = document.getElementById(`fn-${id}`);
+  const labelDef = Object.values(SOUND_DEFS).flat().find(d => d.id === id);
+  if (fn) { fn.textContent = `${labelDef?.label ?? id} ✓`; fn.className = 'sound-name ok'; }
+
+  const playBtn = document.getElementById(`play-${id}`);
+  if (playBtn) playBtn.disabled = false;
+  document.querySelector(`#slot-${id} .btn.danger`).disabled = false;
+
+  fileInput.value = '';
+  toast(`✓ Som "${id}" salvo!`);
+}
+
+const _audioCache = {};
+async function playSound(id) {
+  const blob = await dbGet(id);
+  if (!blob) return;
+  if (_audioCache[id]) { _audioCache[id].pause(); _audioCache[id].currentTime = 0; }
+  const audio = new Audio(URL.createObjectURL(blob));
+  _audioCache[id] = audio;
+  audio.play().catch(() => {});
+}
+
+async function deleteSound(id) {
+  if (!confirm(`Deletar som "${id}"?\nPode ser refeito fazendo upload novamente.`)) return;
+  await dbDel(id);
+  const labelDef = Object.values(SOUND_DEFS).flat().find(d => d.id === id);
+  const fn = document.getElementById(`fn-${id}`);
+  if (fn) { fn.textContent = labelDef?.label ?? id; fn.className = 'sound-name'; }
+  document.getElementById(`play-${id}`).disabled = true;
+  document.querySelector(`#slot-${id} .btn.danger`).disabled = true;
+  toast(`🗑 Som "${id}" removido.`);
+}
+
+// ─── Toast ─────────────────────────────────────────────────────────
+function toast(msg) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  Object.assign(el.style, {
+    position:'fixed', bottom:'24px', right:'24px',
+    background:'#4af09a', color:'#000',
+    padding:'10px 20px', borderRadius:'10px',
+    fontWeight:'700', fontSize:'14px',
+    zIndex:'9999', boxShadow:'0 6px 24px rgba(0,0,0,.5)',
+    animation:'slideUp .2s ease',
+  });
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+}
+
+// ─── Animation map data ────────────────────────────────────────────
+const ANIM_MAP_DATA = [
+  { trigger:'Parado / Mirando',       state:'idle',        anim:'Walk_Forward_with_Bow_Aimed' },
+  { trigger:'[W] Caminhar',           state:'walk_aim',    anim:'Walk_Forward_with_Bow_Aimed' },
+  { trigger:'[S] Recuar',             state:'walk_back',   anim:'Walk_Backward_with_Bow_Aimed' },
+  { trigger:'Correr (vel > 6.5)',     state:'run',         anim:'Running' },
+  { trigger:'Correr + Atirar',        state:'run_shoot',   anim:'Run_and_Shoot' },
+  { trigger:'Correr + Recarregar',    state:'run_reload',  anim:'Running_Reload' },
+  { trigger:'[Espaço] Pular',         state:'jump',        anim:'Regular_Jump' },
+  { trigger:'Caindo',                 state:'fall',        anim:'Jump_Over_Obstacle_2' },
+  { trigger:'Encostado na parede',    state:'wall_ready',  anim:'Climb_Stairs' },
+  { trigger:'Wall Jump executado!',   state:'wall_jump',   anim:'Jump_Down_from_Wall' },
+  { trigger:'[Clique] Atirar',        state:'shoot',       anim:'Archery_Shot_1' },
+  { trigger:'[S] + Atirar',          state:'shoot_back',  anim:'Walk_Backward_While_Shooting' },
+  { trigger:'[R] Recarregar',         state:'reload',      anim:'Archery_Shot_3' },
+  { trigger:'Morrer',                 state:'roll',        anim:'Parkour_Vault_with_Roll' },
+];
+
+function buildAnimTable() {
+  const tbody = document.querySelector('#animTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  for (const row of ANIM_MAP_DATA) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${row.trigger}</td>
+      <td><code class="code-accent">${row.state}</code></td>
+      <td><code class="code-dim">${row.anim}</code></td>
+    `;
+    tr.addEventListener('click', () => {
+      document.querySelectorAll('#animTable tbody tr').forEach(r => r.classList.remove('selected'));
+      tr.classList.add('selected');
+      playCharAnim(row.anim);
+    });
+    tbody.appendChild(tr);
+  }
+}
+
+// ─── Babylon.js Previews ───────────────────────────────────────────
+
+// ── Planta Monstro ──
+async function initPlantPreview() {
+  const canvas = document.getElementById('plantCanvas');
+  if (!canvas || canvas._inited) return;
+  canvas._inited = true;
+
+  const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer:true });
+  const scene  = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0.04,0.04,0.07,1);
+
+  const cam = new BABYLON.ArcRotateCamera('c', -Math.PI/2, 1.2, 6,
+    new BABYLON.Vector3(0,0.8,0), scene);
+  cam.attachControl(canvas, true);
+  cam.wheelPrecision = 60;
+  cam.lowerRadiusLimit = 2; cam.upperRadiusLimit = 14;
+
+  const sun = new BABYLON.DirectionalLight('l', new BABYLON.Vector3(-1,-2,-0.8).normalize(), scene);
+  sun.intensity = 2.2;
+  const amb = new BABYLON.HemisphericLight('a', BABYLON.Vector3.Up(), scene);
+  amb.intensity = 0.55;
+  amb.groundColor = new BABYLON.Color3(0.1,0.2,0.1);
+
+  engine.runRenderLoop(() => scene.render());
+  window.addEventListener('resize', () => engine.resize());
+
+  try {
+    const folder = 'assets/itens%203d/ExternalAssets/Sketchfab/RiftfallTheme/Creatures/';
+    const file   = 'monster_plant.glb';
+    const r = await BABYLON.SceneLoader.ImportMeshAsync('', folder, file, scene);
+    if (r.meshes[0]) {
+      r.meshes[0].scaling.setAll(0.013);
+      r.meshes[0].position.y = -0.8;
+    }
+    r.animationGroups?.forEach(ag => ag.stop());
+    if (r.animationGroups?.length) r.animationGroups[0].start(true);
+  } catch(e) {
+    console.warn('Plant preview:', e.message);
+    canvas.style.opacity = '0.3';
+  }
+}
+
+// ── Arma ──
+async function initWeaponPreview() {
+  const canvas = document.getElementById('weaponCanvas');
+  if (!canvas || canvas._inited) return;
+  canvas._inited = true;
+
+  const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer:true });
+  const scene  = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0.04,0.04,0.07,1);
+
+  const cam = new BABYLON.ArcRotateCamera('c', -Math.PI/2, Math.PI/3, 5,
+    BABYLON.Vector3.Zero(), scene);
+  cam.attachControl(canvas, true);
+  cam.wheelPrecision = 60;
+  cam.lowerRadiusLimit = 1; cam.upperRadiusLimit = 12;
+
+  const sun = new BABYLON.DirectionalLight('l', new BABYLON.Vector3(-1,-1,-0.5).normalize(), scene);
+  sun.intensity = 2.5;
+  const amb = new BABYLON.HemisphericLight('a', BABYLON.Vector3.Up(), scene);
+  amb.intensity = 0.6;
+
+  engine.runRenderLoop(() => scene.render());
+  window.addEventListener('resize', () => engine.resize());
+
+  try {
+    const folder = 'assets/itens%203d/Armas/';
+    const file   = 'Arma%20inicial.glb';
+    const r = await BABYLON.SceneLoader.ImportMeshAsync('', folder, file, scene);
+    if (r.meshes[0]) {
+      // Calcula escala automática para caber na câmera
+      const bb   = r.meshes[0].getHierarchyBoundingVectors();
+      const size = Math.max(
+        bb.max.x - bb.min.x,
+        bb.max.y - bb.min.y,
+        bb.max.z - bb.min.z
+      );
+      const scale = 3.5 / Math.max(size, 0.001);
+      r.meshes[0].scaling.setAll(scale);
+      const center = bb.min.add(bb.max).scale(0.5).scale(scale);
+      r.meshes[0].position = center.negate();
+    }
+    r.animationGroups?.forEach(ag => ag.stop());
+    if (r.animationGroups?.length) r.animationGroups[0].start(true);
+  } catch(e) {
+    console.warn('Weapon preview:', e.message);
+    canvas.style.opacity = '0.3';
+  }
+}
+
+// ── Personagem Rato ──
+let charAnimGroups = [];
+let charCurrentAnim = null;
+
+async function initCharPreview() {
+  const canvas = document.getElementById('charCanvas');
+  if (!canvas || canvas._inited) return;
+  canvas._inited = true;
+
+  document.getElementById('charStatus').textContent = 'Carregando personagem…';
+
+  const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer:true });
+  const scene  = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0.04,0.04,0.08,1);
+
+  // Câmera orbit
+  const cam = new BABYLON.ArcRotateCamera('c',
+    -Math.PI/2 + 0.05, Math.PI/2.4, 5.5,
+    new BABYLON.Vector3(0,1.1,0), scene);
+  cam.attachControl(canvas, true);
+  cam.wheelPrecision = 60;
+  cam.lowerRadiusLimit = 2; cam.upperRadiusLimit = 12;
+
+  // Luzes
+  const sun = new BABYLON.DirectionalLight('l',
+    new BABYLON.Vector3(-0.5,-1,-0.4).normalize(), scene);
+  sun.intensity = 2.2;
+  const amb = new BABYLON.HemisphericLight('a', BABYLON.Vector3.Up(), scene);
+  amb.intensity = 0.65;
+  amb.groundColor = new BABYLON.Color3(0.15,0.15,0.2);
+
+  // Chão simples
+  const ground = BABYLON.MeshBuilder.CreateGround('g',{width:5,height:5},scene);
+  const gmat = new BABYLON.StandardMaterial('gm',scene);
+  gmat.diffuseColor  = new BABYLON.Color3(0.08,0.10,0.13);
+  gmat.specularColor = BABYLON.Color3.Black();
+  ground.material = gmat;
+
+  engine.runRenderLoop(() => scene.render());
+  window.addEventListener('resize', () => engine.resize());
+
+  // Caminho codificado do personagem rato
+  const folder = 'assets/itens%203d/Personagem%20FPS-Movimenta%C3%A7%C3%A3o%20parkout/';
+  const file   = 'Meshy_AI_Fa%C3%A7a_um_rato_mistura_biped_Meshy_AI_Meshy_Merged_Animations.glb';
+
+  try {
+    const r = await BABYLON.SceneLoader.ImportMeshAsync('', folder, file, scene);
+
+    if (r.meshes[0]) {
+      r.meshes[0].scaling.setAll(0.015);
+      r.meshes[0].position.y = -0.9;
+
+      // Garante que TODOS os meshes estão visíveis
+      r.meshes.forEach(m => {
+        m.setEnabled(true);
+        m.visibility = 1;
+        m.isVisible  = true;
+        m.alwaysSelectAsActiveMesh = true;
+      });
+      // Garante descendentes habilitados
+      r.meshes[0].getDescendants(false).forEach(n => n.setEnabled(true));
+    }
+
+    charAnimGroups = r.animationGroups ?? [];
+    r.animationGroups?.forEach(ag => ag.stop());
+
+    // Inicia idle por padrão
+    const idle = charAnimGroups.find(a => a.name.includes('Walk_Forward')) ?? charAnimGroups[0];
+    if (idle) {
+      idle.start(true, 1.0, idle.from, idle.to, false);
+      charCurrentAnim = idle;
+      document.getElementById('charAnimName').textContent = idle.name;
+    }
+
+    document.getElementById('charStatus').textContent =
+      `${r.meshes.length} meshes · ${charAnimGroups.length} animações`;
+
+  } catch(e) {
+    document.getElementById('charStatus').textContent =
+      '⚠ Modelo não encontrado — inicie o servidor de jogo (localhost:5500)';
+    console.warn('Char preview:', e.message);
+  }
+
+  buildAnimTable();
+}
+
+function playCharAnim(animName) {
+  const ag = charAnimGroups.find(a => a.name === animName);
+  if (!ag) return;
+  if (charCurrentAnim) charCurrentAnim.stop();
+  ag.start(true, 1.0, ag.from, ag.to, false);
+  charCurrentAnim = ag;
+  document.getElementById('charAnimName').textContent = animName;
+}
+
+// ─── Init ─────────────────────────────────────────────────────────
+(async () => {
+  await openDB();
+  await buildSoundSlots('sounds-enemy-plant', 'enemy-plant');
+  await buildSoundSlots('sounds-weapon-main', 'weapon-main');
+  // Inicia preview da aba ativa
+  initPlantPreview();
+})();
+</script>
+</body>
+</html>

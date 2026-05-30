@@ -1,0 +1,252 @@
+export class CombatSystem {
+  constructor(animController, stateMachine, comboSystem, impactSystem, playerMesh) {
+    this.animController = animController;
+    this.stateMachine = stateMachine;
+    this.comboSystem = comboSystem;
+    this.impactSystem = impactSystem;
+    this.playerMesh = playerMesh;
+
+    // Hit timings para estilo hack-and-slash dinâmico
+    // Suporta múltiplos hits por animação (ex: dois socos rápidos)
+    this.attackData = {
+      // ── SOCOS (LMB) ─────────────────────────────────────────────────
+      punch_01: { hits: [{ hitTime: 0.10, damage: 15, bone: 'RightHand', kb: 1.0 }], comboWindow: 0.30 }, // Jab
+      punch_02: { hits: [{ hitTime: 0.12, damage: 18, bone: 'LeftHand',  kb: 1.2 }], comboWindow: 0.35 }, // Hook
+      punch_03: { hits: [
+        { hitTime: 0.10, damage: 10, bone: 'RightHand', kb: 0.8 },
+        { hitTime: 0.22, damage: 14, bone: 'LeftHand',  kb: 1.5 }
+      ], comboWindow: 0.45 }, // Uppercut duplo
+      punch_04: { hits: [{ hitTime: 0.12, damage: 25, bone: 'RightHand', kb: 1.8 }], comboWindow: 0.45 }, // Cotovelada
+
+      // ── CHUTES (RMB) — GLBs existentes ──────────────────────────────
+      kick_01: { hits: [{ hitTime: 0.20, damage: 30, bone: 'RightFoot', kb: 2.5 }], comboWindow: 0.50 }, // Chute levanta
+      kick_02: { hits: [{ hitTime: 0.25, damage: 50, bone: 'RightFoot', kb: 4.0 }], comboWindow: 0.70 }, // Roundhouse finalizador
+
+      // ── CHUTES EXTRAS (pasta Chutes/ — ativados quando convertidos de FBX → GLB) ──
+      roundhouse:     { hits: [{ hitTime: 0.22, damage: 45, bone: 'RightFoot', kb: 3.5 }], comboWindow: 0.60 },
+      side_kick:      { hits: [{ hitTime: 0.18, damage: 35, bone: 'RightFoot', kb: 2.8 }], comboWindow: 0.50 },
+      leg_sweep:      { hits: [{ hitTime: 0.25, damage: 28, bone: 'RightFoot', kb: 1.5 }], comboWindow: 0.45 }, // derruba
+      inside_crescent:{ hits: [{ hitTime: 0.20, damage: 38, bone: 'RightFoot', kb: 3.0 }], comboWindow: 0.55 },
+      armada:         { hits: [{ hitTime: 0.22, damage: 42, bone: 'RightFoot', kb: 3.2 }], comboWindow: 0.60 },
+      martelo:        { hits: [{ hitTime: 0.18, damage: 40, bone: 'RightFoot', kb: 3.8 }], comboWindow: 0.55 },
+      pontera:        { hits: [{ hitTime: 0.20, damage: 35, bone: 'LeftFoot',  kb: 2.8 }], comboWindow: 0.50 },
+    };
+
+    const scene = this.playerMesh.getScene();
+    
+    // Lista de hitboxes por osso
+    this.limbHitboxes = {};
+    
+    // Função auxiliar para criar uma hitbox invisível arredondada (simulando punho/pé)
+    this._createLimbHitbox = (boneName) => {
+      const sphere = BABYLON.MeshBuilder.CreateSphere(`hitbox_${boneName}`, { diameter: 0.4, segments: 8 }, scene);
+      sphere.isVisible = false; // Pode ser ativada com F2 pelo Player.js
+      return sphere;
+    };
+
+    // Cria as hitboxes, mas elas só serão anexadas aos ossos quando o player atacar (pois o modelo 3D pode carregar depois)
+    this.limbHitboxes['RightHand'] = this._createLimbHitbox('RightHand');
+    this.limbHitboxes['LeftHand']  = this._createLimbHitbox('LeftHand');
+    this.limbHitboxes['RightFoot'] = this._createLimbHitbox('RightFoot');
+    this.limbHitboxes['LeftFoot']  = this._createLimbHitbox('LeftFoot');
+    
+    // Parent padrão inicial para não ficarem presas na origem do mundo
+    Object.values(this.limbHitboxes).forEach(box => {
+      box.parent = this.playerMesh;
+      box.position = new BABYLON.Vector3(0, 1.2, 1.5);
+    });
+    
+    // Referência antiga vazia pra não quebrar o F2 do Player.js
+    this.meleeHitbox = this.limbHitboxes['RightHand']; 
+  }
+
+  lightAttack() {
+    if (this.stateMachine.isAttacking()) {
+      this.comboSystem.registerPunch();
+      return;
+    }
+    if (!this.stateMachine.canAttack()) return;
+    this._executeAttack('punch');
+  }
+
+  kickAttack() {
+    if (this.stateMachine.isAttacking()) {
+      this.comboSystem.registerKick();
+      return;
+    }
+    if (!this.stateMachine.canAttack()) return;
+    this._executeAttack('kick');
+  }
+
+  heavyAttack() {
+    // Futuro: ataque carregado (hold RMB > 0.8s)
+    console.log("Heavy attack — em desenvolvimento");
+  }
+
+  _executeAttack(type) {
+    this.stateMachine.setState("attacking");
+
+    const attackAnim = type === 'kick'
+      ? this.comboSystem.getNextKick()
+      : this.comboSystem.getNextPunch();
+
+    const data = this.attackData[attackAnim];
+    if (!data) {
+      // animação não carregada ainda — reseta sem travar
+      this.comboSystem.reset();
+      this.stateMachine.setState("unarmed");
+      return;
+    }
+
+    // ── Velocidade estilo Dragon Ball — socos rápidos e secos ──────
+    // Cross-combo (alternar punch/kick) acelera ainda mais.
+    const crossBonus = this.comboSystem.isCrossCombo() ? 0.6 : 0;
+    const speed = 3.4 + crossBonus;
+
+    this._lastAttackType = type;
+    this._executeNextAttack(attackAnim, data, speed);
+  }
+
+  _executeNextAttack(attackAnim, data, speed = 3.4) {
+    // Invalida qualquer timer de cancelamento do golpe anterior
+    this._comboToken = (this._comboToken || 0) + 1;
+    const token = this._comboToken;
+    clearTimeout(this._cancelTimer);
+
+    this.animController.play(attackAnim, {
+      loop: false,
+      speed,
+      onComplete: () => { if (token === this._comboToken) this._onAttackFinish(); }
+    });
+
+    // Timing de cada hit (escala com a velocidade da animação)
+    let lastHitTime = 0;
+    data.hits.forEach(hitDef => {
+      const t = (hitDef.hitTime / speed) * 1000;
+      lastHitTime = Math.max(lastHitTime, t);
+      setTimeout(() => {
+        if (token === this._comboToken && this.stateMachine.isAttacking()) {
+          this._applyHit(hitDef, attackAnim);
+        }
+      }, t);
+    });
+
+    // ── Janela de cancelamento (cancel window) ──────────────────────
+    // Logo após o último hit conectar, se houver input no buffer já
+    // parte pro próximo golpe SEM esperar a animação inteira terminar.
+    // É isso que dá o ritmo seco/rápido de Dragon Ball.
+    const cancelAt = lastHitTime + 70;   // 70ms de "active frames" após o hit
+    this._cancelTimer = setTimeout(() => {
+      if (token !== this._comboToken) return;
+      if (!this.stateMachine.isAttacking()) return;
+      const next = this.comboSystem.consumeBuffer();
+      if (next) this._executeAttack(next);   // encadeia imediatamente
+    }, cancelAt);
+  }
+
+  _applyHit(hitDef, animName) {
+    if (!this.playerMesh) return;
+    
+    const activeHitbox = this.limbHitboxes[hitDef.bone] || this.limbHitboxes['RightHand'];
+    
+    // Anexa as hitboxes aos ossos reais do Animator copiando a Posição Absoluta
+    // Mantemos as caixas parentadas à cena (null) ou ao playerMesh para não herdar distorções/escalas de ossos,
+    // mas forçamos elas a ficarem exatamente onde o osso está no espaço 3D real.
+    let socket = null;
+    if (this.playerMesh._playerRef && this.playerMesh._playerRef.animator) {
+      socket = this.playerMesh._playerRef.animator.getSocketNode(hitDef.bone);
+    }
+
+    if (socket) {
+      activeHitbox.parent = null; // Tira de dentro do player para não herdar offsets
+      activeHitbox.position.copyFrom(socket.getAbsolutePosition());
+    } else {
+      // Fallback de segurança: Se não tiver osso, põe na frente do peito
+      activeHitbox.parent = this.playerMesh;
+      activeHitbox.position = new BABYLON.Vector3(0, 1.2, 1.5);
+    }
+    
+    activeHitbox.computeWorldMatrix(true);
+
+    const currentPos = this.playerMesh.position;
+
+    // Impulso sutil para frente para combos mais fluidos (especialmente no ar)
+    const moveDir = this.playerMesh.getDirection(BABYLON.Vector3.Forward());
+    this.playerMesh.moveWithCollisions(moveDir.scale(0.8));
+
+    const scene = this.playerMesh.getScene();
+    let hitSomething = false;
+    const hitEnemies = new Set(); 
+
+    scene.meshes.forEach(m => {
+      if (m.isEnabled() && m._enemyRef && m._enemyRef.hp > 0 && !hitEnemies.has(m._enemyRef)) {
+        
+        // Colisão física real: a hitbox do membro bateu no colisor do inimigo?
+        if (activeHitbox.intersectsMesh(m, false)) {
+          hitSomething = true;
+          const enemy = m._enemyRef;
+          hitEnemies.add(enemy);
+          
+          enemy.takeDamage(hitDef.damage, moveDir, hitDef.kb || 1.0); 
+          
+          // Efeito visual na posição exata da Hitbox (a sua mão/pé) em contato com o inimigo
+          let impactPos = activeHitbox.getAbsolutePosition().clone();
+          
+          if (this.impactSystem) {
+            if (animName.includes("punch")) {
+              this.impactSystem.spawnPunchImpact(impactPos, true);
+            } else {
+              this.impactSystem.spawnKickImpact(impactPos, true);
+            }
+          }
+          console.log(`[Colisão Física - ${hitDef.bone}] POW! Dano aplicado: ${hitDef.damage}`);
+        }
+      }
+    });
+
+    // Se não bateu em nenhum inimigo, checa o cenário
+    if (!hitSomething) {
+      const rayOrigin = currentPos.clone();
+      rayOrigin.y += 1.0; 
+      const ray = new BABYLON.Ray(rayOrigin, moveDir, 2.5);
+      
+      const hit = scene.pickWithRay(ray, m => {
+        return m.isEnabled() && 
+               m.isPickable && 
+               m !== this.playerMesh && 
+               m.parent !== this.playerMesh &&
+               !m.name.startsWith('hit') && 
+               !m.name.startsWith('tracer') && 
+               !m.name.startsWith('muzzle') &&
+               !m.name.startsWith('gun') &&
+               !m.name.startsWith('spark');
+      });
+
+      if (hit?.hit && hit.pickedPoint) {
+        if (this.impactSystem) {
+          if (animName.includes("punch")) {
+            this.impactSystem.spawnPunchImpact(hit.pickedPoint, true);
+          } else {
+            this.impactSystem.spawnKickImpact(hit.pickedPoint, true);
+          }
+        }
+      }
+    }
+  }
+
+  _onAttackFinish() {
+    const nextType = this.comboSystem.consumeBuffer();
+    if (nextType) {
+      this._executeAttack(nextType);
+    } else {
+      this.comboSystem.reset();
+      this.stateMachine.setState("unarmed");
+      this.animController.play("idle", { loop: true });
+    }
+  }
+
+  resetCombo() {
+    this.comboSystem.reset();
+    this.stateMachine.setState("unarmed");
+  }
+}

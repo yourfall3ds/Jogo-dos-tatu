@@ -1,0 +1,11 @@
+# Segredos — nunca versionar
+.env
+.env.local
+
+# Banco de dados local gerado em runtime
+tools/db/
+
+# Logs e temporários
+tools/_*.log
+*.log
+node_modules/

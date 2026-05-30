@@ -1,0 +1,2125 @@
+[
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Alpaking.gltf",
+    "file": "Alpaking.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Alpaking",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Sphere.052"
+    ],
+    "vertexCount": 1339,
+    "boundingBox": {
+      "min": [
+        -2.1519534587860107,
+        1.1647958755493164,
+        -1.9719923734664917
+      ],
+      "max": [
+        2.1519534587860107,
+        3.303781747817993,
+        0.26646754145622253
+      ],
+      "size": [
+        4.3039069175720215,
+        2.1389858722686768,
+        2.2384599149227142
+      ]
+    },
+    "suggestedScale": 0.8415,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Alpaking_Evolved.gltf",
+    "file": "Alpaking_Evolved.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Alpaking_Evolved",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Sphere.001"
+    ],
+    "vertexCount": 3128,
+    "boundingBox": {
+      "min": [
+        -2.1519534587860107,
+        0.5395349860191345,
+        -2.139852285385132
+      ],
+      "max": [
+        2.1519534587860107,
+        3.7314541339874268,
+        0.8331711292266846
+      ],
+      "size": [
+        4.3039069175720215,
+        3.1919191479682922,
+        2.9730234146118164
+      ]
+    },
+    "suggestedScale": 0.5639,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Armabee.gltf",
+    "file": "Armabee.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Armabee",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Sphere.018"
+    ],
+    "vertexCount": 1260,
+    "boundingBox": {
+      "min": [
+        -2.1519534587860107,
+        1.1897464990615845,
+        -1.37824547290802
+      ],
+      "max": [
+        2.1519534587860107,
+        3.0759084224700928,
+        0.6809333562850952
+      ],
+      "size": [
+        4.3039069175720215,
+        1.8861619234085083,
+        2.0591788291931152
+      ]
+    },
+    "suggestedScale": 0.9543,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Armabee_Evolved.gltf",
+    "file": "Armabee_Evolved.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Armabee_Evolved",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.001"
+    ],
+    "vertexCount": 2022,
+    "boundingBox": {
+      "min": [
+        -2.1519534587860107,
+        0.8201850652694702,
+        -1.37824547290802
+      ],
+      "max": [
+        2.1519534587860107,
+        2.958115577697754,
+        0.668084442615509
+      ],
+      "size": [
+        4.3039069175720215,
+        2.1379305124282837,
+        2.046329915523529
+      ]
+    },
+    "suggestedScale": 0.8419,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Demon.gltf",
+    "file": "Demon.gltf",
+    "animations": [
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 84
+      }
+    ],
+    "animationCount": 1,
+    "nodeCount": 47,
+    "boneCount": 43,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Shoulder.L",
+      "UpperArm.L",
+      "LowerArm.L",
+      "Middle1.L",
+      "Middle2.L",
+      "Middle3.L",
+      "Pinky1.L",
+      "Pinky2.L",
+      "Pinky3.L",
+      "Index1.L",
+      "Index2.L",
+      "Index3.L",
+      "Thumb1.L",
+      "Thumb2.L",
+      "Thumb3.L",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Shoulder.R",
+      "UpperArm.R",
+      "LowerArm.R",
+      "Middle1.R",
+      "Middle2.R",
+      "Middle3.R",
+      "Pinky1.R",
+      "Pinky2.R",
+      "Pinky3.R",
+      "Index1.R",
+      "Index2.R",
+      "Index3.R",
+      "Thumb1.R",
+      "Thumb2.R",
+      "Thumb3.R",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Middle3.L",
+      "Middle2.L",
+      "Middle1.L",
+      "Pinky3.L",
+      "Pinky2.L",
+      "Pinky1.L",
+      "Index3.L",
+      "Index2.L",
+      "Index1.L",
+      "Thumb3.L",
+      "Thumb2.L",
+      "Thumb1.L",
+      "LowerArm.L",
+      "UpperArm.L",
+      "Shoulder.L",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Middle3.R",
+      "Middle2.R",
+      "Middle1.R",
+      "Pinky3.R",
+      "Pinky2.R",
+      "Pinky1.R",
+      "Index3.R",
+      "Index2.R",
+      "Index1.R",
+      "Thumb3.R",
+      "Thumb2.R",
+      "Thumb1.R",
+      "LowerArm.R",
+      "UpperArm.R",
+      "Shoulder.R",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Demon_Flying",
+      "Demon_Flying.001",
+      "Demon_Flying.002",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.125",
+      "Cube.000",
+      "Cube.001"
+    ],
+    "vertexCount": 2886,
+    "boundingBox": {
+      "min": [
+        -2.7359256744384766,
+        1.137883186340332,
+        -1.430202841758728
+      ],
+      "max": [
+        2.7359256744384766,
+        2.8137094974517822,
+        0.6342673897743225
+      ],
+      "size": [
+        5.471851348876953,
+        1.6758263111114502,
+        2.0644702315330505
+      ]
+    },
+    "suggestedScale": 1.0741,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Dragon.gltf",
+    "file": "Dragon.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Dragon_Fly",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.222"
+    ],
+    "vertexCount": 2870,
+    "boundingBox": {
+      "min": [
+        -2.191018581390381,
+        1.599732756614685,
+        -1.430202841758728
+      ],
+      "max": [
+        2.191018581390381,
+        3.140411376953125,
+        0.9997074604034424
+      ],
+      "size": [
+        4.382037162780762,
+        1.54067862033844,
+        2.4299103021621704
+      ]
+    },
+    "suggestedScale": 1.1683,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Dragon_Evolved.gltf",
+    "file": "Dragon_Evolved.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 90
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 90
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.5,
+        "channels": 90
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.5,
+        "channels": 90
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.67,
+        "channels": 90
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 90
+      },
+      {
+        "name": "Punch",
+        "duration": 1.33,
+        "channels": 90
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 90
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 48,
+    "boneCount": 46,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Shoulder.L",
+      "UpperArm.L",
+      "LowerArm.L",
+      "Middle1.L",
+      "Middle2.L",
+      "Middle3.L",
+      "Pinky1.L",
+      "Pinky2.L",
+      "Pinky3.L",
+      "Index1.L",
+      "Index2.L",
+      "Index3.L",
+      "Thumb1.L",
+      "Thumb2.L",
+      "Thumb3.L",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Shoulder.R",
+      "UpperArm.R",
+      "LowerArm.R",
+      "Middle1.R",
+      "Middle2.R",
+      "Middle3.R",
+      "Pinky1.R",
+      "Pinky2.R",
+      "Pinky3.R",
+      "Index1.R",
+      "Index2.R",
+      "Index3.R",
+      "Thumb1.R",
+      "Thumb2.R",
+      "Thumb3.R",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1",
+      "Body2",
+      "Body3",
+      "Body4"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Middle3.L",
+      "Middle2.L",
+      "Middle1.L",
+      "Pinky3.L",
+      "Pinky2.L",
+      "Pinky1.L",
+      "Index3.L",
+      "Index2.L",
+      "Index1.L",
+      "Thumb3.L",
+      "Thumb2.L",
+      "Thumb1.L",
+      "LowerArm.L",
+      "UpperArm.L",
+      "Shoulder.L",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Middle3.R",
+      "Middle2.R",
+      "Middle1.R",
+      "Pinky3.R",
+      "Pinky2.R",
+      "Pinky1.R",
+      "Index3.R",
+      "Index2.R",
+      "Index1.R",
+      "Thumb3.R",
+      "Thumb2.R",
+      "Thumb1.R",
+      "LowerArm.R",
+      "UpperArm.R",
+      "Shoulder.R",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body4",
+      "Body3",
+      "Body2",
+      "Body1",
+      "Root",
+      "Dragon",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.221"
+    ],
+    "vertexCount": 4437,
+    "boundingBox": {
+      "min": [
+        -2.7376062870025635,
+        0.30027779936790466,
+        -1.4310814142227173
+      ],
+      "max": [
+        2.7376062870025635,
+        3.1581382751464844,
+        0.984516441822052
+      ],
+      "size": [
+        5.475212574005127,
+        2.8578604757785797,
+        2.4155978560447693
+      ]
+    },
+    "suggestedScale": 0.6298,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Ghost.gltf",
+    "file": "Ghost.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 74
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 74
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 74
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 74
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 40,
+    "boneCount": 38,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Shoulder.L",
+      "UpperArm.L",
+      "LowerArm.L",
+      "Middle1.L",
+      "Middle2.L",
+      "Middle3.L",
+      "Pinky1.L",
+      "Pinky2.L",
+      "Pinky3.L",
+      "Index1.L",
+      "Index2.L",
+      "Index3.L",
+      "Thumb1.L",
+      "Thumb2.L",
+      "Thumb3.L",
+      "Shoulder.R",
+      "UpperArm.R",
+      "LowerArm.R",
+      "Middle1.R",
+      "Middle2.R",
+      "Middle3.R",
+      "Pinky1.R",
+      "Pinky2.R",
+      "Pinky3.R",
+      "Index1.R",
+      "Index2.R",
+      "Index3.R",
+      "Thumb1.R",
+      "Thumb2.R",
+      "Thumb3.R",
+      "Body1",
+      "Body2",
+      "Body3",
+      "Body4"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Middle3.L",
+      "Middle2.L",
+      "Middle1.L",
+      "Pinky3.L",
+      "Pinky2.L",
+      "Pinky1.L",
+      "Index3.L",
+      "Index2.L",
+      "Index1.L",
+      "Thumb3.L",
+      "Thumb2.L",
+      "Thumb1.L",
+      "LowerArm.L",
+      "UpperArm.L",
+      "Shoulder.L",
+      "Middle3.R",
+      "Middle2.R",
+      "Middle1.R",
+      "Pinky3.R",
+      "Pinky2.R",
+      "Pinky1.R",
+      "Index3.R",
+      "Index2.R",
+      "Index1.R",
+      "Thumb3.R",
+      "Thumb2.R",
+      "Thumb1.R",
+      "LowerArm.R",
+      "UpperArm.R",
+      "Shoulder.R",
+      "Torso",
+      "Body4",
+      "Body3",
+      "Body2",
+      "Body1",
+      "Root",
+      "Ghost",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.001"
+    ],
+    "vertexCount": 1837,
+    "boundingBox": {
+      "min": [
+        -2.76387095451355,
+        0.28023767471313477,
+        -0.6253536343574524
+      ],
+      "max": [
+        2.7359251976013184,
+        3.38110613822937,
+        0.6108118295669556
+      ],
+      "size": [
+        5.499796152114868,
+        3.1008684635162354,
+        1.236165463924408
+      ]
+    },
+    "suggestedScale": 0.5805,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Ghost_Skull.gltf",
+    "file": "Ghost_Skull.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 74
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 74
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 74
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 74
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 40,
+    "boneCount": 38,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Shoulder.L",
+      "UpperArm.L",
+      "LowerArm.L",
+      "Middle1.L",
+      "Middle2.L",
+      "Middle3.L",
+      "Pinky1.L",
+      "Pinky2.L",
+      "Pinky3.L",
+      "Index1.L",
+      "Index2.L",
+      "Index3.L",
+      "Thumb1.L",
+      "Thumb2.L",
+      "Thumb3.L",
+      "Shoulder.R",
+      "UpperArm.R",
+      "LowerArm.R",
+      "Middle1.R",
+      "Middle2.R",
+      "Middle3.R",
+      "Pinky1.R",
+      "Pinky2.R",
+      "Pinky3.R",
+      "Index1.R",
+      "Index2.R",
+      "Index3.R",
+      "Thumb1.R",
+      "Thumb2.R",
+      "Thumb3.R",
+      "Body1",
+      "Body2",
+      "Body3",
+      "Body4"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Middle3.L",
+      "Middle2.L",
+      "Middle1.L",
+      "Pinky3.L",
+      "Pinky2.L",
+      "Pinky1.L",
+      "Index3.L",
+      "Index2.L",
+      "Index1.L",
+      "Thumb3.L",
+      "Thumb2.L",
+      "Thumb1.L",
+      "LowerArm.L",
+      "UpperArm.L",
+      "Shoulder.L",
+      "Middle3.R",
+      "Middle2.R",
+      "Middle1.R",
+      "Pinky3.R",
+      "Pinky2.R",
+      "Pinky1.R",
+      "Index3.R",
+      "Index2.R",
+      "Index1.R",
+      "Thumb3.R",
+      "Thumb2.R",
+      "Thumb1.R",
+      "LowerArm.R",
+      "UpperArm.R",
+      "Shoulder.R",
+      "Torso",
+      "Body4",
+      "Body3",
+      "Body2",
+      "Body1",
+      "Root",
+      "Ghost_Skull",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.001"
+    ],
+    "vertexCount": 2408,
+    "boundingBox": {
+      "min": [
+        -2.76387095451355,
+        0.28337180614471436,
+        -0.8488379120826721
+      ],
+      "max": [
+        2.7359254360198975,
+        3.38424015045166,
+        0.6851815581321716
+      ],
+      "size": [
+        5.499796390533447,
+        3.100868344306946,
+        1.5340194702148438
+      ]
+    },
+    "suggestedScale": 0.5805,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Glub.gltf",
+    "file": "Glub.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Glub",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Sphere.051"
+    ],
+    "vertexCount": 1394,
+    "boundingBox": {
+      "min": [
+        -2.1519534587860107,
+        1.3766615390777588,
+        -1.37824547290802
+      ],
+      "max": [
+        2.1519534587860107,
+        3.727522850036621,
+        0.7926973104476929
+      ],
+      "size": [
+        4.3039069175720215,
+        2.3508613109588623,
+        2.170942783355713
+      ]
+    },
+    "suggestedScale": 0.7657,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Glub_Evolved.gltf",
+    "file": "Glub_Evolved.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Glub_Evolved",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Sphere.043"
+    ],
+    "vertexCount": 2426,
+    "boundingBox": {
+      "min": [
+        -2.1519534587860107,
+        0.5236133933067322,
+        -1.37824547290802
+      ],
+      "max": [
+        2.1519534587860107,
+        4.2309889793396,
+        0.6298015713691711
+      ],
+      "size": [
+        4.3039069175720215,
+        3.7073755860328674,
+        2.008047044277191
+      ]
+    },
+    "suggestedScale": 0.4855,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Goleling.gltf",
+    "file": "Goleling.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Goleling",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.009"
+    ],
+    "vertexCount": 2362,
+    "boundingBox": {
+      "min": [
+        -2.191018581390381,
+        1.4888737201690674,
+        -1.430202841758728
+      ],
+      "max": [
+        2.191018581390381,
+        3.041060447692871,
+        0.5119189023971558
+      ],
+      "size": [
+        4.382037162780762,
+        1.5521867275238037,
+        1.9421217441558838
+      ]
+    },
+    "suggestedScale": 1.1597,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Goleling_Evolved.gltf",
+    "file": "Goleling_Evolved.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Goleling_Evolved",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.020"
+    ],
+    "vertexCount": 3688,
+    "boundingBox": {
+      "min": [
+        -2.191018581390381,
+        1.239808201789856,
+        -1.430202841758728
+      ],
+      "max": [
+        2.191018581390381,
+        3.808109998703003,
+        0.7560267448425293
+      ],
+      "size": [
+        4.382037162780762,
+        2.568301796913147,
+        2.1862295866012573
+      ]
+    },
+    "suggestedScale": 0.7009,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Hywirl.gltf",
+    "file": "Hywirl.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 74
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 74
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 74
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 74
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 40,
+    "boneCount": 38,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Shoulder.L",
+      "UpperArm.L",
+      "LowerArm.L",
+      "Middle1.L",
+      "Middle2.L",
+      "Middle3.L",
+      "Pinky1.L",
+      "Pinky2.L",
+      "Pinky3.L",
+      "Index1.L",
+      "Index2.L",
+      "Index3.L",
+      "Thumb1.L",
+      "Thumb2.L",
+      "Thumb3.L",
+      "Shoulder.R",
+      "UpperArm.R",
+      "LowerArm.R",
+      "Middle1.R",
+      "Middle2.R",
+      "Middle3.R",
+      "Pinky1.R",
+      "Pinky2.R",
+      "Pinky3.R",
+      "Index1.R",
+      "Index2.R",
+      "Index3.R",
+      "Thumb1.R",
+      "Thumb2.R",
+      "Thumb3.R",
+      "Body1",
+      "Body2",
+      "Body3",
+      "Body4"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Middle3.L",
+      "Middle2.L",
+      "Middle1.L",
+      "Pinky3.L",
+      "Pinky2.L",
+      "Pinky1.L",
+      "Index3.L",
+      "Index2.L",
+      "Index1.L",
+      "Thumb3.L",
+      "Thumb2.L",
+      "Thumb1.L",
+      "LowerArm.L",
+      "UpperArm.L",
+      "Shoulder.L",
+      "Middle3.R",
+      "Middle2.R",
+      "Middle1.R",
+      "Pinky3.R",
+      "Pinky2.R",
+      "Pinky1.R",
+      "Index3.R",
+      "Index2.R",
+      "Index1.R",
+      "Thumb3.R",
+      "Thumb2.R",
+      "Thumb1.R",
+      "LowerArm.R",
+      "UpperArm.R",
+      "Shoulder.R",
+      "Torso",
+      "Body4",
+      "Body3",
+      "Body2",
+      "Body1",
+      "Root",
+      "Hywirl",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Sphere"
+    ],
+    "vertexCount": 1759,
+    "boundingBox": {
+      "min": [
+        -2.7715420722961426,
+        0.027291154488921165,
+        -0.9663402438163757
+      ],
+      "max": [
+        2.7715420722961426,
+        2.7721662521362305,
+        0.8013715744018555
+      ],
+      "size": [
+        5.543084144592285,
+        2.7448750976473093,
+        1.7677118182182312
+      ]
+    },
+    "suggestedScale": 0.6558,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Pigeon.gltf",
+    "file": "Pigeon.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 24
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 24
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 24
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 24
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 24
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 15,
+    "boneCount": 13,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Pigeon",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.000"
+    ],
+    "vertexCount": 2139,
+    "boundingBox": {
+      "min": [
+        -2.0673129558563232,
+        1.5672686100006104,
+        -1.2521735429763794
+      ],
+      "max": [
+        2.0673129558563232,
+        2.9370381832122803,
+        0.9195916652679443
+      ],
+      "size": [
+        4.1346259117126465,
+        1.36976957321167,
+        2.1717652082443237
+      ]
+    },
+    "suggestedScale": 1.3141,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Squidle.gltf",
+    "file": "Squidle.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 84
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 84
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 84
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 84
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 84
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 84
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 84
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 84
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 45,
+    "boneCount": 43,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Shoulder.L",
+      "UpperArm.L",
+      "LowerArm.L",
+      "Middle1.L",
+      "Middle2.L",
+      "Middle3.L",
+      "Pinky1.L",
+      "Pinky2.L",
+      "Pinky3.L",
+      "Index1.L",
+      "Index2.L",
+      "Index3.L",
+      "Thumb1.L",
+      "Thumb2.L",
+      "Thumb3.L",
+      "Wing1.L",
+      "Wing2.L",
+      "Wing3.L",
+      "Wing4.L",
+      "Shoulder.R",
+      "UpperArm.R",
+      "LowerArm.R",
+      "Middle1.R",
+      "Middle2.R",
+      "Middle3.R",
+      "Pinky1.R",
+      "Pinky2.R",
+      "Pinky3.R",
+      "Index1.R",
+      "Index2.R",
+      "Index3.R",
+      "Thumb1.R",
+      "Thumb2.R",
+      "Thumb3.R",
+      "Wing1.R",
+      "Wing2.R",
+      "Wing3.R",
+      "Wing4.R",
+      "Body1"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Middle3.L",
+      "Middle2.L",
+      "Middle1.L",
+      "Pinky3.L",
+      "Pinky2.L",
+      "Pinky1.L",
+      "Index3.L",
+      "Index2.L",
+      "Index1.L",
+      "Thumb3.L",
+      "Thumb2.L",
+      "Thumb1.L",
+      "LowerArm.L",
+      "UpperArm.L",
+      "Shoulder.L",
+      "Wing4.L",
+      "Wing3.L",
+      "Wing2.L",
+      "Wing1.L",
+      "Middle3.R",
+      "Middle2.R",
+      "Middle1.R",
+      "Pinky3.R",
+      "Pinky2.R",
+      "Pinky1.R",
+      "Index3.R",
+      "Index2.R",
+      "Index1.R",
+      "Thumb3.R",
+      "Thumb2.R",
+      "Thumb1.R",
+      "LowerArm.R",
+      "UpperArm.R",
+      "Shoulder.R",
+      "Wing4.R",
+      "Wing3.R",
+      "Wing2.R",
+      "Wing1.R",
+      "Torso",
+      "Body1",
+      "Root",
+      "Squidle.002",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.001"
+    ],
+    "vertexCount": 2943,
+    "boundingBox": {
+      "min": [
+        -2.7359256744384766,
+        0.9941383004188538,
+        -1.430202841758728
+      ],
+      "max": [
+        2.7359256744384766,
+        2.9807486534118652,
+        0.6924780607223511
+      ],
+      "size": [
+        5.471851348876953,
+        1.9866103529930115,
+        2.122680902481079
+      ]
+    },
+    "suggestedScale": 0.9061,
+    "hasSkin": true
+  },
+  {
+    "path": "assets\\itens 3d\\Assets baixados novos\\glTF-20260528T011429Z-3-001\\glTF\\Tribal.gltf",
+    "file": "Tribal.gltf",
+    "animations": [
+      {
+        "name": "Death",
+        "duration": 0.67,
+        "channels": 74
+      },
+      {
+        "name": "Fast_Flying",
+        "duration": 0.83,
+        "channels": 74
+      },
+      {
+        "name": "Flying_Idle",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Headbutt",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "HitReact",
+        "duration": 0.47,
+        "channels": 74
+      },
+      {
+        "name": "No",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Punch",
+        "duration": 1.17,
+        "channels": 74
+      },
+      {
+        "name": "Yes",
+        "duration": 1.17,
+        "channels": 74
+      }
+    ],
+    "animationCount": 8,
+    "nodeCount": 40,
+    "boneCount": 38,
+    "bones": [
+      "Root",
+      "Torso",
+      "Neck",
+      "Head",
+      "Shoulder.L",
+      "UpperArm.L",
+      "LowerArm.L",
+      "Middle1.L",
+      "Middle2.L",
+      "Middle3.L",
+      "Pinky1.L",
+      "Pinky2.L",
+      "Pinky3.L",
+      "Index1.L",
+      "Index2.L",
+      "Index3.L",
+      "Thumb1.L",
+      "Thumb2.L",
+      "Thumb3.L",
+      "Shoulder.R",
+      "UpperArm.R",
+      "LowerArm.R",
+      "Middle1.R",
+      "Middle2.R",
+      "Middle3.R",
+      "Pinky1.R",
+      "Pinky2.R",
+      "Pinky3.R",
+      "Index1.R",
+      "Index2.R",
+      "Index3.R",
+      "Thumb1.R",
+      "Thumb2.R",
+      "Thumb3.R",
+      "Body1",
+      "Body2",
+      "Body3",
+      "Body4"
+    ],
+    "nodes": [
+      "Head",
+      "Neck",
+      "Middle3.L",
+      "Middle2.L",
+      "Middle1.L",
+      "Pinky3.L",
+      "Pinky2.L",
+      "Pinky1.L",
+      "Index3.L",
+      "Index2.L",
+      "Index1.L",
+      "Thumb3.L",
+      "Thumb2.L",
+      "Thumb1.L",
+      "LowerArm.L",
+      "UpperArm.L",
+      "Shoulder.L",
+      "Middle3.R",
+      "Middle2.R",
+      "Middle1.R",
+      "Pinky3.R",
+      "Pinky2.R",
+      "Pinky1.R",
+      "Index3.R",
+      "Index2.R",
+      "Index1.R",
+      "Thumb3.R",
+      "Thumb2.R",
+      "Thumb1.R",
+      "LowerArm.R",
+      "UpperArm.R",
+      "Shoulder.R",
+      "Torso",
+      "Body4",
+      "Body3",
+      "Body2",
+      "Body1",
+      "Root",
+      "Tribal_Flying",
+      "CharacterArmature"
+    ],
+    "meshes": [
+      "Cube.000"
+    ],
+    "vertexCount": 3531,
+    "boundingBox": {
+      "min": [
+        -2.7498984336853027,
+        0.32946836948394775,
+        -0.8500687479972839
+      ],
+      "max": [
+        2.7498984336853027,
+        4.4371466636657715,
+        0.5267801880836487
+      ],
+      "size": [
+        5.4997968673706055,
+        4.107678294181824,
+        1.3768489360809326
+      ]
+    },
+    "suggestedScale": 0.4382,
+    "hasSkin": true
+  }
+]
