@@ -2,29 +2,35 @@
 //  BuildMode — modo construção estilo The Sims / V Rising / Minecraft
 //
 //  FLUXO:
-//    B           → abre catálogo (cursor livre, sidebar)
-//    Clica item  → entra em modo PLACING (pointer lock + overlay HUD)
-//    No placing:
-//      Mouse  — mira (ghost segue crosshair via raycast)
-//      [ ]    — rotaciona Y ±15°
-//      R / F  — sobe / desce ghost
-//      = / -  — aumenta / diminui escala
-//      LMB    — coloca o objeto
-//      Tab    — volta ao catálogo (sem fechar o modo)
-//      ESC    — cancela ghost / fecha catálogo
-//    Del  — desfaz último objeto colocado
-//    G    — cicla grid (0 / 0.5 / 1 / 2)
+//    B            → abre catálogo (cursor livre, sidebar)
+//    Clica item   → entra em modo PLACING (pointer lock + overlay HUD)
 //
-//  A "Máquina de Criação" é um item especial que ao ser colocado
-//  spawna a AssetMachine com animação de deploy completa.
+//  CONTROLES NO PLACING:
+//    T (padrão)      — ghost segue crosshair (modo mover)
+//    Hold R + mouseX — rotaciona (câmera congela)
+//    Hold Q + mouseY — escala proporcional (câmera congela; cima=+, baixo=-)
+//    ↑ / ↓           — altura (ajuste fino)
+//    ← / →           — strafe esquerda/direita relativo à câmera
+//    LMB             — coloca o objeto
+//    Tab             — volta ao catálogo
+//    ESC             — cancela / fecha
+//    Del             — desfaz último
+//    G               — cicla grid (livre / 0.5 / 1 / 2)
 //
-//  Salva tudo no LocalDB (coleção 'placed').
+//  IMPORTANTE: preUpdate(input) deve ser chamado ANTES de player.update()
+//  no game loop para que R/Q consumam o delta do mouse antes da câmera.
+//
+//  A "Máquina de Criação" é item especial — ao colocar spawna AssetMachine
+//  com animação de deploy completa.
 // ─────────────────────────────────────────────────────────────────
 import { LocalDB }       from '../data/LocalDB.js';
 import { AssetRegistry } from '../data/AssetRegistry.js';
 
-// Caminhos da Máquina de Criação (Phase 1 = forma compacta para o ghost)
 const MACHINE_P1 = 'assets/itens 3d/Maquina de assets/Meshy_AI_Phase_1_Compact_Disc_0530011922_image-to-3d-texture.glb';
+
+const ARROW_SPD  = 0.07;  // velocidade das setas (unidades/frame)
+const ROT_SENS   = 0.008; // sensibilidade mouse → rotação (rad/px)
+const SCALE_SENS = 0.004; // sensibilidade mouse → escala (fração/px)
 
 export class BuildMode {
   constructor(scene, player, level) {
@@ -33,30 +39,36 @@ export class BuildMode {
     this.level  = level;
 
     // ── Estado ─────────────────────────────────────────────────────
-    // 'inactive' | 'catalog' | 'placing'
-    this._state = 'inactive';
+    this._state = 'inactive';   // 'inactive' | 'catalog' | 'placing'
 
     // ── Ghost ──────────────────────────────────────────────────────
-    this._ghost      = null;       // mesh root do ghost
-    this._ghostMeshes = null;      // todos os meshes do ghost
-    this._ghostSrc   = null;       // item selecionado { kind, id, name, path|glbUrl, special? }
-    this._rotY       = 0;          // rotação acumulada
-    this._heightOff  = 0;          // offset de altura manual
-    this._scaleM     = 1.0;        // multiplicador de escala
-    this._grid       = 1.0;        // snap de grid (0 = livre)
+    this._ghost       = null;
+    this._ghostMeshes = null;
+    this._ghostSrc    = null;
+    this._rotY        = 0;
+    this._scaleM      = 1.0;
+    this._grid        = 1.0;
+
+    // Offsets acumulados pelas setas (ajuste fino)
+    this._offX = 0;
+    this._offY = 0;
+    this._offZ = 0;
+
+    // Mouse delta pré-consumido pelo preUpdate (R/Q mode)
+    this._preDX = 0;
+    this._preDY = 0;
 
     // ── Objetos colocados ──────────────────────────────────────────
     this._placed = [];
 
-    // ── Anti-repeat de teclas ──────────────────────────────────────
-    this._keys = {};               // teclas monitoradas por borda
+    // ── Teclas (borda e held) ──────────────────────────────────────
+    this._keys = {};
+    this._prev = {};
     window.addEventListener('keydown', e => { this._keys[e.code] = true;  });
     window.addEventListener('keyup',   e => { this._keys[e.code] = false; });
-    this._prev = {};
 
-    // ── Catálogo de itens ──────────────────────────────────────────
+    // ── Init ───────────────────────────────────────────────────────
     this._catalog = [];
-
     this._buildUI();
     this._buildHUD();
     this._loadCatalog();
@@ -86,10 +98,12 @@ export class BuildMode {
         </div>
       </div>
 
-      <div style="font-size:10px;color:#6a9;line-height:1.5;margin-bottom:8px">
+      <div style="font-size:10px;color:#6a9;line-height:1.7;margin-bottom:8px">
         Clique num item → mira em 1ª pessoa para posicionar.<br>
-        <b>[ ]</b> girar &nbsp;<b>R/F</b> altura &nbsp;<b>= /-</b> escala &nbsp;
-        <b>LMB</b> colocar &nbsp;<b>Tab</b> catálogo &nbsp;<b>Del</b> desfazer
+        <b>Hold R</b> + mouse ← → &nbsp;girar<br>
+        <b>Hold Q</b> + mouse ↑ ↓ &nbsp;escala<br>
+        <b>Setas</b> ajuste fino (↑↓ altura, ←→ strafe)<br>
+        <b>LMB</b> colocar &nbsp;&nbsp;<b>Tab</b> catálogo &nbsp;&nbsp;<b>Del</b> desfazer
       </div>
 
       <div style="display:flex;gap:5px;margin-bottom:8px">
@@ -121,33 +135,34 @@ export class BuildMode {
   }
 
   // ══════════════════════════════════════════════════════════════════
-  //  UI: Overlay HUD de posicionamento (aparece quando ghost ativo)
+  //  UI: HUD overlay (aparece no modo placing)
   // ══════════════════════════════════════════════════════════════════
   _buildHUD() {
     const el = document.createElement('div');
     el.id = 'build-hud';
     el.style.cssText = [
-      'position:fixed','bottom:24px','left:50%','transform:translateX(-50%)',
+      'position:fixed','bottom:22px','left:50%','transform:translateX(-50%)',
       'background:rgba(6,9,16,0.90)','border:1px solid #3a8',
       'color:#cde','font-family:Segoe UI,monospace','font-size:12px',
       'padding:8px 20px','border-radius:10px','pointer-events:none',
       'display:none','z-index:9200','white-space:nowrap',
-      'box-shadow:0 0 18px rgba(60,200,120,0.25)',
+      'box-shadow:0 0 16px rgba(60,200,120,0.25)',
     ].join(';');
     el.innerHTML = `
       <span id="bh-item" style="color:#5fc;font-weight:bold"></span>
+      <span id="bh-mode" style="color:#fa6;margin:0 8px"></span>
       &nbsp;|&nbsp;
-      <b style="color:#aef">LMB</b> colocar &nbsp;
-      <b style="color:#aef">[ ]</b> girar &nbsp;
-      <b style="color:#aef">R/F</b> altura &nbsp;
-      <b style="color:#aef">=/−</b> escala &nbsp;
-      <b style="color:#aef">Tab</b> catálogo &nbsp;
+      <b style="color:#aef">Hold R</b>+🖱←→ girar&nbsp;
+      <b style="color:#aef">Hold Q</b>+🖱↑↓ escala&nbsp;
+      <b style="color:#aef">Setas</b> fino&nbsp;
+      <b style="color:#aef">LMB</b> colocar&nbsp;
+      <b style="color:#fa6">Tab</b> catálogo&nbsp;
       <b style="color:#fa6">Del</b> desfazer
     `;
     document.body.appendChild(el);
     this._hud = el;
 
-    // Crosshair extra para sinalizar modo construção
+    // Crosshair especial do modo construção
     const ch = document.createElement('div');
     ch.id = 'build-crosshair';
     ch.style.cssText = [
@@ -168,7 +183,7 @@ export class BuildMode {
   async _loadCatalog() {
     const base = [];
 
-    // ── Item especial: Máquina de Criação (sempre no topo) ──────────
+    // Item especial: Máquina de Criação (sempre no topo)
     base.push({
       kind: 'special', id: 'assetMachine',
       name: '🤖 Máquina de Criação',
@@ -176,14 +191,14 @@ export class BuildMode {
       special: 'assetMachine',
     });
 
-    // ── Props do AssetRegistry (item + nature) ──────────────────────
+    // Props do AssetRegistry
     for (const cat of ['item', 'nature']) {
       for (const id of AssetRegistry.ids(cat)) {
         base.push({ kind: 'registry', cat, id, name: id, path: AssetRegistry.path(cat, id) });
       }
     }
 
-    // ── Assets gerados pelo Meshy ───────────────────────────────────
+    // Assets gerados pelo Meshy
     let generated = [];
     try { generated = await LocalDB.get('generated_assets', []); } catch (_) {}
     this._catalog = [
@@ -194,7 +209,7 @@ export class BuildMode {
   }
 
   _renderCatalog() {
-    const c = this._el.querySelector('#build-catalog');
+    const c = this._el?.querySelector('#build-catalog');
     if (!c) return;
     c.innerHTML = '';
     if (!this._catalog.length) {
@@ -215,50 +230,45 @@ export class BuildMode {
     }
   }
 
-  // ── Cicla tamanhos de grid ─────────────────────────────────────────
   _cycleGrid() {
     const steps = [0, 0.5, 1.0, 2.0];
     const i = steps.indexOf(this._grid);
     this._grid = steps[(i + 1) % steps.length];
-    const btn = this._el.querySelector('#build-grid');
+    const btn = this._el?.querySelector('#build-grid');
     if (btn) btn.textContent = 'Grid: ' + (this._grid || 'livre');
   }
 
   // ══════════════════════════════════════════════════════════════════
-  //  Ghost — criar / destruir
+  //  Ghost
   // ══════════════════════════════════════════════════════════════════
   async _selectItem(item) {
-    this._ghostSrc  = item;
-    this._heightOff = 0;
-    this._scaleM    = 1.0;
-    this._rotY      = 0;
+    this._ghostSrc = item;
+    this._rotY     = 0;
+    this._scaleM   = 1.0;
+    this._offX = this._offY = this._offZ = 0;
     this._disposeGhost();
 
-    const url      = item.glbUrl || item.path;
-    const isBlob   = url.startsWith('blob:');
-    const enc      = p => p.split('/').map(s => encodeURIComponent(s)).join('/');
+    const url       = item.glbUrl || item.path;
+    const isBlob    = url.startsWith('blob:');
+    const enc       = p => p.split('/').map(s => encodeURIComponent(s)).join('/');
     const lastSlash = url.lastIndexOf('/');
-    const folder   = isBlob ? '' : enc(url.substring(0, lastSlash + 1));
-    const file     = isBlob ? url : encodeURIComponent(url.substring(lastSlash + 1));
+    const folder    = isBlob ? '' : enc(url.substring(0, lastSlash + 1));
+    const file      = isBlob ? url : encodeURIComponent(url.substring(lastSlash + 1));
 
     try {
-      const res = await BABYLON.SceneLoader.ImportMeshAsync('', folder, file, this.scene);
+      const res  = await BABYLON.SceneLoader.ImportMeshAsync('', folder, file, this.scene);
       const root = res.meshes[0];
       root.name  = '_ghost_' + item.id;
 
-      // Material translúcido verde para o ghost
-      const gm = new BABYLON.StandardMaterial('_ghostMat', this.scene);
-      gm.diffuseColor  = new BABYLON.Color3(0.3, 1.0, 0.5);
-      gm.emissiveColor = new BABYLON.Color3(0.1, 0.45, 0.2);
-      gm.alpha         = 0.50;
+      const gm = new BABYLON.StandardMaterial('_ghostMat_' + item.id, this.scene);
+      gm.diffuseColor    = new BABYLON.Color3(0.3, 1.0, 0.5);
+      gm.emissiveColor   = new BABYLON.Color3(0.1, 0.45, 0.2);
+      gm.alpha           = 0.50;
       gm.disableLighting = true;
-      gm.wireframe     = false;
       res.meshes.forEach(m => { m.material = gm; m.isPickable = false; });
 
-      this._ghost      = root;
+      this._ghost       = root;
       this._ghostMeshes = res.meshes;
-
-      // Entra em modo PLACING
       this._enterPlacing();
     } catch (e) {
       console.warn('[BuildMode] ghost falhou:', e.message);
@@ -278,29 +288,29 @@ export class BuildMode {
   // ══════════════════════════════════════════════════════════════════
   _enterCatalog() {
     this._state = 'catalog';
-    this._el.style.display = 'flex';
+    this._el.style.display  = 'flex';
     this._hud.style.display = 'none';
     this._ch.style.display  = 'none';
     this._disposeGhost();
-    window._gameInput?.deactivate?.();   // cursor livre para clicar no catálogo
+    window._gameInput?.deactivate?.();
   }
 
   _enterPlacing() {
     this._state = 'placing';
-    this._el.style.display  = 'none';    // esconde sidebar
+    this._el.style.display  = 'none';
     this._hud.style.display = 'block';
     this._ch.style.display  = 'block';
-    const name = this._hud.querySelector('#bh-item');
-    if (name) name.textContent = this._ghostSrc?.name ?? '';
+    this._setHUDItem(this._ghostSrc?.name ?? '');
+    this._setHUDMode('T');
 
-    // Salva o onDeactivated original e substitui:
-    // ESC libera pointer lock → em vez de entrar no engine mode, volta ao catálogo
+    // Quando o browser liberar o pointer lock (ESC),
+    // voltamos ao catálogo em vez de abrir o engine mode
     const inp = window._gameInput;
     if (inp) {
       this._savedOnDeactivated = inp.onDeactivated;
       inp.onDeactivated = () => this._leavePlacing();
     }
-    inp?.activate?.();   // re-lock pointer para mirar em 1ª pessoa
+    inp?.activate?.();
   }
 
   _leavePlacing() {
@@ -309,19 +319,17 @@ export class BuildMode {
     this._el.style.display  = 'flex';
     this._hud.style.display = 'none';
     this._ch.style.display  = 'none';
+    this._preDX = this._preDY = 0;
 
-    // Restaura onDeactivated original antes de liberar o pointer lock
     const inp = window._gameInput;
     if (inp && this._savedOnDeactivated !== undefined) {
-      inp.onDeactivated = this._savedOnDeactivated;
+      inp.onDeactivated      = this._savedOnDeactivated;
       this._savedOnDeactivated = undefined;
     }
     inp?.deactivate?.();
   }
 
-  show() {
-    if (this._state === 'inactive') this._enterCatalog();
-  }
+  show() { if (this._state === 'inactive') this._enterCatalog(); }
   hide() {
     this._disposeGhost();
     this._state = 'inactive';
@@ -329,117 +337,131 @@ export class BuildMode {
     this._hud.style.display = 'none';
     this._ch.style.display  = 'none';
     this._ghostSrc = null;
-    window._gameInput?.activate?.();
+
+    const inp = window._gameInput;
+    if (inp && this._savedOnDeactivated !== undefined) {
+      inp.onDeactivated      = this._savedOnDeactivated;
+      this._savedOnDeactivated = undefined;
+    }
+    inp?.activate?.();
   }
-  toggle() {
-    if (this._state === 'inactive') this.show();
-    else                            this.hide();
+  toggle() { this._state === 'inactive' ? this.show() : this.hide(); }
+
+  // ── Helpers de HUD ────────────────────────────────────────────────
+  _setHUDItem(name) {
+    const el = this._hud?.querySelector('#bh-item');
+    if (el) el.textContent = name;
+  }
+  _setHUDMode(mode) {
+    const el = this._hud?.querySelector('#bh-mode');
+    if (!el) return;
+    const labels = { T: '[ MOVER ]', R: '[ GIRAR 🔄 ]', Q: '[ ESCALA ↕ ]' };
+    el.textContent = labels[mode] ?? '';
   }
 
   // ══════════════════════════════════════════════════════════════════
-  //  Helpers de posicionamento
+  //  preUpdate — DEVE ser chamado ANTES de player.update() no main.js
+  //
+  //  Quando R ou Q estão segurados, consome o mouse delta do input
+  //  antes que a câmera do player use para look.
   // ══════════════════════════════════════════════════════════════════
+  preUpdate(input) {
+    this._preDX = 0;
+    this._preDY = 0;
+    if (this._state !== 'placing') return;
 
-  /** Raycast do centro da tela para qualquer superfície sólida */
-  _groundPoint() {
-    const eng = this.scene.getEngine();
-    const ray = this.scene.createPickingRay(
-      eng.getRenderWidth() / 2,
-      eng.getRenderHeight() / 2,
-      BABYLON.Matrix.Identity(),
-      this.scene.activeCamera,
-    );
-    const hit = this.scene.pickWithRay(
-      ray,
-      m => m.checkCollisions === true && m.isPickable !== false && !m.name.startsWith('_ghost'),
-    );
-    return hit?.hit ? hit.pickedPoint : null;
+    const rHeld = !!this._keys['KeyR'];
+    const qHeld = !!this._keys['KeyQ'];
+
+    if (rHeld || qHeld) {
+      // Consome o delta: câmera não se move, build mode usa o mouse
+      const { dx, dy } = input.consumeMouseDelta();
+      this._preDX = dx;
+      this._preDY = dy;
+    }
   }
 
-  _edge(code) {
-    const now  = !!this._keys[code];
-    const prev = !!this._prev[code];
-    this._prev[code] = now;
-    return now && !prev;
-  }
-  _held(code) { return !!this._keys[code]; }
-
   // ══════════════════════════════════════════════════════════════════
-  //  Update — chamado todo frame
+  //  update — chamado todo frame (após player.update)
   // ══════════════════════════════════════════════════════════════════
   update() {
-    // ── Toggle B ────────────────────────────────────────────────────
-    if (this._edge('KeyB')) {
-      this.toggle();
-    }
-
+    // ── Toggle B ──────────────────────────────────────────────────────
+    if (this._edge('KeyB')) this.toggle();
     if (this._state === 'inactive') return;
 
-    // ── Del: desfazer ────────────────────────────────────────────────
+    // ── Del / G — acessíveis em ambos estados ──────────────────────────
     if (this._edge('Delete')) this._undo();
+    if (this._edge('KeyG'))   this._cycleGrid();
 
-    // ── G: cicla grid ─────────────────────────────────────────────────
-    if (this._edge('KeyG')) this._cycleGrid();
+    if (this._state === 'catalog') return;
 
-    if (this._state === 'catalog') {
-      // Nada extra no catálogo — interação via mouse no DOM
-      return;
-    }
-
-    // ─────────────────────────────────────────────────────────────────
-    //  Estado: PLACING
-    // ─────────────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════
+    //  PLACING
+    // ══════════════════════════════════════════════════════════════════
     if (!this._ghost) return;
 
-    // ── Tab: volta ao catálogo ─────────────────────────────────────
-    if (this._edge('Tab')) { this._leavePlacing(); return; }
-
-    // ── ESC: cancela ghost ─────────────────────────────────────────
+    // ── Navegação ─────────────────────────────────────────────────────
+    if (this._edge('Tab'))    { this._leavePlacing(); return; }
     if (this._edge('Escape')) { this._leavePlacing(); return; }
 
-    // ── Rotação [ / ] — suave ao segurar, snap de 15° no toque ───────
-    const SNAP = Math.PI / 12;  // 15°
-    const rR = this._edge('BracketRight');
-    const rL = this._edge('BracketLeft');
-    if (this._held('BracketRight')) this._rotY += 0.03;
-    if (this._held('BracketLeft'))  this._rotY -= 0.03;
-    if (rR) this._rotY = Math.round(this._rotY / SNAP) * SNAP;
-    if (rL) this._rotY = Math.round(this._rotY / SNAP) * SNAP;
+    const rHeld = !!this._keys['KeyR'];
+    const qHeld = !!this._keys['KeyQ'];
 
-    // ── Altura R (sobe) / F (desce) ───────────────────────────────
-    const HEIGHT_SPD = 0.06;
-    if (this._held('KeyR')) this._heightOff += HEIGHT_SPD;
-    if (this._held('KeyF')) this._heightOff  = Math.max(-0.5, this._heightOff - HEIGHT_SPD);
+    // ── HUD: atualiza modo ──────────────────────────────────────────
+    const mode = rHeld ? 'R' : qHeld ? 'Q' : 'T';
+    this._setHUDMode(mode);
 
-    // ── Escala = (cresce) / - (diminui) ──────────────────────────
-    const SCALE_SPD = 0.01;
-    if (this._held('Equal'))  this._scaleM = Math.min(5.0, this._scaleM + SCALE_SPD);
-    if (this._held('Minus'))  this._scaleM = Math.max(0.1, this._scaleM - SCALE_SPD);
-
-    // ── Move ghost para o ponto sob o crosshair ────────────────────
-    const gp = this._groundPoint();
-    if (gp) {
-      let x = gp.x, z = gp.z;
-      if (this._grid > 0) {
-        x = Math.round(x / this._grid) * this._grid;
-        z = Math.round(z / this._grid) * this._grid;
-      }
-      this._ghost.position.set(x, gp.y + this._heightOff, z);
-      this._ghost.rotation.y = this._rotY;
-      this._ghost.scaling.setAll(this._scaleM);
+    // ── Hold R → rotaciona com mouse X ────────────────────────────────
+    if (rHeld && this._preDX !== 0) {
+      this._rotY += this._preDX * ROT_SENS;
     }
 
-    // ── LMB coloca o objeto ────────────────────────────────────────
-    // (clique é rotado pelo main.js → onClick())
+    // ── Hold Q → escala com mouse Y (cima = maior) ─────────────────────
+    if (qHeld && this._preDY !== 0) {
+      this._scaleM = Math.max(0.05, Math.min(8.0, this._scaleM - this._preDY * SCALE_SENS));
+    }
+
+    // ── Setas: ajuste fino de posição ──────────────────────────────────
+    //  ↑ ↓  → altura (Y)
+    //  ← →  → strafe relativo à câmera (X/Z)
+    const yawRad = BABYLON.Tools.ToRadians(this.player?.yaw ?? 0);
+    const rgtX   =  Math.cos(yawRad);
+    const rgtZ   = -Math.sin(yawRad);
+
+    if (this._held('ArrowUp'))    this._offY += ARROW_SPD;
+    if (this._held('ArrowDown'))  this._offY -= ARROW_SPD;
+    if (this._held('ArrowRight')) { this._offX += rgtX * ARROW_SPD; this._offZ += rgtZ * ARROW_SPD; }
+    if (this._held('ArrowLeft'))  { this._offX -= rgtX * ARROW_SPD; this._offZ -= rgtZ * ARROW_SPD; }
+
+    // ── T mode: ghost segue crosshair (apenas quando NÃO está em R/Q) ──
+    if (!rHeld && !qHeld) {
+      const gp = this._groundPoint();
+      if (gp) {
+        let x = gp.x + this._offX, z = gp.z + this._offZ;
+        if (this._grid > 0) {
+          x = Math.round(x / this._grid) * this._grid;
+          z = Math.round(z / this._grid) * this._grid;
+        }
+        this._ghost.position.set(x, gp.y + this._offY, z);
+      }
+    }
+    // Em R ou Q mode: ghost fica parado, só rotação/escala muda
+
+    // Aplica rotação e escala no ghost
+    this._ghost.rotation.y = this._rotY;
+    this._ghost.scaling.setAll(this._scaleM);
   }
 
-  // ── Chamado por clique no canvas (main.js) ─────────────────────────
+  // ── LMB: coloca objeto (chamado por main.js) ──────────────────────
   onClick() {
     if (this._state !== 'placing' || !this._ghost) return false;
-    const pos   = this._ghost.position.clone();
-    const rotY  = this._rotY;
-    const scale = this._scaleM;
-    this._placeAt(pos, rotY, scale);
+    this._placeAt(
+      this._ghost.position.clone(),
+      this._rotY,
+      this._scaleM,
+    );
+    // Reset offsets para o próximo placement
+    this._offX = this._offY = this._offZ = 0;
     return true;
   }
 
@@ -450,7 +472,7 @@ export class BuildMode {
     const item = this._ghostSrc;
     if (!item) return;
 
-    // ── Item especial: Máquina de Criação ───────────────────────────
+    // Item especial: Máquina de Criação
     if (item.special === 'assetMachine') {
       const { AssetMachine } = await import('../items/AssetMachine.js');
       new AssetMachine(
@@ -465,18 +487,18 @@ export class BuildMode {
       return;
     }
 
-    // ── Item normal: GLB ─────────────────────────────────────────────
-    const url      = item.glbUrl || item.path;
-    const enc      = p => p.split('/').map(s => encodeURIComponent(s)).join('/');
-    const isBlob   = url.startsWith('blob:');
+    // Item GLB normal
+    const url       = item.glbUrl || item.path;
+    const enc       = p => p.split('/').map(s => encodeURIComponent(s)).join('/');
+    const isBlob    = url.startsWith('blob:');
     const lastSlash = url.lastIndexOf('/');
-    const folder   = isBlob ? '' : enc(url.substring(0, lastSlash + 1));
-    const file     = isBlob ? url : encodeURIComponent(url.substring(lastSlash + 1));
+    const folder    = isBlob ? '' : enc(url.substring(0, lastSlash + 1));
+    const file      = isBlob ? url : encodeURIComponent(url.substring(lastSlash + 1));
 
     try {
       const res  = await BABYLON.SceneLoader.ImportMeshAsync('', folder, file, this.scene);
       const root = res.meshes[0];
-      const uid  = `placed_${item.id}_${this._placed.length}_${Math.floor(pos.x)}_${Math.floor(pos.z)}`;
+      const uid  = `placed_${item.id}_${this._placed.length}`;
       root.name  = uid;
       root.position.copyFrom(pos);
       root.rotation.y = rotY;
@@ -502,9 +524,36 @@ export class BuildMode {
     this._save();
   }
 
-  // ── Adiciona item ao catálogo (chamado pelo MeshyPanel ao salvar) ───
+  // ── Adiciona item ao catálogo (chamado pelo MeshyPanel ao salvar) ─
   addToCatalog(item) {
     this._catalog.unshift(item);
     this._renderCatalog();
   }
+
+  // ══════════════════════════════════════════════════════════════════
+  //  Helpers internos
+  // ══════════════════════════════════════════════════════════════════
+  _groundPoint() {
+    const eng = this.scene.getEngine();
+    const ray = this.scene.createPickingRay(
+      eng.getRenderWidth()  / 2,
+      eng.getRenderHeight() / 2,
+      BABYLON.Matrix.Identity(),
+      this.scene.activeCamera,
+    );
+    const hit = this.scene.pickWithRay(
+      ray,
+      m => m.checkCollisions === true && m.isPickable !== false && !m.name.startsWith('_ghost'),
+    );
+    return hit?.hit ? hit.pickedPoint : null;
+  }
+
+  _edge(code) {
+    const now  = !!this._keys[code];
+    const prev = !!this._prev[code];
+    this._prev[code] = now;
+    return now && !prev;
+  }
+
+  _held(code) { return !!this._keys[code]; }
 }

@@ -262,6 +262,9 @@ async function init() {
       return;
     }
 
+    // BuildMode pré-consome mouse delta se R/Q segurado (antes do player olhar)
+    buildMode.preUpdate(input);
+
     // Só atualiza lógica quando o jogo está ativo (pointer lock = focado)
     if (input.gameActive) {
       player.update(dt);
