@@ -300,10 +300,8 @@ async function init() {
     }
   });
 
-  // ── Clique no modo construção coloca o objeto ────────────────────
-  canvas.addEventListener('mousedown', e => {
-    if (e.button === 0 && buildMode._active) { buildMode.onClick(); }
-  });
+  // Nota: clique LMB no build mode é tratado via buildMode.preUpdate()
+  // (que consome o click antes do player para não atirar)
 
   // ── Carrega assets em background (após o jogo já estar jogável) ──
   _loadAssetsBackground(loader, player, level, shadowGen, scene);

@@ -362,24 +362,34 @@ export class BuildMode {
   // ══════════════════════════════════════════════════════════════════
   //  preUpdate — DEVE ser chamado ANTES de player.update() no main.js
   //
-  //  Quando R ou Q estão segurados, consome o mouse delta do input
-  //  antes que a câmera do player use para look.
+  //  • Quando R ou Q estão segurados: consome mouse delta para que a
+  //    câmera do player NÃO gire.
+  //  • Quando placing: consome o click para que a arma NÃO atire.
   // ══════════════════════════════════════════════════════════════════
   preUpdate(input) {
-    this._preDX = 0;
-    this._preDY = 0;
+    this._preDX       = 0;
+    this._preDY       = 0;
+    this._pendingClick = false;
+
     if (this._state !== 'placing') return;
 
+    // ── Consome click (impede que a arma atire) ──────────────────────
+    if (input.consumeClick()) {
+      this._pendingClick = true;
+    }
+
+    // ── R / Q: consome mouse delta (câmera congela) ──────────────────
     const rHeld = !!this._keys['KeyR'];
     const qHeld = !!this._keys['KeyQ'];
-
     if (rHeld || qHeld) {
-      // Consome o delta: câmera não se move, build mode usa o mouse
       const { dx, dy } = input.consumeMouseDelta();
       this._preDX = dx;
       this._preDY = dy;
     }
   }
+
+  /** Getter de compat — código antigo que checa buildMode._active ainda funciona */
+  get _active() { return this._state !== 'inactive'; }
 
   // ══════════════════════════════════════════════════════════════════
   //  update — chamado todo frame (após player.update)
@@ -450,17 +460,19 @@ export class BuildMode {
     // Aplica rotação e escala no ghost
     this._ghost.rotation.y = this._rotY;
     this._ghost.scaling.setAll(this._scaleM);
+
+    // ── LMB (click pré-consumido no preUpdate) ─────────────────────
+    if (this._pendingClick) {
+      this._pendingClick = false;
+      this._placeAt(this._ghost.position.clone(), this._rotY, this._scaleM);
+      this._offX = this._offY = this._offZ = 0;   // reset offsets
+    }
   }
 
-  // ── LMB: coloca objeto (chamado por main.js) ──────────────────────
+  /** @deprecated — mantido para compat; use preUpdate + update no lugar */
   onClick() {
     if (this._state !== 'placing' || !this._ghost) return false;
-    this._placeAt(
-      this._ghost.position.clone(),
-      this._rotY,
-      this._scaleM,
-    );
-    // Reset offsets para o próximo placement
+    this._placeAt(this._ghost.position.clone(), this._rotY, this._scaleM);
     this._offX = this._offY = this._offZ = 0;
     return true;
   }
