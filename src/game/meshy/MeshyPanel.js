@@ -236,19 +236,26 @@ export class MeshyPanel {
     return true;
   }
 
+  // ── Notifica a AssetMachine ativa (se existir) ───────────────────
+  _machine(method, ...args) {
+    window._activeAssetMachine?.[method]?.(...args);
+  }
+
   // ── ASSET pipeline ───────────────────────────────────────────────
   async _step1() {
     if (!this._checkKey()) return;
     const prompt = this._el.querySelector('#meshy-prompt').value.trim();
     if (!prompt) { this._status('digite uma descrição'); return; }
     this._status('🎨 gerando imagem…');
+    this._machine('startGenerating');
     try {
       const r = await this.client.textToImage(prompt, { onProgress: (p, s) => this._prog(p, '🎨 imagem ' + s + ' ' + p + '%') });
       this._state.imageUrl = r.imageUrl;
       const pv = this._el.querySelector('#meshy-preview'); pv.style.display = 'block';
       this._el.querySelector('#meshy-img').src = r.imageUrl;
+      this._machine('showImage', r.imageUrl);
       this._enable('meshy-s2'); this._status('✅ imagem pronta — etapa 2 liberada');
-    } catch (e) { this._status('❌ ' + e.message); }
+    } catch (e) { this._machine('stopGenerating'); this._status('❌ ' + e.message); }
   }
   async _step2() {
     this._status('🧊 convertendo p/ 3D…');
@@ -272,6 +279,7 @@ export class MeshyPanel {
     try {
       const r = await this.client.textureModel(this._state.modelTaskId, prompt, { onProgress: (p, s) => this._prog(p, '🖌️ textura ' + s + ' ' + p + '%') });
       this._state.glbUrl = r.glbUrl || this._state.glbUrl;
+      this._machine('stopGenerating');
       this._showSave(prompt);
       this._status('✅ ASSET PRONTO! dê um nome e salve no catálogo');
     } catch (e) { this._status('❌ ' + e.message); }

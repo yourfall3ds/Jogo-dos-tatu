@@ -24,7 +24,17 @@ export class InputManager {
     this.onDeactivated = null;
 
     // ── Teclado ──────────────────────────────────────────────────────
+    // Limpa teclas presas quando o usuário foca num campo de texto
+    document.addEventListener('focusin', e => {
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') this.keys = {};
+    });
+
     window.addEventListener('keydown', e => {
+      // Não intercepta quando o usuário está digitando num input/textarea
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
       // Ignora auto-repeat do SO (keydown dispara ~30x/s enquanto segura).
       // Sem isso, segurar W gerava "double-tap" falso o tempo todo.
       if (e.repeat) { this.keys[e.code] = true; return; }
