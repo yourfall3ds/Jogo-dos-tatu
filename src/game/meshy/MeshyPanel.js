@@ -263,7 +263,18 @@ export class MeshyPanel {
     try {
       const r = await this.client.imageTo3D(this._state.imageUrl, { onProgress: (p, s) => this._prog(p, '🧊 3D ' + s + ' ' + p + '%') });
       this._state.modelTaskId = r.taskId; this._state.glbUrl = r.glbUrl;
-      this._machine('doneProcessing');  // 🟢 verde
+      // Baixa o GLB e exibe no holograma 3D
+      if (r.glbUrl) {
+        this._status('📥 carregando preview 3D…');
+        try {
+          const blobUrl = await this.client.downloadToBlobURL(r.glbUrl);
+          this._machine('show3D', blobUrl);
+        } catch (_) {
+          this._machine('show3D', r.glbUrl);   // fallback URL direta
+        }
+      } else {
+        this._machine('doneProcessing');
+      }
       this._enable('meshy-s3'); this._status('✅ modelo 3D pronto — etapa 3 liberada');
     } catch (e) { this._status('❌ ' + e.message); }
   }

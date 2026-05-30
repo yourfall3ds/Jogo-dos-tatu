@@ -53,6 +53,10 @@ export class AssetMachine {
     this._imgPlane    = null;
     this._imgBg       = null;
 
+    // Preview 3D rotativo dentro do holograma
+    this._preview3DRoot   = null;
+    this._preview3DMeshes = null;
+
     this._wasE     = false;
     this._promptEl = null;
 
@@ -229,7 +233,67 @@ export class AssetMachine {
   stopGenerating() {
     this._generating = false;
     this._holoPs.stop();
-    // feixe e discos somem via fade; imagem permanece
+    // feixe e discos somem via fade; imagem/3D permanece
+  }
+
+  /** Carrega e exibe o modelo 3D girando dentro do holograma */
+  async show3D(glbUrl) {
+    if (!glbUrl) return;
+    this._holoColor('green');
+    this._disposePreview3D();
+
+    // Esconde imagem 2D — o 3D vai substituir
+    this._imgPlane.setEnabled(false);
+    this._imgBg.material.alpha = 0;
+
+    const isBlob    = glbUrl.startsWith('blob:');
+    const lastSlash = glbUrl.lastIndexOf('/');
+    const folder    = isBlob ? '' : glbUrl.substring(0, lastSlash + 1);
+    const file      = isBlob ? glbUrl : encodeURIComponent(glbUrl.substring(lastSlash + 1));
+
+    try {
+      const result = await BABYLON.SceneLoader.ImportMeshAsync('', folder, file, this.scene);
+      const root   = result.meshes[0];
+      root.name    = '__assetMachinePreview3D';
+      result.meshes.forEach(m => { m.isPickable = false; });
+
+      // Auto-scale: cabe em ~1.5 unidades
+      root.computeWorldMatrix(true);
+      const bounds = root.getHierarchyBoundingVectors(true);
+      const size   = bounds.max.subtract(bounds.min);
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale  = maxDim > 0.01 ? 1.5 / maxDim : 1.0;
+      root.scaling.setAll(scale);
+
+      // Centraliza verticalmente no feixe (~2.8u acima da máquina)
+      root.computeWorldMatrix(true);
+      const b2  = root.getHierarchyBoundingVectors(true);
+      const midY = (b2.max.y + b2.min.y) / 2;
+      root.position.set(
+        this.position.x,
+        this.position.y + 2.8 - midY + this.position.y,
+        this.position.z,
+      );
+      // simplificação segura: só posiciona em Y fixo
+      root.position.set(this.position.x, this.position.y + 2.5, this.position.z);
+
+      this._preview3DRoot   = root;
+      this._preview3DMeshes = result.meshes;
+      console.log('[AssetMachine] 🎲 Preview 3D carregado (scale:', scale.toFixed(3), ')');
+    } catch (e) {
+      console.warn('[AssetMachine] Preview 3D falhou:', e.message);
+      // Se falhar, restaura a imagem 2D
+      this._imgPlane.setEnabled(true);
+      this._imgBg.material.alpha = 0.82;
+    }
+  }
+
+  _disposePreview3D() {
+    if (this._preview3DMeshes) {
+      this._preview3DMeshes.forEach(m => { try { m.dispose(); } catch (_) {} });
+      this._preview3DMeshes = null;
+      this._preview3DRoot   = null;
+    }
   }
 
   _holoColor(c) {
@@ -489,11 +553,17 @@ export class AssetMachine {
     this._disc.rotation.y  += dt * 1.3;
     this._disc2.rotation.y -= dt * 2.2;
 
-    // Bob da imagem
+    // Bob da imagem 2D
     if (this._imgPlane.isEnabled()) {
       const bob = Math.sin(this._idleTimer * 1.8) * 0.12;
       this._imgPlane.position.y = this.position.y + 3.1 + bob;
       this._imgBg.position.y    = this._imgPlane.position.y;
+    }
+
+    // Rotação + bob do preview 3D
+    if (this._preview3DRoot) {
+      this._preview3DRoot.rotation.y += dt * 0.75;
+      this._preview3DRoot.position.y  = this.position.y + 2.5 + Math.sin(this._idleTimer * 1.4) * 0.1;
     }
   }
 
@@ -509,5 +579,6 @@ export class AssetMachine {
     try { this._holoPs?.dispose(); }    catch (_) {}
     try { this._imgPlane?.dispose(); }  catch (_) {}
     try { this._imgBg?.dispose(); }     catch (_) {}
+    this._disposePreview3D();
   }
 }
