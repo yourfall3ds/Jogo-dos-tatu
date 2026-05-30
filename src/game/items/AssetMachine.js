@@ -547,7 +547,6 @@ export class AssetMachine {
       this._beam.material.alpha  = 0;
       this._disc.material.alpha  = 0;
       this._disc2.material.alpha = 0;
-      this._holoLight.intensity  = 0;
       return;
     }
 
