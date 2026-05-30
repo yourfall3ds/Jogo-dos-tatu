@@ -198,6 +198,40 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── Proxy de imagem (resolve CORS da CDN assets.meshy.ai) ──────────
+  //  GET /proxy-image?url=<encoded-url>
+  //  O servidor baixa a imagem server-side e devolve com CORS livre.
+  if (req.method === 'GET' && req.url.startsWith('/proxy-image')) {
+    const qs       = req.url.indexOf('?');
+    const params   = new URLSearchParams(qs >= 0 ? req.url.slice(qs + 1) : '');
+    const imageUrl = params.get('url');
+    if (!imageUrl) { res.writeHead(400); res.end('Missing url param'); return; }
+    try {
+      const parsed = new URL(imageUrl);
+      const opts = {
+        hostname: parsed.hostname,
+        port:     parsed.port || 443,
+        path:     parsed.pathname + parsed.search,
+        method:   'GET',
+        headers:  { 'User-Agent': 'Mozilla/5.0 (TransFPS-Proxy)' },
+      };
+      const up = https.request(opts, upRes => {
+        const ct = upRes.headers['content-type'] || 'image/png';
+        res.writeHead(upRes.statusCode, {
+          'Content-Type':                ct,
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control':               'public, max-age=7200',
+        });
+        upRes.pipe(res);
+      });
+      up.on('error', e => { res.writeHead(502); res.end('proxy err: ' + e.message); });
+      up.end();
+    } catch (e) {
+      res.writeHead(400); res.end('URL inválida: ' + e.message);
+    }
+    return;
+  }
+
   // Health check
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

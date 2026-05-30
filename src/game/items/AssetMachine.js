@@ -217,19 +217,22 @@ export class AssetMachine {
     if (!imageUrl) return;
     this._holoColor('green');
 
-    // ── WebGL tem CORS mais rígido que <img> ────────────────────────
-    // Baixa via fetch() → blob URL same-origin → Babylon carrega sem erro
+    // ── A CDN assets.meshy.ai não envia Access-Control-Allow-Origin ───
+    // Rota via proxy local (config-server :3099/proxy-image) que baixa
+    // a imagem server-side e devolve com CORS livre.
     let texUrl = imageUrl;
     try {
-      const resp = await fetch(imageUrl);
+      const proxyUrl = `http://127.0.0.1:3099/proxy-image?url=${encodeURIComponent(imageUrl)}`;
+      const resp = await fetch(proxyUrl);
       if (resp.ok) {
         const blob = await resp.blob();
         texUrl = URL.createObjectURL(blob);
-        // revoga após 60s (texture já foi enviada p/ GPU)
         setTimeout(() => { try { URL.revokeObjectURL(texUrl); } catch (_) {} }, 60000);
+      } else {
+        console.warn('[AssetMachine] proxy-image retornou', resp.status);
       }
     } catch (e) {
-      console.warn('[AssetMachine] fetch imagem CORS, tentando URL direta:', e.message);
+      console.warn('[AssetMachine] proxy-image falhou:', e.message);
     }
 
     const mat = new BABYLON.StandardMaterial('mac_img_' + Date.now(), this.scene);
