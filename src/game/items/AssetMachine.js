@@ -11,6 +11,7 @@
 //
 //  Interação: pressione E perto da máquina → abre MeshyPanel
 // ─────────────────────────────────────────────────────────────────
+import { LocalDB } from '../data/LocalDB.js';
 
 function enc(p) {
   return p.split('/').map(s => encodeURIComponent(s)).join('/');
@@ -27,12 +28,19 @@ const MACHINE_SCALE = 0.9;
 
 export class AssetMachine {
   constructor(scene, meshyPanel, player, input,
-              position = new BABYLON.Vector3(8, 0, 8)) {
+              position = new BABYLON.Vector3(8, 0, 8), id = null) {
     this.scene      = scene;
     this.meshyPanel = meshyPanel;
     this.player     = player;
     this.input      = input;
     this.position   = position.clone();
+
+    this.id = id || ('mac_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5));
+    // Register in global manager
+    if (!window._assetMachines) window._assetMachines = [];
+    window._assetMachines.push(this);
+    // Save to DB (async, don't await)
+    this._persistPlacement();
 
     this._phase     = 'loading';
     this._t         = 0;
@@ -567,8 +575,48 @@ export class AssetMachine {
     }
   }
 
+  // ── Persistência ──────────────────────────────────────────────────
+
+  /** Salva posição+ID no banco de máquinas colocadas */
+  async _persistPlacement() {
+    try {
+      let list = await LocalDB.get('machines_placed', []);
+      const idx = list.findIndex(m => m.id === this.id);
+      const entry = { id: this.id, position: [this.position.x, this.position.y, this.position.z] };
+      if (idx >= 0) list[idx] = entry; else list.push(entry);
+      await LocalDB.save('machines_placed', list);
+    } catch(e) { console.warn('[AssetMachine] Falha ao persistir:', e.message); }
+  }
+
+  /** Remove esta máquina da lista persistida */
+  async _unpersist() {
+    try {
+      let list = await LocalDB.get('machines_placed', []);
+      list = list.filter(m => m.id !== this.id);
+      await LocalDB.save('machines_placed', list);
+    } catch(_) {}
+  }
+
+  get libraryKey() { return 'machine_lib_' + this.id; }
+
+  async getSessions() {
+    return LocalDB.get(this.libraryKey, []);
+  }
+
+  async saveSession(session) {
+    const sessions = await this.getSessions();
+    const i = sessions.findIndex(s => s.id === session.id);
+    if (i >= 0) sessions[i] = session; else sessions.unshift(session);
+    // Keep max 50 sessions
+    await LocalDB.save(this.libraryKey, sessions.slice(0, 50));
+  }
+
   // ── Dispose ───────────────────────────────────────────────────────
   dispose() {
+    if (window._assetMachines) {
+      const i = window._assetMachines.indexOf(this);
+      if (i >= 0) window._assetMachines.splice(i, 1);
+    }
     this._promptEl?.remove();
     try { this._glow?.dispose(); }      catch (_) {}
     try { this._p1Root?.dispose(); }    catch (_) {}

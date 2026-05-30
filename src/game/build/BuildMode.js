@@ -503,12 +503,14 @@ export class BuildMode {
     // Item especial: Máquina de Criação
     if (item.special === 'assetMachine') {
       const { AssetMachine } = await import('../items/AssetMachine.js');
+      const machineId = 'mac_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
       new AssetMachine(
         this.scene,
         window._meshyPanel,
         window._gamePlayer,
         window._gameInput,
         pos,
+        machineId,
       );
       this._placed.push({ record: { id: 'assetMachine', p: [pos.x, pos.y, pos.z] }, root: null });
       this._save();

@@ -32,6 +32,7 @@ import { PlayerStats }          from './game/stats/PlayerStats.js';
 import { SkillSystem }          from './game/skills/SkillSystem.js';
 import { Inventory }            from './game/items/Inventory.js';
 import { RpgHUD }               from './game/ui/RpgHUD.js';
+import { LocalDB }              from './game/data/LocalDB.js';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -183,12 +184,8 @@ async function init() {
   const meshyPanel = new MeshyPanel(scene, buildMode);
   window._meshyPanel = meshyPanel;
 
-  // ── Máquina de Criação como item de mapa (pressione E perto dela) ─
-  const assetMachine = new AssetMachine(
-    scene, meshyPanel, player, input,
-    new BABYLON.Vector3(8, 0, 8),   // posição no mapa — ajuste conforme necessário
-  );
-  window._assetMachine = assetMachine;
+  // Máquinas gerenciadas globalmente — restauradas do DB em _loadAssetsBackground
+  window._assetMachines = [];
 
   // ── Sistemas RPG: Stats + Skills + Inventário ────────────────────
   const stats = new PlayerStats();
@@ -275,8 +272,8 @@ async function init() {
       // Catálogo aberto: cursor livre, mas inimigos/cena continuam vivos para teste
       level.update(dt);
     }
-    // AssetMachine: animação de deploy + interação E (sempre ativo)
-    assetMachine.update(dt);
+    // Todas as AssetMachines no mapa — animação e interação
+    if (window._assetMachines) window._assetMachines.forEach(m => m.update(dt));
     moveListUI.update(dt);
     catalogUI.update();
     buildMode.update();
@@ -307,6 +304,26 @@ async function init() {
 
   // ── Carrega assets em background (após o jogo já estar jogável) ──
   _loadAssetsBackground(loader, player, level, shadowGen, scene);
+}
+
+// ── Restaura máquinas de criação salvas no DB ─────────────────────
+async function _restoreMachines(scene) {
+  const meshyPanel = window._meshyPanel;
+  const player     = window._gamePlayer;
+  const input      = window._gameInput;
+  let machines = await LocalDB.get('machines_placed', []);
+  if (!machines.length) {
+    machines = [{ id: 'mac_default', position: [8, 0, 8] }];
+    await LocalDB.save('machines_placed', machines);
+  }
+  for (const m of machines) {
+    new AssetMachine(
+      scene, meshyPanel, player, input,
+      new BABYLON.Vector3(m.position[0], m.position[1], m.position[2]),
+      m.id,
+    );
+  }
+  console.log(`[AssetMachine] ✅ ${machines.length} máquina(s) restaurada(s)`);
 }
 
 // ── Carregamento progressivo de assets ───────────────────────────
@@ -408,6 +425,9 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     const meshes = await loader.load(item.key);
     if (meshes) item.done(meshes);
   }
+  // Restaura máquinas salvas
+  await _restoreMachines(scene);
+
   setLoadingUI(100);
 
   // Aplica transforms salvos do SceneEditor sobre os GLBs recém carregados

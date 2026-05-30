@@ -19,6 +19,7 @@ export class MeshyPanel {
     this.client = new MeshyClient();
     this._active = false;
     this._state = { imageUrl: null, modelTaskId: null, glbUrl: null, riggedTaskId: null };
+    this._currentSession = null;  // sessão ativa da pipeline atual
     this._build();
   }
 
@@ -50,6 +51,7 @@ export class MeshyPanel {
         <button id="meshy-tab-asset" class="my-tab my-tab-on">📦 Asset</button>
         <button id="meshy-tab-char"  class="my-tab">🐉 Personagem</button>
         <button id="meshy-tab-tree"  class="my-tab">🌳 Árvore</button>
+        <button id="meshy-tab-lib" class="my-tab">📚 Biblioteca</button>
       </div>
 
       <!-- ÁRVORE DE ITENS DO JOGO -->
@@ -60,6 +62,14 @@ export class MeshyPanel {
         </div>
         <div style="text-align:right;margin-bottom:6px"><span id="meshy-tree-prog" style="font-size:11px;color:#c9f"></span></div>
         <div id="meshy-tree-list"></div>
+      </div>
+
+      <!-- BIBLIOTECA POR MÁQUINA -->
+      <div id="meshy-lib" style="display:none">
+        <div style="font-size:10px;color:#89a;margin-bottom:8px;line-height:1.5">
+          Sessões geradas nesta máquina. Cada etapa é baixável individualmente.
+        </div>
+        <div id="meshy-lib-list" style="display:flex;flex-direction:column;gap:10px"></div>
       </div>
 
       <!-- ASSET PIPELINE -->
@@ -142,6 +152,7 @@ export class MeshyPanel {
     $('meshy-tab-asset').onclick = () => this._tab('asset');
     $('meshy-tab-char').onclick  = () => this._tab('char');
     $('meshy-tab-tree').onclick  = () => { this._tab('tree'); this._renderTree(); };
+    $('meshy-tab-lib').onclick   = () => { this._tab('lib'); this._renderLib(); };
 
     // asset steps
     $('meshy-s1').onclick = () => this._step1();
@@ -163,9 +174,11 @@ export class MeshyPanel {
     $('meshy-asset').style.display = which === 'asset' ? 'block' : 'none';
     $('meshy-char').style.display  = which === 'char'  ? 'block' : 'none';
     $('meshy-tree').style.display  = which === 'tree'  ? 'block' : 'none';
+    $('meshy-lib').style.display   = which === 'lib'   ? 'block' : 'none';
     $('meshy-tab-asset').classList.toggle('my-tab-on', which === 'asset');
     $('meshy-tab-char').classList.toggle('my-tab-on',  which === 'char');
     $('meshy-tab-tree').classList.toggle('my-tab-on',  which === 'tree');
+    $('meshy-tab-lib').classList.toggle('my-tab-on',   which === 'lib');
   }
 
   // ── Árvore de itens do jogo ──────────────────────────────────────
@@ -246,11 +259,14 @@ export class MeshyPanel {
     if (!this._checkKey()) return;
     const prompt = this._el.querySelector('#meshy-prompt').value.trim();
     if (!prompt) { this._status('digite uma descrição'); return; }
+    const sess = this._ensureSession(prompt);
     this._status('🎨 gerando imagem…');
     this._machine('startGenerating');
     try {
       const r = await this.client.textToImage(prompt, { onProgress: (p, s) => this._prog(p, '🎨 imagem ' + s + ' ' + p + '%') });
       this._state.imageUrl = r.imageUrl;
+      sess.image = r.imageUrl;
+      await this._saveCurrentSession();
       const pv = this._el.querySelector('#meshy-preview'); pv.style.display = 'block';
       this._el.querySelector('#meshy-img').src = r.imageUrl;
       this._machine('showImage', r.imageUrl);
@@ -263,6 +279,9 @@ export class MeshyPanel {
     try {
       const r = await this.client.imageTo3D(this._state.imageUrl, { onProgress: (p, s) => this._prog(p, '🧊 3D ' + s + ' ' + p + '%') });
       this._state.modelTaskId = r.taskId; this._state.glbUrl = r.glbUrl;
+      const sess = this._ensureSession('');
+      sess.glb3d = r.glbUrl;
+      await this._saveCurrentSession();
       // Baixa o GLB e exibe no holograma 3D
       if (r.glbUrl) {
         this._status('📥 carregando preview 3D…');
@@ -284,6 +303,9 @@ export class MeshyPanel {
     try {
       const r = await this.client.remesh(this._state.modelTaskId, { onProgress: (p, s) => this._prog(p, '🔧 remesh ' + s + ' ' + p + '%') });
       this._state.modelTaskId = r.taskId; this._state.glbUrl = r.glbUrl || this._state.glbUrl;
+      const sess = this._ensureSession('');
+      sess.glbRemesh = r.glbUrl || this._state.glbUrl;
+      await this._saveCurrentSession();
       this._machine('doneProcessing');  // 🟢 verde
       this._enable('meshy-s4'); this._status('✅ otimizado — etapa 4 liberada');
     } catch (e) { this._status('❌ ' + e.message); }
@@ -295,6 +317,9 @@ export class MeshyPanel {
     try {
       const r = await this.client.textureModel(this._state.modelTaskId, prompt, { onProgress: (p, s) => this._prog(p, '🖌️ textura ' + s + ' ' + p + '%') });
       this._state.glbUrl = r.glbUrl || this._state.glbUrl;
+      const sess = this._ensureSession('');
+      sess.glbTextured = r.glbUrl || this._state.glbUrl;
+      await this._saveCurrentSession();
       this._machine('stopGenerating');  // feixe some, imagem fica
       this._showSave(prompt);
       this._status('✅ ASSET PRONTO! dê um nome e salve no catálogo');
@@ -393,9 +418,98 @@ export class MeshyPanel {
     } catch (e) { this._status('❌ ' + e.message); }
   }
 
+  // ── Biblioteca: sessão atual ─────────────────────────────────────
+  _ensureSession(prompt) {
+    if (!this._currentSession) {
+      this._currentSession = {
+        id: 'sess_' + Date.now().toString(36),
+        prompt: prompt || '',
+        createdAt: Date.now(),
+        image: null,
+        glb3d: null,
+        glbRemesh: null,
+        glbTextured: null,
+      };
+    }
+    return this._currentSession;
+  }
+
+  async _saveCurrentSession() {
+    const machine = window._activeAssetMachine;
+    if (!machine || !this._currentSession) return;
+    await machine.saveSession(this._currentSession);
+  }
+
+  // ── Biblioteca: renderiza tab ────────────────────────────────────
+  async _renderLib() {
+    const list = this._el.querySelector('#meshy-lib-list');
+    if (!list) return;
+    const machine = window._activeAssetMachine;
+    if (!machine) { list.innerHTML = '<div style="color:#566">Nenhuma máquina ativa.</div>'; return; }
+    list.innerHTML = '<div style="color:#89a;font-size:11px">Carregando…</div>';
+    const sessions = await machine.getSessions();
+    if (!sessions.length) { list.innerHTML = '<div style="color:#566">Nenhuma sessão ainda. Gere algo!</div>'; return; }
+    list.innerHTML = '';
+    for (const s of sessions) {
+      const card = document.createElement('div');
+      card.style.cssText = 'background:#0e0e1e;border:1px solid #335;border-radius:8px;padding:10px';
+      const date = new Date(s.createdAt).toLocaleString('pt-BR', { dateStyle:'short', timeStyle:'short' });
+      card.innerHTML = `
+          <div style="display:flex;gap:8px;align-items:flex-start">
+              ${s.image ? `<img src="${s.image}" style="width:72px;height:72px;object-fit:cover;border-radius:5px;border:1px solid #446;flex-shrink:0" onerror="this.style.display='none'">` : '<div style="width:72px;height:72px;background:#111;border-radius:5px;border:1px solid #333;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#445;font-size:20px">🖼</div>'}
+              <div style="flex:1;min-width:0">
+                  <div style="font-size:11px;color:#c9f;font-weight:bold;margin-bottom:3px;word-break:break-word">${s.prompt.slice(0,60)}${s.prompt.length > 60 ? '…' : ''}</div>
+                  <div style="font-size:10px;color:#556;margin-bottom:6px">${date}</div>
+                  <div style="display:flex;flex-wrap:wrap;gap:4px">
+                      ${s.image      ? `<button class="lib-dl" data-url="${s.image}" data-name="imagem.png" style="background:#1a2a1a;border:1px solid #2a6;color:#cee;cursor:pointer;padding:3px 7px;border-radius:4px;font-size:10px">📷 Imagem</button>` : ''}
+                      ${s.glb3d     ? `<button class="lib-dl" data-url="${s.glb3d}" data-name="modelo_3d.glb" style="background:#1a1a2a;border:1px solid #46a;color:#bdf;cursor:pointer;padding:3px 7px;border-radius:4px;font-size:10px">📦 3D</button>` : ''}
+                      ${s.glbRemesh ? `<button class="lib-dl" data-url="${s.glbRemesh}" data-name="retopo.glb" style="background:#1a1a2a;border:1px solid #46a;color:#bdf;cursor:pointer;padding:3px 7px;border-radius:4px;font-size:10px">🔧 Retopo</button>` : ''}
+                      ${s.glbTextured ? `<button class="lib-dl" data-url="${s.glbTextured}" data-name="finalizado.glb" style="background:#2a1a2a;border:1px solid #b6f;color:#dce;cursor:pointer;padding:3px 7px;border-radius:4px;font-size:10px">✨ Final</button>` : ''}
+                      ${s.glb3d || s.glbTextured ? `<button class="lib-view" data-url="${s.glbTextured || s.glb3d}" style="background:#2a2a1a;border:1px solid #a84;color:#fc8;cursor:pointer;padding:3px 7px;border-radius:4px;font-size:10px">👁 Ver 3D</button>` : ''}
+                  </div>
+              </div>
+          </div>`;
+      list.appendChild(card);
+    }
+    // bind download buttons
+    list.querySelectorAll('.lib-dl').forEach(btn => {
+      btn.onclick = () => this._downloadFile(btn.dataset.url, btn.dataset.name);
+    });
+    list.querySelectorAll('.lib-view').forEach(btn => {
+      btn.onclick = () => window._activeAssetMachine?.show3D?.(btn.dataset.url);
+    });
+  }
+
+  async _downloadFile(url, filename) {
+    if (!url) return;
+    this._status('⬇️ preparando download…');
+    try {
+      let blobUrl;
+      if (url.startsWith('blob:')) {
+        blobUrl = url;
+      } else {
+        const blob = await this.client.downloadToBlobURL(url).then(bu => fetch(bu)).then(r => r.blob()).catch(() => fetch(url).then(r => r.blob()));
+        blobUrl = URL.createObjectURL(blob);
+      }
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch(_){} }, 15000);
+      this._status('✅ download iniciado: ' + filename);
+    } catch(e) {
+      this._status('❌ download falhou: ' + e.message);
+      // fallback: open in new tab
+      window.open(url, '_blank');
+    }
+  }
+
   show() {
     this._active = true;
     this._el.style.display = 'block';
+    this._currentSession = null; // nova sessão para cada abertura
     window._gameInput?.deactivate?.();
     // Checa se a chave já está no .env (servidor). Se sim, esconde o campo.
     this.client.checkServerKey().then(serverHas => {
