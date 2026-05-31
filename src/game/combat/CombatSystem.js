@@ -181,37 +181,72 @@ export class CombatSystem {
 
     const currentPos = this.playerMesh.position;
 
-    // Direção do golpe (usada só p/ knockback no inimigo e raycast no cenário).
-    // NÃO movemos mais o player aqui — o "avanço" empurrava o carinha pra -Z
-    // a cada soco/chute, fazendo ele escorregar/cair. Agora bate PARADO.
-    const moveDir = this.playerMesh.getDirection(BABYLON.Vector3.Forward());
+    // Direção do golpe = pra ONDE O PLAYER OLHA (yaw). O capsule tem rotação
+    // travada em 0, então getDirection(Forward) dava sempre +Z mundo (errado).
+    // Usamos o yaw real → soco/chute vão na direção da câmera.
+    const _pl = this.playerMesh._playerRef;
+    const yawRad = BABYLON.Tools.ToRadians(_pl?.yaw ?? 0);
+    const moveDir = new BABYLON.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad));
 
     const scene = this.playerMesh.getScene();
     let hitSomething = false;
-    const hitEnemies = new Set(); 
+    const hitEnemies  = new Set();
+    const hitPhysics  = new Set();
+
+    // ── Alcance frontal (detecção robusta) ───────────────────────────
+    //  A hitbox precisa no osso é frágil (timing/posição). Chute errava
+    //  porque o pé fica baixo e o hit dispara antes de estender. Aqui
+    //  adicionamos "está NA FRENTE e dentro do ALCANCE" → soco/chute
+    //  acertam de forma confiável (padrão de jogo de ação).
+    const fwdFlat = moveDir.clone(); fwdFlat.y = 0; fwdFlat.normalize();
+    const range   = animName.includes('kick') ? 2.4 : 1.9;
+    const ARC_COS = 0.35;   // ~70° de meia-abertura
+    const _inFront = (targetPos) => {
+      const to = targetPos.subtract(currentPos); to.y = 0;
+      const d = to.length();
+      if (d > range) return false;
+      return BABYLON.Vector3.Dot(to.normalize(), fwdFlat) > ARC_COS;
+    };
 
     scene.meshes.forEach(m => {
-      if (m.isEnabled() && m._enemyRef && m._enemyRef.hp > 0 && !hitEnemies.has(m._enemyRef)) {
-        
-        // Colisão física real: a hitbox do membro bateu no colisor do inimigo?
-        if (activeHitbox.intersectsMesh(m, false)) {
+      if (!m.isEnabled()) return;
+
+      // ── Inimigos ────────────────────────────────────────────────────
+      if (m._enemyRef && m._enemyRef.hp > 0 && !hitEnemies.has(m._enemyRef)) {
+        // hitbox precisa OU alcance frontal (mais tolerante)
+        if (activeHitbox.intersectsMesh(m, false) || _inFront(m.getAbsolutePosition())) {
           hitSomething = true;
           const enemy = m._enemyRef;
           hitEnemies.add(enemy);
-          
-          enemy.takeDamage(hitDef.damage, moveDir, hitDef.kb || 1.0); 
-          
-          // Efeito visual na posição exata da Hitbox (a sua mão/pé) em contato com o inimigo
-          let impactPos = activeHitbox.getAbsolutePosition().clone();
-          
+          enemy.takeDamage(hitDef.damage, moveDir, hitDef.kb || 1.0);
+          const impactPos = activeHitbox.getAbsolutePosition().clone();
           if (this.impactSystem) {
-            if (animName.includes("punch")) {
-              this.impactSystem.spawnPunchImpact(impactPos, true);
-            } else {
-              this.impactSystem.spawnKickImpact(impactPos, true);
-            }
+            if (animName.includes('punch')) this.impactSystem.spawnPunchImpact(impactPos, true);
+            else                            this.impactSystem.spawnKickImpact(impactPos, true);
           }
-          console.log(`[Colisão Física - ${hitDef.bone}] POW! Dano aplicado: ${hitDef.damage}`);
+          console.log(`[Colisão Física - ${hitDef.bone}] POW! Dano: ${hitDef.damage}`);
+        }
+        return;
+      }
+
+      // ── Objetos FÍSICOS (soco/chute empurram e quebram) ──────────────
+      const go = m._gameObject;
+      if (go && go.hasPhysics && !go._broken && !go._collected && !hitPhysics.has(go)) {
+        const goPos = (go._usesHavok && go._havok?.mesh) ? go._havok.mesh.getAbsolutePosition() : m.getAbsolutePosition();
+        if (activeHitbox.intersectsMesh(m, false) || _inFront(goPos)) {
+          hitSomething = true;
+          hitPhysics.add(go);
+          // Impulso forte na direção do golpe + leve "pra cima" (sensação de pancada).
+          // Chute = mais forte que soco.
+          const power = (hitDef.kb || 1) * (animName.includes('kick') ? 11 : 7);
+          const force = moveDir.scale(power);
+          force.y += animName.includes('kick') ? 4 : 2.5;
+          go.applyImpulse(force, activeHitbox.getAbsolutePosition());
+          if (this.impactSystem) {
+            const ip = activeHitbox.getAbsolutePosition().clone();
+            if (animName.includes('punch')) this.impactSystem.spawnPunchImpact(ip, true);
+            else                            this.impactSystem.spawnKickImpact(ip, true);
+          }
         }
       }
     });
