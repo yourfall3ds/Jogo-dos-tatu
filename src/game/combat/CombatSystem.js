@@ -45,8 +45,8 @@ export class CombatSystem {
     };
 
     // Ataques AÉREOS (pulando): soco voador vs chute voador
-    this._airPunchChain = ['flying_fist'];                       // soco voador poderoso
-    this._airKickChain  = ['rising_flying', 'lunge_spin', 'spartan_kick'];
+    this._airPunchChain = ['rising_flying'];   // jump+soco → voadeira
+    this._airKickChain  = ['double_kick'];     // jump+chute → chute voador duplo
     this._airPunchIdx = 0;
     this._airKickIdx  = 0;
 
