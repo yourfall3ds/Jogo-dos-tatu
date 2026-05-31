@@ -104,10 +104,39 @@ function setFocusUI(active) {
   }
 }
 
+let _loadReachedFull = false;   // sticky: uma vez 100%, JOGAR fica liberado
+
 function setLoadingUI(pct, label = '') {
   const wrap = $('loading-bar-wrap');
   const bar  = $('loading-bar');
   const lbl  = $('loading-label');
+
+  // ── Tela de entrada: barra grande + botão JOGAR refletindo o loading ──
+  const sFill = $('ss-load-fill'), sLbl = $('ss-load-label'), sPct = $('ss-load-pct');
+  const play  = $('ss-play'), pbFill = $('ss-play-fill'), pbText = $('ss-play-text');
+  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  if (pct >= 100) _loadReachedFull = true;
+
+  // ── Start screen (só relevante até ficar pronto) ──────────────────
+  // O loading tem VÁRIAS fases (assets → animações → máquinas) e o pct não
+  // é monotônico. Uma vez 100%, o botão JOGAR fica liberado pra sempre.
+  if (!_loadReachedFull) {
+    if (sFill) sFill.style.width = p + '%';
+    if (sPct)  sPct.textContent  = p + '%';
+    if (sLbl && label) sLbl.textContent = '📦 ' + label;
+    if (pbFill) pbFill.style.width = p + '%';
+    if (pbText) pbText.textContent = '⏳ Carregando ' + p + '%';
+  } else if (pct >= 100 || !play?.classList.contains('ready')) {
+    // primeira vez que cruza 100% → libera e limpa o botão
+    if (sFill) sFill.style.width = '100%';
+    if (sPct)  sPct.textContent  = '100%';
+    if (sLbl)  sLbl.textContent  = '✅ Tudo pronto!';
+    if (play)  { play.disabled = false; play.classList.remove('loading'); play.classList.add('ready'); }
+    if (pbFill) pbFill.style.width = '0%';
+    if (pbText) pbText.textContent = '▶ JOGAR';
+  }
+
+  // ── Barra inferior (loading in-game das fases seguintes) ──────────
   if (pct >= 100) {
     wrap.classList.remove('visible');
     lbl.classList.remove('visible');
