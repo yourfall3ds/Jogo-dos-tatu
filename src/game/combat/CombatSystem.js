@@ -113,11 +113,11 @@ export class CombatSystem {
     const token = this._comboToken;
     clearTimeout(this._cancelTimer);
 
-    this.animController.play(attackAnim, {
-      loop: false,
-      speed,
-      onComplete: () => { if (token === this._comboToken) this._onAttackFinish(); }
-    });
+    // Sem onComplete aqui: o onAnimationGroupEndObservable do Babylon era
+    // não-confiável (ora nunca disparava → travava em 'attacking', ora
+    // disparava na hora → anim nem aparecia). O fim agora é por TIMER com
+    // a duração REAL da animação (mais abaixo) → toca completo e termina.
+    this.animController.play(attackAnim, { loop: false, speed });
 
     // Timing de cada hit (escala com a velocidade da animação)
     let lastHitTime = 0;
@@ -142,6 +142,17 @@ export class CombatSystem {
       const next = this.comboSystem.consumeBuffer();
       if (next) this._executeAttack(next);   // encadeia imediatamente
     }, cancelAt);
+
+    // ── SAFETY: garante que o ataque termina ────────────────────────
+    // O onComplete do AnimationGroup às vezes não dispara → o personagem
+    // ficava TRAVADO em "attacking" pra sempre. Este timeout força o fim.
+    const animDur = (this.animController.getDuration?.(attackAnim) ?? 0.7) / speed;
+    clearTimeout(this._finishSafety);
+    this._finishSafety = setTimeout(() => {
+      if (token === this._comboToken && this.stateMachine.isAttacking()) {
+        this._onAttackFinish();
+      }
+    }, Math.max(250, animDur * 1000 + 120));
   }
 
   _applyHit(hitDef, animName) {
@@ -170,9 +181,10 @@ export class CombatSystem {
 
     const currentPos = this.playerMesh.position;
 
-    // Impulso sutil para frente para combos mais fluidos (especialmente no ar)
+    // Direção do golpe (usada só p/ knockback no inimigo e raycast no cenário).
+    // NÃO movemos mais o player aqui — o "avanço" empurrava o carinha pra -Z
+    // a cada soco/chute, fazendo ele escorregar/cair. Agora bate PARADO.
     const moveDir = this.playerMesh.getDirection(BABYLON.Vector3.Forward());
-    this.playerMesh.moveWithCollisions(moveDir.scale(0.8));
 
     const scene = this.playerMesh.getScene();
     let hitSomething = false;

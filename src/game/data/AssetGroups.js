@@ -1,0 +1,300 @@
+// ─────────────────────────────────────────────────────────────────
+//  AssetGroups.js — sistema de grupos de assets gerados
+//
+//  Grupos built-in (editáveis, não deletáveis):
+//    🏗️ Construção  — estático, colisão, sombra
+//    🎨 Decorativos — quebráveis, física, peso
+//    🌿 Natureza    — estático decorativo
+//    🐉 Personagens — NPCs/criaturas (sem colisão)
+//
+//  Assets têm: id, name, groupId, glbUrl, imageUrl, createdAt
+//  Grupos têm: id, name, icon, color, builtin, props{}
+// ─────────────────────────────────────────────────────────────────
+import { LocalDB } from './LocalDB.js';
+import { AssetRegistry } from './AssetRegistry.js';
+
+const STORE_GROUPS = 'asset_groups';
+const STORE_ASSETS = 'asset_library';
+
+export const BUILTIN_GROUPS = [
+  {
+    id: 'construcao',
+    name: 'Construção',
+    icon: '🏗️',
+    color: '#4a8fff',
+    builtin: true,
+    props: {
+      collidable:  true,
+      breakable:   false,
+      physics:     false,
+      castShadows: true,
+      desc: 'Estático · colisão · sombra',
+    },
+  },
+  {
+    id: 'decorativo',
+    name: 'Decorativos',
+    icon: '🎨',
+    color: '#ff9a4a',
+    builtin: true,
+    props: {
+      collidable:  false,
+      breakable:   true,
+      physics:     true,
+      castShadows: true,
+      desc: 'Quebráveis · física · peso',
+    },
+  },
+  {
+    id: 'natureza',
+    name: 'Natureza',
+    icon: '🌿',
+    color: '#4dcc77',
+    builtin: true,
+    props: {
+      collidable:  true,
+      breakable:   false,
+      physics:     false,
+      castShadows: true,
+      desc: 'Estático · decorativo',
+    },
+  },
+  {
+    id: 'personagem',
+    name: 'Personagens',
+    icon: '🐉',
+    color: '#cc4dcc',
+    builtin: true,
+    props: {
+      collidable:  false, breakable: false, physics: false, castShadows: true,
+      desc: 'NPCs e aliados',
+    },
+  },
+  {
+    id: 'inimigo',
+    name: 'Inimigos',
+    icon: '👹',
+    color: '#e0473a',
+    builtin: true,
+    props: {
+      collidable:  false, breakable: false, physics: false, castShadows: true,
+      desc: 'Monstros e inimigos',
+    },
+  },
+  {
+    id: 'arma',
+    name: 'Armas',
+    icon: '⚔️',
+    color: '#b0b8c8',
+    builtin: true,
+    props: {
+      collidable:  false, breakable: false, physics: false, castShadows: true,
+      desc: 'Armas equipáveis',
+    },
+  },
+  {
+    id: 'consumivel',
+    name: 'Consumíveis',
+    icon: '🧪',
+    color: '#46d6c0',
+    builtin: true,
+    props: {
+      collidable:  false, breakable: false, physics: true, collectable: true, castShadows: true,
+      desc: 'Poções e itens usáveis',
+    },
+  },
+  {
+    id: 'loot',
+    name: 'Tesouro',
+    icon: '💰',
+    color: '#ffcf3a',
+    builtin: true,
+    props: {
+      collidable:  false, breakable: true, physics: true, collectable: true, castShadows: true,
+      desc: 'Baús, moedas e chaves',
+    },
+  },
+  {
+    id: 'props',
+    name: 'Props',
+    icon: '📦',
+    color: '#c08a5a',
+    builtin: true,
+    props: {
+      collidable:  true, breakable: true, physics: true, castShadows: true,
+      desc: 'Objetos do cenário (caixas, barris)',
+    },
+  },
+];
+
+export class AssetGroups {
+
+  // ── Grupos ──────────────────────────────────────────────────────
+  static async getGroups() {
+    const custom = await LocalDB.get(STORE_GROUPS, []);
+    // Mescla: built-ins primeiro, depois customizados
+    const all = BUILTIN_GROUPS.map(b => {
+      const override = custom.find(c => c.id === b.id);
+      return override ? { ...b, ...override, builtin: true } : { ...b };
+    });
+    for (const g of custom) {
+      if (!BUILTIN_GROUPS.find(b => b.id === g.id)) all.push(g);
+    }
+    return all;
+  }
+
+  static async saveGroup(group) {
+    const saved = await LocalDB.get(STORE_GROUPS, []);
+    const idx   = saved.findIndex(g => g.id === group.id);
+    if (idx >= 0) saved[idx] = group; else saved.push(group);
+    await LocalDB.save(STORE_GROUPS, saved);
+  }
+
+  static async deleteGroup(id) {
+    if (BUILTIN_GROUPS.find(b => b.id === id)) return false; // não deleta built-ins
+    const saved = await LocalDB.get(STORE_GROUPS, []);
+    await LocalDB.save(STORE_GROUPS, saved.filter(g => g.id !== id));
+    // Orphan assets — move para sem grupo
+    const assets = await LocalDB.get(STORE_ASSETS, []);
+    for (const a of assets) { if (a.groupId === id) a.groupId = null; }
+    await LocalDB.save(STORE_ASSETS, assets);
+    return true;
+  }
+
+  static async createGroup({ name, icon = '📦', color = '#888', props = {} }) {
+    const id    = 'grp_' + Date.now().toString(36);
+    const group = { id, name, icon, color, builtin: false, props: {
+      collidable:  false,
+      breakable:   false,
+      physics:     false,
+      castShadows: true,
+      desc: '',
+      ...props,
+    }};
+    await this.saveGroup(group);
+    return group;
+  }
+
+  // ── Assets do jogo (built-in, do AssetRegistry) ─────────────────
+  //  Não-geráveis: digimons, criaturas, armas, itens, natureza.
+  //  Mapeados pra grupos por categoria. Carregam custom-overrides de
+  //  grupo salvos pelo usuário (builtin_overrides).
+  static async getBuiltinAssets() {
+    const overrides = await LocalDB.get('builtin_group_overrides', {});
+    const catToGroup = {
+      nature:   'natureza',
+      weapon:   'arma',
+      creature: 'inimigo',
+      digimon:  'inimigo',
+    };
+    // Itens são variados → mapeia pelo nome
+    const itemGroup = (id) => {
+      if (/potion|bottle/i.test(id))         return 'consumivel';
+      if (/chest|key|coin/i.test(id))        return 'loot';
+      if (/crate|barrel|torch|dummy/i.test(id)) return 'props';
+      return 'props';
+    };
+
+    const out = [];
+    for (const cat of ['item', 'nature', 'weapon', 'creature', 'digimon']) {
+      for (const id of AssetRegistry.ids(cat)) {
+        const aid = `builtin_${cat}_${id}`;
+        const dflt = cat === 'item' ? itemGroup(id) : (catToGroup[cat] || null);
+        out.push({
+          id:       aid,
+          name:     id,
+          glbUrl:   AssetRegistry.path(cat, id),
+          groupId:  overrides[aid] ?? dflt,
+          category: cat,
+          builtin:  true,
+          imageUrl: null,
+        });
+      }
+    }
+    return out;
+  }
+
+  // ── Assets ──────────────────────────────────────────────────────
+  static async getAssets(groupId = undefined) {
+    const all = await LocalDB.get(STORE_ASSETS, []);
+    if (groupId === undefined) return all;
+    if (groupId === null)      return all.filter(a => !a.groupId);
+    return all.filter(a => a.groupId === groupId);
+  }
+
+  static async saveAsset(asset) {
+    const all = await LocalDB.get(STORE_ASSETS, []);
+    const idx = all.findIndex(a => a.id === asset.id);
+    if (idx >= 0) all[idx] = asset; else all.unshift(asset);
+    await LocalDB.save(STORE_ASSETS, all);
+    return asset;
+  }
+
+  static async moveAsset(assetId, newGroupId) {
+    // Built-in: grava override de grupo (não está no STORE_ASSETS)
+    if (String(assetId).startsWith('builtin_')) {
+      const ov = await LocalDB.get('builtin_group_overrides', {});
+      ov[assetId] = newGroupId;
+      await LocalDB.save('builtin_group_overrides', ov);
+      return true;
+    }
+    const all   = await LocalDB.get(STORE_ASSETS, []);
+    const asset = all.find(a => a.id === assetId);
+    if (!asset) return false;
+    asset.groupId = newGroupId;
+    await LocalDB.save(STORE_ASSETS, all);
+    return true;
+  }
+
+  // ── Propriedades de gameplay por asset (override do grupo) ───────
+  static async getAssetProps(asset) {
+    const ov = await LocalDB.get('asset_props_overrides', {});
+    if (ov[asset.id]) return ov[asset.id];
+    const groups = await this.getGroups();
+    const g = groups.find(x => x.id === asset.groupId);
+    return { ...(g?.props || {}) };
+  }
+
+  static async setAssetProps(assetId, props) {
+    const ov = await LocalDB.get('asset_props_overrides', {});
+    ov[assetId] = props;
+    await LocalDB.save('asset_props_overrides', ov);
+  }
+
+  static async deleteAsset(assetId) {
+    let all = await LocalDB.get(STORE_ASSETS, []);
+    all     = all.filter(a => a.id !== assetId);
+    await LocalDB.save(STORE_ASSETS, all);
+  }
+
+  static async renameAsset(assetId, newName) {
+    const all   = await LocalDB.get(STORE_ASSETS, []);
+    const asset = all.find(a => a.id === assetId);
+    if (!asset) return;
+    asset.name = newName;
+    await LocalDB.save(STORE_ASSETS, all);
+  }
+
+  // ── Migração assets antigos → nova biblioteca ───────────────────
+  static async migrateOld() {
+    const old = await LocalDB.get('generated_assets', []);
+    if (!old.length) return 0;
+    const existing    = await LocalDB.get(STORE_ASSETS, []);
+    const existingIds = new Set(existing.map(a => a.id));
+    let n = 0;
+    for (const a of old) {
+      if (!existingIds.has(a.id)) {
+        existing.push({
+          ...a,
+          groupId:     a.groupId || null,
+          imageUrl:    a.imageUrl || null,
+          createdAt:   a.createdAt || Date.now(),
+          _migrated:   true,
+        });
+        n++;
+      }
+    }
+    if (n > 0) await LocalDB.save(STORE_ASSETS, existing);
+    return n;
+  }
+}

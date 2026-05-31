@@ -198,6 +198,65 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── Cache local de assets gerados ─────────────────────────────────
+  //  POST /cache-asset  body: { url, name }
+  //  Baixa a URL (Meshy CDN etc.) e grava em assets/generated/<name>.
+  //  Devolve { path: 'assets/generated/<name>' } — caminho local que
+  //  NUNCA expira. (Quando online, trocar este destino por Wasabi/S3.)
+  if (req.method === 'POST' && req.url === '/cache-asset') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      let parsed;
+      try { parsed = JSON.parse(body); } catch (_) { res.writeHead(400); res.end('JSON inválido'); return; }
+      const { url, name } = parsed;
+      if (!url || !name) { res.writeHead(400); res.end('faltou url/name'); return; }
+
+      const safe    = String(name).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const dir      = path.join(ROOT, 'assets', 'generated');
+      const filePath = path.join(dir, safe);
+      const relPath  = `assets/generated/${safe}`;
+
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+      // Já cacheado? devolve direto (idempotente)
+      if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ path: relPath, cached: true }));
+        return;
+      }
+
+      let parsedUrl;
+      try { parsedUrl = new URL(url); } catch (e) { res.writeHead(400); res.end('URL inválida'); return; }
+      const opts = {
+        hostname: parsedUrl.hostname,
+        port:     parsedUrl.port || 443,
+        path:     parsedUrl.pathname + parsedUrl.search,
+        method:   'GET',
+        headers:  { 'User-Agent': 'Mozilla/5.0 (TransFPS-Cache)' },
+      };
+      const up = https.request(opts, upRes => {
+        if (upRes.statusCode !== 200) {
+          res.writeHead(502); res.end('download falhou: ' + upRes.statusCode);
+          upRes.resume(); return;
+        }
+        const ws = fs.createWriteStream(filePath);
+        upRes.pipe(ws);
+        ws.on('finish', () => {
+          ws.close(() => {
+            console.log(`💾 [${new Date().toLocaleTimeString()}] asset cacheado → ${relPath}`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ path: relPath }));
+          });
+        });
+        ws.on('error', e => { try { fs.unlinkSync(filePath); } catch (_) {} res.writeHead(500); res.end('write err: ' + e.message); });
+      });
+      up.on('error', e => { res.writeHead(502); res.end('req err: ' + e.message); });
+      up.end();
+    });
+    return;
+  }
+
   // ── Proxy de imagem (resolve CORS da CDN assets.meshy.ai) ──────────
   //  GET /proxy-image?url=<encoded-url>
   //  O servidor baixa a imagem server-side e devolve com CORS livre.

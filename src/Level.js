@@ -30,7 +30,8 @@ export class Level {
     this._createCombatZone();
     this._createObstacles();
     this._createCheese();
-    this._createBoundaries();
+    // Sem paredes de borda: o jogador PODE cair do mapa e morrer (kill plane no Player).
+    // this._createBoundaries();
 
     // Restaura posições salvas pelo SceneEditor (se existirem) via LocalDB
     this._applySavedTransforms();
@@ -145,11 +146,16 @@ export class Level {
     const b = BABYLON.MeshBuilder.CreateBox(name,
       { width: w, height: h, depth: d }, this.scene);
     b.position.set(x, y, z);
-    b.rotation.y     = ry;
+    b.rotationQuaternion = BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, ry);
     b.material       = mat;
-    b.checkCollisions = true;   // ← colisão nativa
+    b.checkCollisions = true;   // ← colisão nativa (coexiste durante a migração)
     b.receiveShadows = true;
     this.shadowGen.addShadowCaster(b);
+    // ── Corpo ESTÁTICO Havok (chão/parede/plataforma firmes) ──────────
+    if (this.scene.getPhysicsEngine?.()) {
+      try { new BABYLON.PhysicsAggregate(b, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.6, restitution: 0.1 }, this.scene); }
+      catch (e) { console.warn('[Level] física da caixa falhou:', name, e.message); }
+    }
     return b;
   }
 

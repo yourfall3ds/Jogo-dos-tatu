@@ -13,7 +13,7 @@ export class Inventory {
     this.stats = stats;
     this.bag = [];               // [{ id, qty }]
     this.equip = {};             // slot → id
-    this.hotbar = [null, null, null, null, null];
+    this.hotbar = new Array(9).fill(null);   // teclas 1-9
     this._listeners = [];
   }
 
@@ -49,6 +49,22 @@ export class Inventory {
     return this.bag.filter(s => s.id === id).reduce((a, s) => a + s.qty, 0);
   }
 
+  getEntry(id) { return this.bag.find(s => s.id === id); }
+
+  // ── Imagens geradas como itens ───────────────────────────────────
+  addImage({ name = 'imagem', imageUrl, prompt = '' } = {}) {
+    if (!imageUrl) return null;
+    const id = 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    this.bag.push({ id, qty: 1, kind: 'image', data: { name, imageUrl, prompt } });
+    // auto-atribui à primeira vaga livre da hotbar
+    const free = this.hotbar.indexOf(null);
+    if (free >= 0) this.hotbar[free] = id;
+    this._notify();
+    return id;
+  }
+
+  getImages() { return this.bag.filter(s => s.kind === 'image'); }
+
   // ── Usar consumível ──────────────────────────────────────────────
   use(id) {
     const def = getItemDef(id);
@@ -63,14 +79,45 @@ export class Inventory {
   useHotbar(index) {
     const id = this.hotbar[index];
     if (!id) return false;
+    const def = getItemDef(id);
+    if (def?.type === 'weapon') return this.equipWeapon(id);   // arma → equipa
+    const entry = this.getEntry(id);
+    if (entry?.kind === 'image') return false;                 // imagem → não usa pelo número
     const ok = this.use(id);
     if (this.count(id) <= 0) this.hotbar[index] = null;
     return ok;
   }
 
+  // ── Itens iniciais (armas) ───────────────────────────────────────
+  ensureStarterItems() {
+    for (const wid of ['weapon_pistol', 'weapon_rifle']) {
+      if (getItemDef(wid) && !this.bag.some(s => s.id === wid)) {
+        this.bag.push({ id: wid, qty: 1 });
+      }
+    }
+    this._notify();
+  }
+
+  // ── Equipar arma → troca a arma ativa do WeaponSystem ────────────
+  equipWeapon(id) {
+    const def = getItemDef(id);
+    if (!def || def.type !== 'weapon') return false;
+    const player = window._gamePlayer;
+    const ws     = player?.weapon;
+    if (!ws) return false;
+    ws.switchWeapon(def.weaponIndex ?? 0);
+    player._updateWeaponVisibility?.();
+    // saca a arma se estiver guardada
+    try { player.stateMachine?.draw?.(); } catch (_) {}
+    this.equippedWeapon = id;
+    this._notify();
+    return true;
+  }
+
   // ── Equipar / desequipar (aplica statBonus) ──────────────────────
   equipItem(id) {
     const def = getItemDef(id);
+    if (def?.type === 'weapon') return this.equipWeapon(id);
     if (!def || def.type !== 'equipment') return false;
     const slot = def.slot;
     if (this.equip[slot]) this.unequip(slot);
@@ -98,7 +145,9 @@ export class Inventory {
   load(data) {
     if (!data) return;
     this.bag = data.bag || [];
-    this.hotbar = data.hotbar || [null, null, null, null, null];
+    // hotbar agora tem 9 slots — normaliza saves antigos (5 slots)
+    this.hotbar = new Array(9).fill(null);
+    (data.hotbar || []).forEach((v, i) => { if (i < 9) this.hotbar[i] = v; });
     // re-aplica bônus de equipamento
     this.equip = {};
     for (const [slot, id] of Object.entries(data.equip || {})) {

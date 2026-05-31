@@ -338,6 +338,41 @@
     body.engine-mode #ammo-hud { right: auto; }
     body.engine-mode #ammo-hud { right: 310px; }
 
+    /* ── Server status pill ── */
+    #server-status {
+      position: fixed; top: 14px; left: 14px; z-index: 450;
+      display: flex; align-items: center; gap: 7px;
+      background: rgba(0,0,0,.6); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 20px; padding: 5px 13px;
+      font-size: 12px; font-weight: 600; color: #aaa;
+      cursor: default; transition: border-color .2s, background .2s;
+      user-select: none;
+    }
+    #server-status .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #555; flex-shrink: 0;
+      transition: background .3s;
+    }
+    #server-status.online  { border-color: rgba(40,220,100,.4); color: #7efa9a; }
+    #server-status.online  .dot { background: #28dc64; box-shadow: 0 0 6px #28dc64; }
+    #server-status.offline { border-color: rgba(255,80,80,.4); color: #ff8080; cursor: pointer; }
+    #server-status.offline .dot { background: #ff4444; box-shadow: 0 0 6px #ff4444; }
+    #server-status.checking .dot { background: #ffaa00; animation: blink .7s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+    /* Tooltip de instrução quando offline */
+    #server-status .tip {
+      display: none; position: absolute; top: 36px; left: 0;
+      background: #1a1a1a; border: 1px solid #ff4444;
+      border-radius: 8px; padding: 10px 14px; width: 260px;
+      font-size: 11px; color: #eee; line-height: 1.7; font-weight: 400;
+    }
+    #server-status.offline:hover .tip { display: block; }
+    #server-status .tip code {
+      background: #000; border-radius: 4px; padding: 1px 5px;
+      color: #ffcc44; font-family: monospace;
+    }
+
     /* ── Start screen ── */
     #start-screen {
       position: fixed; inset: 0; z-index: 400;
@@ -370,6 +405,20 @@
   </style>
 </head>
 <body>
+  <!-- ── Server Status Pill ── -->
+  <div id="server-status" class="checking">
+    <span class="dot"></span>
+    <span id="server-status-text">verificando…</span>
+    <span class="tip">
+      ⚠️ Config-server offline (porta 3099)<br>
+      As imagens da Fábrica não vão carregar.<br><br>
+      <strong>Para iniciar:</strong><br>
+      Execute <code>start.bat</code> na raiz do projeto<br>
+      — ou —<br>
+      <code>node tools/config-server.js</code>
+    </span>
+  </div>
+
   <!-- ── Engine Mode bar (aparece quando o jogo é "congelado") ── -->
   <div id="engine-bar">
     <span style="font-size:11px">⚙️ <b style="color:#7af">ENGINE MODE</b>
@@ -484,9 +533,12 @@
         <tr><td>RMB</td><td>Chute combo / Mirar (ADS)</td></tr>
         <tr><td>G</td><td>Sacar / Guardar arma</td></tr>
         <tr><td>R</td><td>Recarregar</td></tr>
-        <tr><td>1 / 2</td><td>Trocar arma</td></tr>
+        <tr><td>Scroll</td><td>Trocar arma</td></tr>
+        <tr><td>1 – 9</td><td>🎒 Inventário (usar item)</td></tr>
+        <tr><td>Z X C F Q</td><td>⚡ Habilidades</td></tr>
         <tr><td>V</td><td>Câmera FPS / 3ª Pessoa</td></tr>
         <tr><td>M</td><td>📋 Move List completa</td></tr>
+        <tr><td>I</td><td>🎒 Status & Inventário</td></tr>
         <tr><td>ESC</td><td>Pausar / Engine Mode</td></tr>
       </table>
     </div>
@@ -500,11 +552,81 @@
     </div>
 
     <button class="play-btn" onclick="startGame()">▶ JOGAR</button>
+
+    <!-- Status do servidor embutido na start screen -->
+    <div id="server-status-start" style="
+      margin-top: 18px; display: flex; align-items: center; gap: 8px;
+      font-size: 12px; color: #666; font-weight: 600;
+    ">
+      <span id="ss-dot" style="
+        width:8px;height:8px;border-radius:50%;background:#555;
+        display:inline-block;flex-shrink:0;
+      "></span>
+      <span id="ss-text">verificando servidor…</span>
+    </div>
   </div>
 
   <!-- Babylon.js via CDN -->
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
   <script type="module" src="src/main.js"></script>
+
+  <!-- ── Config-server status monitor ── -->
+  <script>
+  (function () {
+    // Pill no canto (durante o jogo)
+    const pill   = document.getElementById('server-status');
+    const label  = document.getElementById('server-status-text');
+    // Indicador dentro da start screen
+    const ssDot  = document.getElementById('ss-dot');
+    const ssText = document.getElementById('ss-text');
+    let online   = null;
+
+    async function checkServer() {
+      try {
+        const resp = await fetch('http://127.0.0.1:3099/health', { signal: AbortSignal.timeout(1500) });
+        const data = await resp.json();
+        if (data.ok) setOnline(true, data.meshyKey);
+        else         setOnline(false);
+      } catch (_) {
+        setOnline(false);
+      }
+    }
+
+    function setOnline(ok, meshyKey) {
+      const changed = (online !== ok);
+      online = ok;
+
+      // ── Pill (jogo ativo) ──
+      pill.classList.remove('checking', 'online', 'offline');
+      if (ok) {
+        pill.classList.add('online');
+        label.textContent = meshyKey ? 'servidor ✓  key ✓' : 'servidor ✓  sem key';
+      } else {
+        pill.classList.add('offline');
+        label.textContent = 'servidor offline  ⚠️  (hover p/ instruções)';
+      }
+
+      // ── Indicador na start screen ──
+      if (ok) {
+        ssDot.style.background  = '#28dc64';
+        ssDot.style.boxShadow   = '0 0 6px #28dc64';
+        ssText.style.color      = '#7efa9a';
+        ssText.textContent      = meshyKey ? '⚙️ Servidor online  ·  Meshy key ✓' : '⚙️ Servidor online  ·  sem Meshy key';
+      } else {
+        ssDot.style.background  = '#ff4444';
+        ssDot.style.boxShadow   = '0 0 6px #ff4444';
+        ssText.style.color      = '#ff8888';
+        ssText.textContent      = '⚠️ Config-server offline — execute start.bat ou node tools/config-server.js';
+      }
+
+      if (changed) console[ok ? 'info' : 'warn']('[server-status]', ok ? 'online ✅' : 'offline ❌');
+    }
+
+    // Primeira verificação imediata + poll a cada 5s
+    checkServer();
+    setInterval(checkServer, 5000);
+  })();
+  </script>
 </body>
 </html>

@@ -115,8 +115,9 @@ export class CatalogUI {
   toggle() { this._visible ? this.hide() : this.show(); }
 
   update() {
-    const c = window._gameInput?.isDown('KeyC');
-    if (c && !this._wasC) this.toggle();
-    this._wasC = c;
+    // Movido de C → K (C agora é a skill Slam)
+    const k = window._gameInput?.isDown('KeyK');
+    if (k && !this._wasC) this.toggle();
+    this._wasC = k;
   }
 }

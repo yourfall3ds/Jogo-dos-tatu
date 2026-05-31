@@ -64,6 +64,7 @@ export class AssetMachine {
     // Preview 3D rotativo dentro do holograma
     this._preview3DRoot   = null;
     this._preview3DMeshes = null;
+    this._fxObs           = null;  // observable do efeito de revelação
 
     // true = holograma fica visível mesmo sem geração ativa (tem imagem/3D)
     this._hasContent = false;
@@ -168,23 +169,44 @@ export class AssetMachine {
     this._holoPs.gravity    = new BABYLON.Vector3(0, -0.05, 0);
     // não inicia ainda
 
-    // Plano da imagem (billboard — sempre de frente pro player)
-    this._imgBg = BABYLON.MeshBuilder.CreatePlane('mac_imgBg', { width: 2.0, height: 2.0 }, this.scene);
-    this._imgBg.position.set(p.x, p.y + BEAM_H * 0.5, p.z);   // centro do feixe
-    this._imgBg.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL; // sempre de frente
-    this._imgBg.isPickable    = false;
+    // ── Display holográfico da imagem ─────────────────────────────────
+    // Posição: acima do centro do feixe
+    const IMG_Y = p.y + BEAM_H * 0.62;
+
+    // Borda externa (frame glow) — grupo 1
+    this._imgFrame = BABYLON.MeshBuilder.CreatePlane('mac_imgFrame', { width: 2.10, height: 2.10 }, this.scene);
+    this._imgFrame.position.set(p.x, IMG_Y, p.z);
+    this._imgFrame.billboardMode    = BABYLON.Mesh.BILLBOARDMODE_ALL;
+    this._imgFrame.isPickable       = false;
+    this._imgFrame.renderingGroupId = 1;
+    const frm = new BABYLON.StandardMaterial('mac_imgFrameMat', this.scene);
+    frm.emissiveColor   = new BABYLON.Color3(0.08, 0.22, 0.38);
+    frm.disableLighting = true;
+    frm.alpha           = 0;
+    frm.backFaceCulling = false;
+    this._imgFrame.material = frm;
+
+    // Fundo escuro — grupo 1 (renderiza depois do frame)
+    this._imgBg = BABYLON.MeshBuilder.CreatePlane('mac_imgBg', { width: 1.92, height: 1.92 }, this.scene);
+    this._imgBg.position.set(p.x, IMG_Y, p.z);
+    this._imgBg.billboardMode    = BABYLON.Mesh.BILLBOARDMODE_ALL;
+    this._imgBg.isPickable       = false;
+    this._imgBg.renderingGroupId = 1;
     const bgm = new BABYLON.StandardMaterial('mac_imgBgMat', this.scene);
-    bgm.emissiveColor   = new BABYLON.Color3(0.03, 0.03, 0.12);
-    bgm.disableLighting = true;
-    bgm.alpha           = 0;
-    bgm.backFaceCulling = false;
+    bgm.emissiveColor    = new BABYLON.Color3(0.02, 0.02, 0.08);
+    bgm.disableLighting  = true;
+    bgm.alpha            = 0;
+    bgm.backFaceCulling  = false;
+    bgm.depthWriteEnabled = false;   // não escreve depth → evita Z-fight com imgPlane
     this._imgBg.material = bgm;
 
-    this._imgPlane = BABYLON.MeshBuilder.CreatePlane('mac_imgPlane', { width: 1.85, height: 1.85 }, this.scene);
-    this._imgPlane.position.set(p.x, p.y + BEAM_H * 0.5, p.z);
-    this._imgPlane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL; // sempre de frente
-    this._imgPlane.isPickable    = false;
-    this._imgPlane.setEnabled(false);   // oculto até showImage() ser chamado
+    // Imagem — grupo 2 (SEMPRE renderiza sobre fundo e feixe, sem Z-fight)
+    this._imgPlane = BABYLON.MeshBuilder.CreatePlane('mac_imgPlane', { width: 1.68, height: 1.68 }, this.scene);
+    this._imgPlane.position.set(p.x, IMG_Y, p.z);
+    this._imgPlane.billboardMode    = BABYLON.Mesh.BILLBOARDMODE_ALL;
+    this._imgPlane.isPickable       = false;
+    this._imgPlane.renderingGroupId = 2;   // grupo separado → sem Z-fight com bg
+    this._imgPlane.setEnabled(false);
     // material definido em showImage()
   }
 
@@ -204,10 +226,11 @@ export class AssetMachine {
 
   startGenerating() {
     this._generating = true;
-    this._hasContent = false;   // será setado quando imagem/3D chegar
+    this._hasContent = false;
     this._holoFadeIn = 0;
     this._imgPlane.setEnabled(false);
-    this._imgBg.material.alpha = 0;
+    this._imgBg.material.alpha    = 0;
+    this._imgFrame.material.alpha = 0;
     this._disposePreview3D();
     this._holoColor('blue');
     this._holoPs.start();
@@ -217,11 +240,10 @@ export class AssetMachine {
     if (!imageUrl) return;
     this._holoColor('green');
 
-    // ── A CDN assets.meshy.ai não envia Access-Control-Allow-Origin ───
-    // Rota via proxy local (config-server :3099/proxy-image) que baixa
-    // a imagem server-side e devolve com CORS livre.
+    // Imagem local (assets/) carrega direto; só CDN http vai pro proxy
+    // (assets.meshy.ai não envia Access-Control-Allow-Origin).
     let texUrl = imageUrl;
-    try {
+    if (/^https?:/.test(imageUrl)) try {
       const proxyUrl = `http://127.0.0.1:3099/proxy-image?url=${encodeURIComponent(imageUrl)}`;
       const resp = await fetch(proxyUrl);
       if (resp.ok) {
@@ -236,21 +258,38 @@ export class AssetMachine {
     }
 
     const mat = new BABYLON.StandardMaterial('mac_img_' + Date.now(), this.scene);
-    const tex = new BABYLON.Texture(texUrl, this.scene, false, false);
+    const tex = new BABYLON.Texture(texUrl, this.scene,
+      false,  // noMipmap = false  → gera mipmaps (qualidade a distância)
+      true,   // invertY  = true   → corrige flip WebGL
+      BABYLON.Texture.LINEAR_LINEAR_MIPLINEAR,  // trilinear — mais suave
+    );
     tex.hasAlpha = false;
+    // uScale=-1 + uOffset=1 → flip horizontal correto dentro do range [0,1]
+    // (sem offset, uScale=-1 produz UVs negativas → branco com CLAMP)
+    tex.uScale   = -1;
+    tex.uOffset  =  1;
+    // Clamp: sem sangramento de borda
+    tex.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
+    tex.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+
     mat.diffuseTexture  = tex;
     mat.emissiveTexture = tex;
-    mat.emissiveColor   = new BABYLON.Color3(0.9, 0.9, 0.9);
-    mat.backFaceCulling = false;
-    mat.disableLighting = true;
+    mat.emissiveColor   = new BABYLON.Color3(1.0, 1.0, 1.0);  // brilho máximo sem tint
+    mat.backFaceCulling  = false;
+    mat.disableLighting  = true;
+    mat.depthWriteEnabled = false;   // grupo 2 não precisa escrever depth
     if (this._imgPlane.material) this._imgPlane.material.dispose();
     this._imgPlane.material = mat;
 
-    // Só mostra APÓS textura estar pronta — evita checkerboard temporário
-    this._imgBg.material.alpha = 0.82;
-    this._imgPlane.setEnabled(true);
-    this._hasContent = true;    // mantém holograma visível mesmo sem _generating
-    this._glow.addIncludedOnlyMesh(this._imgPlane);
+    // Mostra SOMENTE após a textura estar pronta — evita checkerboard/glitch
+    this._imgPlane.setEnabled(false);
+    tex.onLoadObservable.addOnce(() => {
+      this._imgFrame.material.alpha = 0.95;   // borda glow
+      this._imgBg.material.alpha    = 0.92;   // fundo escuro
+      this._imgPlane.setEnabled(true);
+      this._hasContent = true;
+      this._glow.addIncludedOnlyMesh(this._imgFrame);
+    });
   }
 
   /** Volta para azul (step 2/3/4 iniciou) mas mantém a imagem visível */
@@ -270,57 +309,216 @@ export class AssetMachine {
     // feixe e discos somem via fade; imagem/3D permanece
   }
 
+  /**
+   * Resolve um GLB para algo carregável pelo Babylon:
+   *  - blob: / assets/ (local) → carrega direto
+   *  - http(s) (CDN Meshy)     → baixa via proxy → blob URL limpo
+   * Força sempre extensão .glb na hora do load (feito pelo chamador).
+   */
+  async _resolveGlbLoad(glbUrl) {
+    if (/^https?:/.test(glbUrl)) {
+      try {
+        const proxy = `http://127.0.0.1:3099/proxy-image?url=${encodeURIComponent(glbUrl)}`;
+        const resp  = await fetch(proxy, { signal: AbortSignal.timeout(60000) });
+        if (resp.ok) return URL.createObjectURL(await resp.blob());
+      } catch (e) {
+        console.warn('[AssetMachine] proxy GLB falhou:', e.message);
+      }
+    }
+    return glbUrl;   // blob: ou caminho local (assets/…)
+  }
+
   /** Carrega e exibe o modelo 3D girando dentro do holograma */
   async show3D(glbUrl) {
     if (!glbUrl) return;
-    this._holoColor('green');
     this._disposePreview3D();
 
-    // Esconde imagem 2D — o 3D vai substituir
-    this._imgPlane.setEnabled(false);
-    this._imgBg.material.alpha = 0;
-
-    const isBlob    = glbUrl.startsWith('blob:');
-    const lastSlash = glbUrl.lastIndexOf('/');
-    const folder    = isBlob ? '' : glbUrl.substring(0, lastSlash + 1);
-    const file      = isBlob ? glbUrl : encodeURIComponent(glbUrl.substring(lastSlash + 1));
+    // Caminho local (assets/) carrega direto; só URLs http vão pro proxy.
+    const loadUrl = await this._resolveGlbLoad(glbUrl);
 
     try {
-      const result = await BABYLON.SceneLoader.ImportMeshAsync('', folder, file, this.scene);
+      // Força plugin .glb — blob/local não têm extensão detectável
+      const result = await BABYLON.SceneLoader.ImportMeshAsync('', '', loadUrl, this.scene, null, '.glb');
       const root   = result.meshes[0];
       root.name    = '__assetMachinePreview3D';
       result.meshes.forEach(m => { m.isPickable = false; });
 
-      // Auto-scale: cabe em ~1.5 unidades
+      // ── Auto-scale + posicionamento correto ────────────────────────
+      // 1. Aplica escala real primeiro para bounds corretos
+      root.position.setAll(0);
       root.computeWorldMatrix(true);
       const bounds = root.getHierarchyBoundingVectors(true);
       const size   = bounds.max.subtract(bounds.min);
       const maxDim = Math.max(size.x, size.y, size.z);
       const scale  = maxDim > 0.01 ? 1.5 / maxDim : 1.0;
-      root.scaling.setAll(scale);
 
-      // Centraliza verticalmente no feixe (~2.8u acima da máquina)
+      root.scaling.setAll(scale);
       root.computeWorldMatrix(true);
-      const b2  = root.getHierarchyBoundingVectors(true);
-      const midY = (b2.max.y + b2.min.y) / 2;
-      root.position.set(
-        this.position.x,
-        this.position.y + 2.8 - midY + this.position.y,
-        this.position.z,
-      );
-      // simplificação segura: só posiciona em Y fixo
-      root.position.set(this.position.x, this.position.y + 2.5, this.position.z);
+      const b2   = root.getHierarchyBoundingVectors(true);
+      const botY = b2.min.y;  // fundo do modelo em escala real
+
+      // 2. Posiciona: fundo do modelo fica a 1.8u acima da base da máquina
+      const targetY = this.position.y + 1.8 - botY;
+      root.position.set(this.position.x, targetY, this.position.z);
+      this._preview3DBaseY = targetY;   // usado no bob do _updateHologram
+
+      root.scaling.setAll(0.001);   // escondido até o efeito revelar
 
       this._preview3DRoot   = root;
       this._preview3DMeshes = result.meshes;
       this._hasContent      = true;
+
+      // 🔮 Efeito de transformação — revela o 3D com estilo
+      this._fxReveal3D(root, result.meshes, scale);
+
       console.log('[AssetMachine] 🎲 Preview 3D carregado (scale:', scale.toFixed(3), ')');
     } catch (e) {
       console.warn('[AssetMachine] Preview 3D falhou:', e.message);
-      // Se falhar, restaura a imagem 2D
+      this._holoColor('green');
       this._imgPlane.setEnabled(true);
       this._imgBg.material.alpha = 0.82;
     }
+  }
+
+  /** Restaura o 3D silenciosamente (sem efeito) — chamado ao recarregar */
+  async _restoreGlb(glbUrl) {
+    this._disposePreview3D();
+
+    const loadUrl = await this._resolveGlbLoad(glbUrl);
+    const result = await BABYLON.SceneLoader.ImportMeshAsync('', '', loadUrl, this.scene, null, '.glb');
+    const root   = result.meshes[0];
+    root.name    = '__assetMachinePreview3D';
+    result.meshes.forEach(m => { m.isPickable = false; });
+
+    // Auto-scale com bounds corretos (mesma lógica do show3D)
+    root.position.setAll(0);
+    root.computeWorldMatrix(true);
+    const bounds = root.getHierarchyBoundingVectors(true);
+    const size   = bounds.max.subtract(bounds.min);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scale  = maxDim > 0.01 ? 1.5 / maxDim : 1.0;
+
+    root.scaling.setAll(scale);
+    root.computeWorldMatrix(true);
+    const b2   = root.getHierarchyBoundingVectors(true);
+    const botY = b2.min.y;
+    const targetY = this.position.y + 1.8 - botY;
+    root.position.set(this.position.x, targetY, this.position.z);
+    this._preview3DBaseY = targetY;
+
+    // Esconde imagem 2D — 3D substitui
+    this._imgPlane.setEnabled(false);
+    this._imgBg.material.alpha    = 0;
+    this._imgFrame.material.alpha = 0;
+
+    this._preview3DRoot   = root;
+    this._preview3DMeshes = result.meshes;
+    this._hasContent      = true;
+    this._holoColor('green');
+    console.log('[AssetMachine] 🔄 Preview 3D restaurado (scale:', scale.toFixed(3), ')');
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  //  Efeito de revelação 3D — usa technology_aperture_out.glb
+  //  Sequência:
+  //   0.00 → 0.35  Imagem pisca + glow aumenta
+  //   0.35          Esconde imagem, spawna o spell escalado ao modelo
+  //   0.35 → 1.20  Modelo materializa com ease elástico
+  //   1.20          Cor vira verde, spell começa a sumir
+  //   ~3.0          Spell removido
+  // ══════════════════════════════════════════════════════════════════
+  _fxReveal3D(root, meshes, targetScale) {
+    if (this._fxObs) { this.scene.onBeforeRenderObservable.remove(this._fxObs); this._fxObs = null; }
+
+    const p         = this.position;
+    const ctr       = new BABYLON.Vector3(p.x, p.y + 2.5, p.z);
+    const savedGlow = this._glow.intensity;
+    const hasImg    = this._imgPlane.isEnabled();
+
+    this._holoColor('blue');
+
+    // O spell será carregado uma vez e reutilizado
+    let spellMeshes = null;
+
+    // ── Carrega technology_aperture_out.glb ──────────────────────────
+    // Scale do spell = proporcional ao targetScale do modelo
+    // O spell "natural" mede ~4-6u; queremos que envolva o modelo (~1.5u)
+    // então escalamos para ficar ~2× o tamanho do modelo
+    const spellScale = targetScale * 2.2;
+
+    BABYLON.SceneLoader.ImportMeshAsync('', 'assets/Spells/', 'technology_aperture_out.glb', this.scene)
+      .then(r => {
+        spellMeshes = r.meshes;
+        r.meshes[0].position.copyFrom(ctr);
+        r.meshes[0].scaling.setAll(spellScale);
+        r.meshes.forEach(m => { m.isPickable = false; });
+        // Adiciona ao glow
+        r.meshes.forEach(m => { if (m.getTotalVertices?.() > 0) this._glow.addIncludedOnlyMesh(m); });
+      })
+      .catch(e => console.warn('[AssetMachine] spell load failed:', e.message));
+
+    // ── Timeline ─────────────────────────────────────────────────────
+    const TOTAL = 3.2;
+    let t = 0, phase = 0;
+
+    const cleanup = () => {
+      this.scene.onBeforeRenderObservable.remove(this._fxObs);
+      this._fxObs = null;
+      this._glow.intensity = savedGlow;
+      root.scaling.setAll(targetScale);
+      if (spellMeshes) spellMeshes.forEach(m => { try { m.dispose(); } catch (_) {} });
+      spellMeshes = null;
+    };
+
+    this._fxObs = this.scene.onBeforeRenderObservable.add(() => {
+      const dt = Math.min(this.scene.getEngine().getDeltaTime() / 1000, 0.05);
+      t += dt;
+
+      // ── Charge: imagem pisca, glow sobe (0 → 0.35s) ─────────────────
+      if (t < 0.35) {
+        this._glow.intensity = savedGlow + (t / 0.35) * 1.6;
+        if (hasImg && this._imgPlane.material) {
+          this._imgPlane.material.alpha = 0.3 + Math.abs(Math.sin(t * 40)) * 0.7;
+        }
+      }
+
+      // ── Trigger: esconde imagem (0.35s) ─────────────────────────────
+      if (t >= 0.35 && phase < 1) {
+        phase = 1;
+        if (hasImg) {
+          this._imgPlane.setEnabled(false);
+          if (this._imgPlane.material) this._imgPlane.material.alpha = 1;
+        }
+        this._imgBg.material.alpha    = 0;
+        this._imgFrame.material.alpha = 0;
+      }
+
+      // ── Modelo materializa (0.35 → 1.20s) ───────────────────────────
+      if (t > 0.35 && t < 1.20) {
+        const pr = (t - 0.35) / 0.85;
+        // Ease cúbico com overshoot leve
+        const ease = pr < 0.8
+          ? 1 - Math.pow(1 - pr / 0.8, 3)
+          : 1 + Math.sin((pr - 0.8) / 0.2 * Math.PI) * 0.08;
+        root.scaling.setAll(Math.max(0.001, targetScale * ease));
+        this._glow.intensity = 2.2 * (1 - pr) + savedGlow;
+      } else if (t >= 1.20 && phase < 2) {
+        phase = 2;
+        root.scaling.setAll(targetScale);
+        this._glow.intensity = savedGlow;
+        this._holoColor('green');
+      }
+
+      // ── Spell fade out (2.0 → 3.0s) ─────────────────────────────────
+      if (t > 2.0 && spellMeshes) {
+        const fade = 1 - Math.min((t - 2.0) / 1.0, 1);
+        spellMeshes.forEach(m => {
+          if (m.material) m.material.alpha = fade;
+        });
+      }
+
+      if (t >= TOTAL) cleanup();
+    });
   }
 
   /** Restaura o último estado da biblioteca ao religar/dar F5 */
@@ -343,11 +541,11 @@ export class AssetMachine {
         await this.showImage(last.image).catch(() => {});
       }
 
-      // Tenta restaurar o melhor GLB disponível
+      // Tenta restaurar o melhor GLB disponível (sem efeito de revelação)
       const glbUrl = last.glbTextured || last.glbRemesh || last.glb3d;
       if (glbUrl) {
-        await this.show3D(glbUrl).catch(() => {
-          // Se 3D falhar (URL expirada etc.), mantém só a imagem
+        await this._restoreGlb(glbUrl).catch(() => {
+          // URL expirada — mantém só a imagem
           console.warn('[AssetMachine] Preview 3D expirou, mostrando só imagem');
           if (last.image) {
             this._imgPlane.setEnabled(true);
@@ -628,16 +826,18 @@ export class AssetMachine {
 
     // Bob da imagem 2D (centro do feixe)
     if (this._imgPlane.isEnabled()) {
-      const center = this.position.y + 5.5 * 0.5;
+      const center = this.position.y + 5.5 * 0.62;
       const bob    = Math.sin(this._idleTimer * 1.8) * 0.15;
       this._imgPlane.position.y = center + bob;
       this._imgBg.position.y    = center + bob;
+      this._imgFrame.position.y = center + bob;
     }
 
     // Rotação + bob do preview 3D
     if (this._preview3DRoot) {
       this._preview3DRoot.rotation.y += dt * 0.75;
-      this._preview3DRoot.position.y  = this.position.y + 2.5 + Math.sin(this._idleTimer * 1.4) * 0.1;
+      const baseY = this._preview3DBaseY ?? (this.position.y + 2.5);
+      this._preview3DRoot.position.y = baseY + Math.sin(this._idleTimer * 1.4) * 0.12;
     }
   }
 
@@ -684,6 +884,7 @@ export class AssetMachine {
       if (i >= 0) window._assetMachines.splice(i, 1);
     }
     this._promptEl?.remove();
+    if (this._fxObs) { try { this.scene.onBeforeRenderObservable.remove(this._fxObs); } catch (_) {} this._fxObs = null; }
     try { this._glow?.dispose(); }      catch (_) {}
     try { this._p1Root?.dispose(); }    catch (_) {}
     try { this._p2Root?.dispose(); }    catch (_) {}
@@ -691,6 +892,7 @@ export class AssetMachine {
     try { this._disc?.dispose(); }      catch (_) {}
     try { this._disc2?.dispose(); }     catch (_) {}
     try { this._holoPs?.dispose(); }    catch (_) {}
+    try { this._imgFrame?.dispose(); }  catch (_) {}
     try { this._imgPlane?.dispose(); }  catch (_) {}
     try { this._imgBg?.dispose(); }     catch (_) {}
     this._disposePreview3D();

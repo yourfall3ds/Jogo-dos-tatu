@@ -135,6 +135,11 @@ export class Player {
     this.camera.fov  = 1.38;
     this.camera.inputs.clear();          // remove inputs padrão
     this.scene.activeCamera = this.camera;
+
+    // Anti-aliasing FXAA → mata o "tremido/crawling" das bordas ao andar
+    try {
+      this._fxaa = new BABYLON.FxaaPostProcess('fpsFxaa', 1.0, this.camera);
+    } catch (_) {}
   }
 
   spawn() {
@@ -163,6 +168,84 @@ export class Player {
       if (hit?.hit) return true;
     }
     return false;
+  }
+
+  // ── Movimento com auto step-up ────────────────────────────────────
+  //  Antes de mover, sonda à frente: se há um obstáculo BAIXO (≤ STEP)
+  //  com espaço livre acima, levanta o player até o topo do degrau e
+  //  então move. Permite subir escadas/degraus suavemente sem o
+  //  ellipsoid "engatar" em cada degrau (o que causava o spasm/derreter).
+  _moveWithStepUp(disp) {
+    const STEP     = 0.70;   // altura máxima de degrau que sobe sozinho (escadas blocadas)
+    const horizLen = Math.hypot(disp.x, disp.z);
+
+    if (this.isGrounded && horizLen > 1e-4 && this.velY <= 1) {
+      const dir   = new BABYLON.Vector3(disp.x, 0, disp.z).scale(1 / horizLen);
+      const pos   = this.mesh.position;
+      const footY = pos.y - this.HEIGHT / 2;             // base do ellipsoid
+      const reach = this.RADIUS + 0.30;                  // alcance da sondagem
+      const filter = m => m !== this.mesh && m.checkCollisions === true && m.isPickable !== false;
+
+      // 1) raio na altura do pé → detecta a face do degrau
+      const lowHit = this.scene.pickWithRay(
+        new BABYLON.Ray(new BABYLON.Vector3(pos.x, footY + 0.08, pos.z), dir, reach), filter);
+
+      if (lowHit?.hit) {
+        // 2) acha a altura do topo do degrau logo à frente (raio pra baixo)
+        const ax = pos.x + dir.x * reach;
+        const az = pos.z + dir.z * reach;
+        const downHit = this.scene.pickWithRay(
+          new BABYLON.Ray(new BABYLON.Vector3(ax, footY + STEP + 0.25, az), BABYLON.Vector3.Down(), STEP + 0.4), filter);
+
+        if (downHit?.hit && downHit.pickedPoint) {
+          const rise = downHit.pickedPoint.y - footY;
+          // Degrau transponível (não uma parede alta — rise dentro do limite).
+          // Sem o check 'highHit' antigo, que batia no PRÓXIMO degrau e
+          // travava o player no meio da escada.
+          if (rise > 0.05 && rise <= STEP) {
+            // head-room: garante que cabe (sem teto baixo) no novo nível
+            const headHit = this.scene.pickWithRay(
+              new BABYLON.Ray(new BABYLON.Vector3(ax, downHit.pickedPoint.y + 0.05, az),
+                              BABYLON.Vector3.Up(), this.HEIGHT * 0.85), filter);
+            if (!headHit?.hit) {
+              this.mesh.position.y = downHit.pickedPoint.y + this.HEIGHT / 2;
+              if (this.velY < 0) this.velY = this.GROUND_SNAP;
+            }
+          }
+        }
+      }
+    }
+
+    this.mesh.moveWithCollisions(disp);
+  }
+
+  // ── Ground clamp ──────────────────────────────────────────────────
+  //  Raycast pra baixo a partir de ACIMA dos pés. Se o player afundou
+  //  num objeto (pés abaixo da superfície), sobe ele até a superfície.
+  //  Só sobe (nunca puxa pra baixo) → não atrapalha queda/pulo natural.
+  _groundClamp() {
+    if (this.velY > 0.5) return;   // subindo (pulo) → não clampa
+    const c = this.mesh.position;
+    const r = this.RADIUS * 0.7;
+    const offsets = [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]];
+    const filter = m => m !== this.mesh && m.checkCollisions === true && m.isPickable !== false;
+
+    const fromY = c.y + 0.5;                       // bem acima dos pés
+    const len   = 0.5 + this.HEIGHT / 2 + 0.30;    // alcança até ~0.3 abaixo dos pés
+
+    let bestY = -Infinity;
+    for (const [ox, oz] of offsets) {
+      const origin = new BABYLON.Vector3(c.x + ox, fromY, c.z + oz);
+      const hit = this.scene.pickWithRay(new BABYLON.Ray(origin, BABYLON.Vector3.Down(), len), filter);
+      if (hit?.hit && hit.pickedPoint && hit.pickedPoint.y > bestY) bestY = hit.pickedPoint.y;
+    }
+    if (bestY === -Infinity) return;               // nada embaixo → não mexe
+
+    const targetY = bestY + this.HEIGHT / 2;
+    if (targetY > c.y + 0.001) {                   // afundou → sobe até a superfície
+      this.mesh.position.y = targetY;
+      if (this.velY < 0) this.velY = this.GROUND_SNAP;
+    }
   }
 
   // ── Update principal ──────────────────────────────────────────────
@@ -318,13 +401,19 @@ export class Player {
       this._kbVx = 0; this._kbVz = 0;
     }
 
-    // ── 8. Aplicar deslocamento ──────────────────────────────────────
+    // ── 8. Aplicar deslocamento (com auto step-up p/ escadas/degraus) ─
     const disp = new BABYLON.Vector3(
       (this._vx + this._kbVx) * dt,
       this.velY * dt,
       (this._vz + this._kbVz) * dt
     );
-    this.mesh.moveWithCollisions(disp);
+    this._moveWithStepUp(disp);
+
+    // ── Ground clamp: tira o player de DENTRO de objetos ─────────────
+    //  A colisão por malha (ellipsoid) afunda em GLBs irregulares. Aqui
+    //  raycast acha a superfície e SÓ sobe o player até ela (nunca puxa
+    //  pra baixo) — corrige o "afundar" sem atrapalhar pulo/queda.
+    this._groundClamp();
 
     // ── Rotação do CAPSULE: SEMPRE 0 ─────────────────────────────────
     //  O capsule (this.mesh) é só colisão. O modelo visível (animator.root)
@@ -342,7 +431,9 @@ export class Player {
     this._prevY = this.mesh.position.y;
 
     // ── 9. Reload + Tiro ─────────────────────────────────────────────
-    const rNow = this.input.isDown('KeyR');
+    // No modo construção, R é "girar" (BuildMode) — não recarrega a arma.
+    const _building = window._buildMode?._state === 'placing';
+    const rNow = this.input.isDown('KeyR') && !_building;
     if (rNow && !this._wasR) this.weapon.startReload();
     this._wasR = rNow;
 
@@ -380,21 +471,16 @@ export class Player {
     const aimEl = document.getElementById('aim-indicator');
     if (aimEl) aimEl.style.opacity = this._aiming ? '1' : '0';
 
-    // ── 10. Troca de Arma (1, 2) ─────────────────────────────────────
-    const d1 = this.input.isDown('Digit1');
-    if (d1 && !this._wasDigit1) {
-      this.weapon.switchWeapon(0); // Bucaneira
+    // ── 10. Troca de Arma (scroll do mouse) ──────────────────────────
+    //  1-9 agora é o inventário; trocar de arma vai pro scroll.
+    const wheel = this.input.consumeWheel?.() || 0;
+    if (wheel !== 0 && this.weapon?.weapons?.length > 1) {
+      const n   = this.weapon.weapons.length;
+      const cur = this.weapon.currentWeaponIndex || 0;
+      const next = ((cur + wheel) % n + n) % n;   // cicla com wrap
+      this.weapon.switchWeapon(next);
       this._updateWeaponVisibility();
     }
-    this._wasDigit1 = d1;
-
-    const d2 = this.input.isDown('Digit2');
-    if (d2 && !this._wasDigit2) {
-      // Por enquanto não temos slot 2 modular, mas o sistema está pronto
-      this.weapon.switchWeapon(1); 
-      this._updateWeaponVisibility();
-    }
-    this._wasDigit2 = d2;
 
     const gNow = this.input.isDown('KeyG');
     if (gNow && !this._wasG) {
@@ -571,6 +657,15 @@ export class Player {
           tpsMode      : this._tpsMode,
         });
       }
+
+      // ── Strip root motion HORIZONTAL ────────────────────────────────
+      //  As animações (principalmente soco/chute do GLB) têm root motion
+      //  que desloca o nó raiz — fazia o personagem "andar pra trás" ao
+      //  golpear. Zeramos X/Z todo frame → ele bate PARADO, no capsule.
+      if (this.animator?.root) {
+        this.animator.root.position.x = 0;
+        this.animator.root.position.z = 0;
+      }
     }
 
     // ── 10. Câmera + arma ────────────────────────────────────────────
@@ -596,9 +691,10 @@ export class Player {
     this._applyTPSAim(dt);
 
     // ── 11. Morte por queda ───────────────────────────────────────────
-    if (this.mesh.position.y < -25) {
-      this.hp = this.maxHp;
-      this.spawn();
+    // Chão fica em y≈0 → kill plane 10m abaixo. Sem paredes de borda, o
+    // jogador cai do mapa e MORRE (animação de morte + respawn).
+    if (this.mesh.position.y < -10 && !this._dead) {
+      this._triggerDeath({ fall: true });
     }
     this._hitFlashT    = Math.max(0, this._hitFlashT - dt);
     this._damageFlashT = Math.max(0, this._damageFlashT - dt);
@@ -746,27 +842,47 @@ export class Player {
     }
 
     if (this.hp <= 0 && !this._dead) {
-      this._dead = true;
-      this.hp    = 0;
-      
+      this._triggerDeath();
+    }
+  }
+
+  /**
+   * Sequência de morte reutilizável (dano letal OU queda no vazio).
+   * @param {Object} opts
+   *   opts.fall = true → morte por queda: congela a queda imediatamente
+   *               (reposiciona no spawn) pra animação de morte ser visível.
+   */
+  _triggerDeath(opts = {}) {
+    if (this._dead) return;
+    this._dead = true;
+    this.hp    = 0;
+    this._kbVx = 0; this._kbVz = 0;
+    this.velY  = 0;
+
+    // Queda no vazio: para de cair na hora e segura no ponto de spawn
+    // pra não despencar pro infinito durante os 2.5s de animação.
+    if (opts.fall) {
+      this.mesh.position.set(0, 2.5, 0);
+    }
+
+    if (this.stateMachine) {
+      this.stateMachine.setState('knockdown');
+      this.animCtrl?.play('knockdown', { loop: false, speed: 1.0 });
+    }
+
+    setTimeout(() => {
+      this.hp    = this.maxHp;
+      this._dead = false;
+      this._kbVx = 0; this._kbVz = 0;
+      this.velY  = 0;
+
       if (this.stateMachine) {
-        this.stateMachine.setState('knockdown');
-        this.animCtrl?.play('knockdown', { loop: false, speed: 1.0 });
+        this.stateMachine.setState(this.stateMachine.isArmedFlag ? 'armed' : 'unarmed');
       }
 
-      setTimeout(() => {
-        this.hp    = this.maxHp;
-        this._dead = false;
-        this._kbVx = 0; this._kbVz = 0;
-        
-        if (this.stateMachine) {
-          this.stateMachine.setState(this.stateMachine.isArmedFlag ? 'armed' : 'unarmed');
-        }
-
-        this.spawn();
-        this.onRespawn?.();   // avisa Level para resetar inimigos
-      }, 2500); // Aumentado para 2.5s para ver a queda
-    }
+      this.spawn();
+      this.onRespawn?.();   // avisa Level para resetar inimigos
+    }, 2500);
   }
 
   // ── Camera via setTarget (mais confiável que .rotation) ───────────

@@ -285,7 +285,7 @@ export class SceneEditor {
   }
 
   applyAllSaved() {
-    let n = 0;
+    let n = 0, g = 0;
     for (const [name, t] of Object.entries(this._saved)) {
       const m = this.scene.getMeshByName(name)
              ?? this.scene.getNodeByName(name);
@@ -293,9 +293,24 @@ export class SceneEditor {
       if (t.p) m.position.set(t.p[0], t.p[1], t.p[2]);
       if (t.r) m.rotation.set(t.r[0], t.r[1], t.r[2]);
       if (t.s) m.scaling.set(t.s[0], t.s[1], t.s[2]);
+
+      // ── Re-aplica gameplay salvo (física/quebrável/coletável) ───────
+      // applyAllSaved só restaurava transform → física/quebrável era
+      // perdida no F5. Agora recria o GameObject a partir das flags.
+      if ((t.physics || t.breakable || t.collect) && !m._gameObject) {
+        this._createGameObjectFor(m, {
+          isBreakable:   !!t.breakable,
+          hasPhysics:    !!t.physics,
+          isCollectable: !!t.collect,
+          hp:            t.hp     ?? 3,
+          bounce:        t.bounce ?? 0.22,
+          itemId:        t.itemId || '',
+        });
+        g++;
+      }
       n++;
     }
-    if (n) console.log(`[SceneEditor] ✅ ${n} objeto(s) restaurados.`);
+    if (n) console.log(`[SceneEditor] ✅ ${n} objeto(s) restaurados${g ? ` (${g} com gameplay)` : ''}.`);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -1187,6 +1202,14 @@ export class SceneEditor {
       el.addEventListener('keydown', e => { if (e.key === 'Enter') { this._applyInputs(); el.blur(); } });
     });
 
+    // Gameplay — aplica E salva imediatamente ao marcar (sem precisar do
+    // botão "Aplicar"). Resolve a confusão de marcar e clicar "Salvar".
+    ['sed-chk-breakable','sed-chk-physics','sed-chk-collect',
+     'sed-num-hp','sed-num-bounce','sed-txt-itemid'].forEach(id =>
+      p.querySelector(`#${id}`)?.addEventListener('change', () => {
+        if (this._sel) this._applyGameplay();
+      }));
+
     // Física — flags imediatas
     p.querySelector('#sed-chk-col')?.addEventListener('change', e => {
       if (this._sel) { this._sel.checkCollisions = e.target.checked; this._saveTransform(this._sel); }
@@ -1257,6 +1280,93 @@ export class SceneEditor {
     if (arrow) arrow.textContent = hidden ? '▼' : '▶';
   }
 
+  /**
+   * Cria o GameObject (física/quebrável/coletável) para um alvo.
+   * GLBs de decoração têm checkCollisions=false nos filhos → não caem.
+   * Se tiver física, cria uma CAIXA invisível como corpo físico e o GLB
+   * vira só o visual. Usado tanto no _applyGameplay quanto no applyAllSaved.
+   */
+  _createGameObjectFor(target, config) {
+    if (!window._gameLevel) return null;
+
+    // ── Detecta SCATTER (decor com várias peças espalhadas) ───────────
+    // Ex: crystals_decor_3 = 1 objeto com 5 cristais por todo o mapa.
+    // Nesse caso cada peça vira um GameObject independente (cai/quebra
+    // sozinha) em vez de um corpo gigante que move o grupo todo.
+    if (!target._scatterSplit) {
+      const children = target.getChildMeshes?.(false)?.filter(m => m.getTotalVertices?.() > 0) || [];
+      if (children.length > 1 && this._isScatter(children)) {
+        target._scatterSplit = true;
+        return this._splitScatter(children, config);
+      }
+    }
+
+    return this._makeBodyFor(target, config);
+  }
+
+  /** Cria UM GameObject (corpo físico + visual) para um nó coeso */
+  _makeBodyFor(target, config) {
+    const bb = target.getHierarchyBoundingVectors?.(true);
+    if (config.hasPhysics && bb) {
+      const size   = bb.max.subtract(bb.min);
+      const center = bb.min.add(bb.max).scale(0.5);
+      const w = Math.max(0.3, size.x), h = Math.max(0.3, size.y), d = Math.max(0.3, size.z);
+      const body = BABYLON.MeshBuilder.CreateBox(`${target.name}_col`, { width:w, height:h, depth:d }, this.scene);
+      body.position.copyFrom(center);
+      body.isVisible       = false;
+      body.isPickable      = true;
+      body.checkCollisions = true;
+      body.ellipsoid = new BABYLON.Vector3(w / 2, h / 2, d / 2);
+      return window._gameLevel.addInteractiveObject({ mesh: body, glb: target, customEllipsoid: true, ...config });
+    }
+    if (config.hasPhysics === false) {
+      // Estático (construção): liga colisão e troca por CAIXA lisa (chão/
+      // parede/prop) ou mantém MALHA só se for escada/rampa. Mesmo corpo de
+      // colisão da física, só que sem gravidade → não prende o player.
+      target.checkCollisions = true; target.isPickable = true;
+      target.getChildMeshes?.(false)?.forEach(m => { m.checkCollisions = true; });
+      try { optimizeCollider(target, this.scene); } catch (_) {}
+    }
+    return window._gameLevel.addInteractiveObject({ mesh: target, ...config });
+  }
+
+  /** True se os centros das peças estão espalhados (> 3u) → é scatter */
+  _isScatter(children) {
+    let min = new BABYLON.Vector3(Infinity, Infinity, Infinity);
+    let max = new BABYLON.Vector3(-Infinity, -Infinity, -Infinity);
+    for (const c of children) {
+      c.computeWorldMatrix(true);
+      const ctr = c.getBoundingInfo().boundingBox.centerWorld;
+      min = BABYLON.Vector3.Minimize(min, ctr);
+      max = BABYLON.Vector3.Maximize(max, ctr);
+    }
+    return max.subtract(min).length() > 3.0;
+  }
+
+  /** Cada peça vira um GameObject independente */
+  _splitScatter(children, config) {
+    let first = null;
+    for (const child of children) {
+      child.setParent(null);              // independiza (preserva posição mundial)
+      child.computeWorldMatrix(true);
+      const go = this._makeBodyFor(child, config);
+      if (!first) first = go;
+    }
+    console.log(`[SceneEditor] 💥 scatter dividido em ${children.length} peças independentes`);
+    return first;
+  }
+
+  // Sobe até o nó raiz do objeto (GLB root/decor) a partir de um submesh.
+  // MESMA lógica usada no apply E no sync — garante que a chave de save
+  // (_saved[root.name]) bate na hora de ler de volta.
+  _resolveRoot(mesh) {
+    let target = mesh;
+    while (target.parent && (target.parent.name === '__root__' || /__root__|_glb_|_decor_/.test(target.parent.name))) {
+      target = target.parent;
+    }
+    return target;
+  }
+
   _applyGameplay() {
     if (!this._sel) return;
     const q = id => this._rightPanel?.querySelector(`#${id}`);
@@ -1270,14 +1380,7 @@ export class SceneEditor {
       itemId:        q('sed-txt-itemid')?.value || '',
     };
 
-    // ── Resolve o NÓ RAIZ do objeto ───────────────────────────────────
-    // Se selecionou um submesh de um GLB, sobe até o __root__ pra mover o
-    // objeto inteiro (não só um pedaço).
-    let target = this._sel;
-    while (target.parent && (target.parent.name === '__root__' || /__root__|_glb_|_decor_/.test(target.parent.name))) {
-      target = target.parent;
-    }
-
+    const target = this._resolveRoot(this._sel);
     let go = target._gameObject || this._sel._gameObject;
 
     if (go) {
@@ -1290,27 +1393,7 @@ export class SceneEditor {
       // reacorda pra física voltar a rodar
       go._sleeping = false; go._sleepT = 0;
     } else if (window._gameLevel) {
-      // ── Cria corpo de colisão (caixa) p/ GLBs sem colisão própria ───
-      // GLBs de decoração têm checkCollisions=false nos filhos → não caem.
-      // Criamos uma caixa invisível como corpo físico e o GLB como visual.
-      const isGLB = target.getClassName?.() === 'Mesh' && target.getChildMeshes?.().length > 0
-                 || /__root__/.test(target.name);
-      const bb = target.getHierarchyBoundingVectors?.(true);
-      let body = target;
-      if (config.hasPhysics && bb) {
-        const size = bb.max.subtract(bb.min);
-        const center = bb.min.add(bb.max).scale(0.5);
-        body = BABYLON.MeshBuilder.CreateBox(`${target.name}_col`, {
-          width: Math.max(0.3, size.x), height: Math.max(0.3, size.y), depth: Math.max(0.3, size.z),
-        }, this.scene);
-        body.position.copyFrom(center);
-        body.isVisible = false;
-        body.isPickable = true;
-        body.checkCollisions = true;
-        go = window._gameLevel.addInteractiveObject({ mesh: body, glb: target, ...config });
-      } else {
-        go = window._gameLevel.addInteractiveObject({ mesh: target, ...config });
-      }
+      go = this._createGameObjectFor(target, config);
     }
 
     // ── Persiste as flags de gameplay no DB (junto do transform) ──────
@@ -1320,13 +1403,20 @@ export class SceneEditor {
       collect: config.isCollectable, hp: config.hp, bounce: config.bounce, itemId: config.itemId,
     });
     this._saveTransform(target);   // já chama _scheduleSave() → grava no LocalDB
-    this._toast('✅ Gameplay salvo! (física/quebrável aplicados)', '#0a2a0a');
+    const bits = [];
+    if (config.hasPhysics)  bits.push('física');
+    if (config.isBreakable) bits.push('quebrável');
+    if (config.isCollectable) bits.push('coletável');
+    const what = bits.length ? bits.join(' + ') : 'config';
+    this._toast(`✅ ${what} salvo! Clique ▶ Jogar para testar`, '#0a2a0a');
   }
 
   _syncGameplaySection(mesh) {
     const q = id => this._rightPanel?.querySelector(`#${id}`);
-    const go = mesh._gameObject;
-    const saved = this._saved[mesh.name] || {};
+    // Resolve a raiz (MESMA chave do _applyGameplay) p/ ler as flags certas
+    const root  = this._resolveRoot(mesh);
+    const go    = root._gameObject || mesh._gameObject;
+    const saved = this._saved[root.name] || this._saved[mesh.name] || {};
 
     // Prioriza o que está no GameObject real, senão o que está salvo
     const brk = go ? go.isBreakable   : (saved.breakable ?? false);

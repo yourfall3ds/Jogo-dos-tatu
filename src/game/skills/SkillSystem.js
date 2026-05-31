@@ -8,24 +8,25 @@
 //  attackSpeed. Os efeitos visuais reaproveitam ImpactEffectSystem.
 // ─────────────────────────────────────────────────────────────────
 
+// Teclas das skills no cluster perto do WASD (1-9 agora é o inventário).
 export const SKILL_DEFS = {
   dashStrike: {
-    name: 'Dash Explosivo', icon: '⚡', key: 'Digit1',
+    name: 'Dash Explosivo', icon: '⚡', key: 'KeyZ',
     mpCost: 25, cooldown: 3.5, radius: 4, baseDamage: 40,
     desc: 'Avança rápido e explode em dano de área no destino.',
   },
   flurry: {
-    name: 'Rajada de Socos', icon: '👊', key: 'Digit2',
+    name: 'Rajada de Socos', icon: '👊', key: 'KeyX',
     mpCost: 30, cooldown: 5, radius: 3, baseDamage: 12, hits: 6,
     desc: '6 socos ultrarrápidos em quem estiver à frente.',
   },
   slam: {
-    name: 'Slam Descendente', icon: '🔨', key: 'Digit3',
+    name: 'Slam Descendente', icon: '🔨', key: 'KeyC',
     mpCost: 40, cooldown: 7, radius: 5, baseDamage: 60,
     desc: 'Salta e cai com impacto sísmico em área.',
   },
   parry: {
-    name: 'Defesa Perfeita', icon: '🛡️', key: 'Digit4',
+    name: 'Defesa Perfeita', icon: '🛡️', key: 'KeyF',
     mpCost: 20, cooldown: 6, duration: 1.5,
     desc: 'Janela de parry — reflete dano se acertar o tempo.',
   },

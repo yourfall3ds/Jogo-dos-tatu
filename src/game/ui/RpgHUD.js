@@ -53,7 +53,7 @@ export class RpgHUD {
     this._skillRow.style.cssText = 'display:flex;gap:6px;margin-top:2px;';
     bar.appendChild(this._skillRow);
     this._skillEls = {};
-    const keyLabel = { Digit1: '1', Digit2: '2', Digit3: '3', Digit4: '4', KeyQ: 'Q' };
+    const keyLabel = { KeyZ: 'Z', KeyX: 'X', KeyC: 'C', KeyF: 'F', KeyQ: 'Q' };
     for (const [id, def] of Object.entries(SKILL_DEFS)) {
       const el = document.createElement('div');
       el.style.cssText = `
@@ -70,13 +70,29 @@ export class RpgHUD {
       this._skillEls[id] = el;
     }
 
-    // Hotbar de consumíveis
+    // Hotbar 1-9 (consumíveis + imagens guardadas)
     this._hotbarRow = document.createElement('div');
     this._hotbarRow.style.cssText = 'display:flex;gap:5px;margin-top:3px;';
     bar.appendChild(this._hotbarRow);
+    this._hotbarEls = [];
+    for (let i = 0; i < 9; i++) {
+      const slot = document.createElement('div');
+      slot.style.cssText = `
+        position:relative;width:42px;height:42px;border-radius:7px;
+        background:rgba(8,10,20,.78);border:1.5px solid #2f3f5f;
+        display:flex;align-items:center;justify-content:center;
+        color:#9ab;font-size:18px;overflow:hidden;`;
+      slot.innerHTML = `<span style="position:absolute;top:1px;left:3px;font-size:9px;color:#ffd24a;font-weight:bold;z-index:2;text-shadow:0 0 3px #000;">${i + 1}</span>`;
+      this._hotbarRow.appendChild(slot);
+      this._hotbarEls.push(slot);
+    }
 
     document.body.appendChild(bar);
     this._bar = bar;
+
+    // Re-renderiza hotbar quando o inventário muda
+    this.inventory.onChange(() => this._renderHotbar());
+    this._renderHotbar();
 
     // ── Painel de Stats/Inventário [I] ─────────────────────────────
     const panel = document.createElement('div');
@@ -98,14 +114,79 @@ export class RpgHUD {
           <div id="rpg-stat-head" style="color:#ffd24a;font-weight:bold;margin-bottom:6px;"></div>
           <div id="rpg-stat-list"></div>
         </div>
-        <div style="flex:1;">
-          <div style="color:#ffd24a;font-weight:bold;margin-bottom:6px;">🎒 Mochila</div>
-          <div id="rpg-bag"></div>
+        <div style="flex:1.2;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="color:#ffd24a;font-weight:bold;">⚡ Barra Rápida (1-9)</span>
+          </div>
+          <div id="rpg-inv-hotbar" style="
+            display:grid;grid-template-columns:repeat(9,1fr);gap:4px;margin-bottom:12px;
+          "></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="color:#ffd24a;font-weight:bold;">🎒 Mochila</span>
+            <span id="rpg-bag-count" style="color:#567;font-size:11px;"></span>
+          </div>
+          <div id="rpg-bag" style="
+            display:grid;grid-template-columns:repeat(5,1fr);gap:6px;
+            max-height:300px;overflow-y:auto;padding:2px;
+          "></div>
+          <div id="rpg-bag-detail" style="
+            margin-top:10px;min-height:30px;font-size:12px;color:#9ab;
+          "></div>
         </div>
-      </div>`;
+      </div>
+      <style>
+        #rpg-bag::-webkit-scrollbar{width:6px}
+        #rpg-bag::-webkit-scrollbar-thumb{background:#345;border-radius:3px}
+        .rpg-cell{
+          aspect-ratio:1;background:rgba(10,16,30,.7);border:1.5px solid #2a3f5f;
+          border-radius:7px;position:relative;cursor:pointer;overflow:hidden;
+          display:flex;align-items:center;justify-content:center;
+          font-size:22px;transition:border-color .12s,transform .1s;
+        }
+        .rpg-cell:hover{border-color:#5cf;transform:translateY(-2px)}
+        .rpg-cell.empty{cursor:default;background:rgba(10,16,30,.35);border-style:dashed;border-color:#1f2f45}
+        .rpg-cell.empty:hover{transform:none;border-color:#1f2f45}
+        .rpg-cell.image{border-color:#7a4aff}
+        .rpg-cell .qty{position:absolute;bottom:1px;right:3px;font-size:10px;color:#fff;
+          font-weight:bold;text-shadow:0 0 3px #000;background:rgba(0,0,0,.5);
+          padding:0 3px;border-radius:4px}
+        .rpg-cell img{width:100%;height:100%;object-fit:cover}
+      </style>`;
     document.body.appendChild(panel);
     this._panel = panel;
     panel.querySelector('#rpg-panel-close').onclick = () => this.togglePanel();
+  }
+
+  // ── Renderiza os 9 slots da hotbar (consumíveis + imagens) ────────
+  _renderHotbar() {
+    if (!this._hotbarEls) return;
+    // só re-renderiza se algo mudou (chamado todo frame)
+    const sig = this.inventory.hotbar.map(id => id ? id + this.inventory.count(id) : '_').join(',');
+    if (sig === this._hbSig) return;
+    this._hbSig = sig;
+    for (let i = 0; i < 9; i++) {
+      const slot = this._hotbarEls[i];
+      const numLabel = `<span style="position:absolute;top:1px;left:3px;font-size:9px;color:#ffd24a;font-weight:bold;z-index:2;text-shadow:0 0 3px #000;">${i + 1}</span>`;
+      const id    = this.inventory.hotbar[i];
+      const entry = id ? this.inventory.getEntry?.(id) : null;
+
+      if (entry?.kind === 'image') {
+        slot.style.borderColor = '#7a4aff';
+        slot.innerHTML = numLabel +
+          `<img src="${entry.data.imageUrl}" title="${entry.data.name}"
+                style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`;
+      } else if (id) {
+        const def = ItemCatalog[id];
+        const qty = this.inventory.count(id);
+        slot.style.borderColor = '#3a5a9f';
+        slot.innerHTML = numLabel +
+          `<span>${def?.icon || '📦'}</span>` +
+          (qty > 1 ? `<span style="position:absolute;bottom:1px;right:3px;font-size:9px;color:#cde;">×${qty}</span>` : '');
+      } else {
+        slot.style.borderColor = '#2f3f5f';
+        slot.innerHTML = numLabel;
+      }
+    }
   }
 
   togglePanel() {
@@ -151,22 +232,146 @@ export class RpgHUD {
       };
     });
 
-    const bag = this._panel.querySelector('#rpg-bag');
+    this._renderBagGrid();
+  }
+
+  // ── Fileira 1-9 dentro do painel (estilo Terraria) ────────────────
+  _renderInvHotbar() {
+    const row = this._panel.querySelector('#rpg-inv-hotbar');
+    if (!row) return;
+    row.innerHTML = '';
+    for (let i = 0; i < 9; i++) {
+      const id    = this.inventory.hotbar[i];
+      const entry = id ? this.inventory.getEntry?.(id) : null;
+      const cell  = document.createElement('div');
+      cell.className = 'rpg-cell' + (entry?.kind === 'image' ? ' image' : (id ? '' : ' empty'));
+      cell.style.fontSize = '18px';
+      const num = `<span style="position:absolute;top:0;left:3px;font-size:9px;color:#ffd24a;font-weight:bold;z-index:2;text-shadow:0 0 3px #000">${i+1}</span>`;
+      if (entry?.kind === 'image') {
+        cell.innerHTML = num + `<img src="${entry.data.imageUrl}" onerror="this.parentElement.textContent='🖼️'">`;
+        cell.title = entry.data.name;
+      } else if (id) {
+        const def = ItemCatalog[id];
+        const qty = this.inventory.count(id);
+        cell.innerHTML = num + `<span>${def?.icon || '📦'}</span>` + (qty > 1 ? `<span class="qty">${qty}</span>` : '');
+        cell.title = def?.name || id;
+      } else {
+        cell.innerHTML = num;
+      }
+      // Clicar num slot da barra: remove o item de volta pra mochila
+      cell.onclick = () => {
+        if (this.inventory.hotbar[i]) {
+          this.inventory.hotbar[i] = null;
+          this.inventory._notify();
+          this._renderPanel(); this._save();
+        }
+      };
+      row.appendChild(cell);
+    }
+  }
+
+  // ── Inventário em GRID ────────────────────────────────────────────
+  _renderBagGrid() {
+    this._renderInvHotbar();
+    const bag    = this._panel.querySelector('#rpg-bag');
+    const count  = this._panel.querySelector('#rpg-bag-count');
+    const detail = this._panel.querySelector('#rpg-bag-detail');
+    if (!bag) return;
     bag.innerHTML = '';
-    if (!this.inventory.bag.length) bag.innerHTML = '<span style="color:#678;">vazia</span>';
-    for (const slot of this.inventory.bag) {
-      const def = ItemCatalog[slot.id]; if (!def) continue;
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:4px 6px;margin:2px 0;background:#ffffff08;border-radius:5px;cursor:pointer;';
-      row.innerHTML = `<span>${def.name} ${slot.qty > 1 ? `×${slot.qty}` : ''}</span>
-        <span style="color:#7cf;font-size:11px;">${def.type === 'consumable' ? 'usar' : 'equipar'}</span>`;
-      row.onclick = () => {
+    if (detail) detail.innerHTML = '';
+
+    const items   = this.inventory.bag;
+    const MIN     = 20;                                    // mínimo de células
+    const total   = Math.max(MIN, Math.ceil(items.length / 5) * 5 + 5);
+    if (count) count.textContent = `${items.length} ite${items.length === 1 ? 'm' : 'ns'}`;
+
+    for (let i = 0; i < total; i++) {
+      const slot = items[i];
+      const cell = document.createElement('div');
+
+      if (!slot) { cell.className = 'rpg-cell empty'; bag.appendChild(cell); continue; }
+
+      if (slot.kind === 'image') {
+        cell.className = 'rpg-cell image';
+        cell.title = '🖼️ ' + slot.data.name;
+        cell.innerHTML = `<img src="${slot.data.imageUrl}" onerror="this.parentElement.textContent='🖼️'">`;
+        cell.onclick = () => this._showItemDetail(slot, cell);
+      } else {
+        const def = ItemCatalog[slot.id];
+        if (!def) { cell.className = 'rpg-cell empty'; bag.appendChild(cell); continue; }
+        cell.className = 'rpg-cell';
+        cell.title = def.name;
+        const qty = this.inventory.count(slot.id);
+        cell.innerHTML = `<span>${def.icon || '📦'}</span>` +
+          (qty > 1 ? `<span class="qty">${qty}</span>` : '');
+        cell.onclick = () => this._showItemDetail(slot, cell);
+      }
+      bag.appendChild(cell);
+    }
+  }
+
+  // ── Detalhe + ações do item selecionado ───────────────────────────
+  _showItemDetail(slot, cell) {
+    const detail = this._panel.querySelector('#rpg-bag-detail');
+    if (!detail) return;
+    // highlight
+    this._panel.querySelectorAll('.rpg-cell').forEach(c => c.style.boxShadow = '');
+    cell.style.boxShadow = '0 0 0 2px #5cf inset';
+
+    const btn = (label, color, fn) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = `background:${color};border:none;color:#fff;cursor:pointer;
+        padding:5px 12px;border-radius:6px;font-family:inherit;font-size:11px;margin-right:6px;`;
+      b.onclick = fn;
+      return b;
+    };
+
+    // Põe o item numa vaga livre da barra 1-9
+    const toHotbar = () => {
+      if (this.inventory.hotbar.includes(slot.id)) return;
+      const free = this.inventory.hotbar.indexOf(null);
+      if (free >= 0) { this.inventory.hotbar[free] = slot.id; this.inventory._notify(); this._renderPanel(); this._save(); }
+    };
+
+    detail.innerHTML = '';
+    if (slot.kind === 'image') {
+      const name = document.createElement('div');
+      name.innerHTML = `🖼️ <b style="color:#c9b0ff">${slot.data.name}</b>`;
+      name.style.marginBottom = '6px';
+      detail.appendChild(name);
+      detail.appendChild(btn('📌 Pôr na barra (1-9)', '#243a6a', toHotbar));
+      detail.appendChild(btn('🖼️ Criar Quadro', '#1c3a22', () => {
+        this.togglePanel();
+        setTimeout(() => window._buildMode?.startFramePlacing?.(slot.data.imageUrl, slot.data.name), 150);
+      }));
+      detail.appendChild(btn('🗑️ Excluir', '#3a1a1a', () => {
+        this.inventory.bag = this.inventory.bag.filter(s => s !== slot);
+        const hi = this.inventory.hotbar.indexOf(slot.id);
+        if (hi >= 0) this.inventory.hotbar[hi] = null;
+        this.inventory._notify();
+        this._renderPanel(); this._save();
+      }));
+    } else {
+      const def = ItemCatalog[slot.id];
+      if (!def) return;
+      const name = document.createElement('div');
+      const eq = this.inventory.equippedWeapon === slot.id ? ' <span style="color:#5fc;font-size:10px">(equipada)</span>' : '';
+      name.innerHTML = `${def.icon || '📦'} <b style="color:#cde">${def.name}</b> ${this.inventory.count(slot.id) > 1 ? `×${this.inventory.count(slot.id)}` : ''}${eq}`;
+      name.style.marginBottom = '6px';
+      if (def.desc) name.innerHTML += `<div style="color:#678;font-size:10px;margin-top:2px">${def.desc}</div>`;
+      detail.appendChild(name);
+
+      const action = def.type === 'consumable' ? '✓ Usar'
+                   : def.type === 'weapon'     ? '🔫 Equipar Arma'
+                   : '⚔️ Equipar';
+      detail.appendChild(btn(action, '#1a3a5a', () => {
         if (def.type === 'consumable') this.inventory.use(slot.id);
         else this.inventory.equipItem(slot.id);
         this.player.maxHp = this.stats.maxHp();
         this._renderPanel(); this._save();
-      };
-      bag.appendChild(row);
+      }));
+      detail.appendChild(btn('📌 Pôr na barra (1-9)', '#243a6a', toHotbar));
     }
   }
 
@@ -183,9 +388,9 @@ export class RpgHUD {
     if (iNow && !this._wasI) this.togglePanel();
     this._wasI = iNow;
 
-    // hotbar [5..9] uso rápido
-    for (let i = 0; i < 5; i++) {
-      const code = 'Digit' + (5 + i);
+    // hotbar [1..9] uso rápido
+    for (let i = 0; i < 9; i++) {
+      const code = 'Digit' + (i + 1);
       const down = window._gameInput?.isDown(code);
       if (down && !this[`_wasHot${i}`]) this.inventory.useHotbar(i);
       this[`_wasHot${i}`] = down;
@@ -216,23 +421,5 @@ export class RpgHUD {
 
     // ── Hotbar ──────────────────────────────────────────────────────
     this._renderHotbar();
-  }
-
-  _renderHotbar() {
-    // só re-renderiza se mudou
-    const sig = this.inventory.hotbar.map(id => id ? id + this.inventory.count(id) : '_').join(',');
-    if (sig === this._hbSig) return;
-    this._hbSig = sig;
-    this._hotbarRow.innerHTML = '';
-    for (let i = 0; i < 5; i++) {
-      const id = this.inventory.hotbar[i];
-      const def = id ? ItemCatalog[id] : null;
-      const el = document.createElement('div');
-      el.style.cssText = `width:34px;height:34px;border-radius:6px;background:rgba(10,14,28,.7);
-        border:1px solid #3a5a9f;display:flex;align-items:center;justify-content:center;position:relative;font-size:9px;color:#9cf;`;
-      el.innerHTML = `<span style="position:absolute;top:0;left:2px;font-size:8px;color:#789;">${5 + i}</span>` +
-        (def ? `<span style="text-align:center;line-height:1;">${def.name.split(' ')[0]}<br><b style="color:#cde;">×${this.inventory.count(id)}</b></span>` : '');
-      this._hotbarRow.appendChild(el);
-    }
   }
 }

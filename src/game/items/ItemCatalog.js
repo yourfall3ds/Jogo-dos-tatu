@@ -21,15 +21,43 @@ export let ItemCatalog = {};
  */
 export async function initItemCatalog() {
   const dbData = await LocalDB.get('items', {});
-  
+
   if (Object.keys(dbData).length > 0) {
     ItemCatalog = dbData;
-    // Injeta os efeitos (functions não podem ser salvas em JSON)
-    _injectEffects();
   } else {
-    // Fallback: valores iniciais se o arquivo não existir
     ItemCatalog = _getDefaults();
     await LocalDB.save('items', ItemCatalog);
+  }
+
+  // Armas SEMPRE injetadas (mesmo em DB antigo) — são itens equipáveis
+  Object.assign(ItemCatalog, WEAPON_ITEMS);
+  _injectEffects();
+  _injectIcons();
+}
+
+// ── Armas como itens equipáveis do inventário ───────────────────────
+export const WEAPON_ITEMS = {
+  weapon_pistol: {
+    name: 'Pistola Bucaneira', type: 'weapon', weaponIndex: 0,
+    icon: '🔫', rarity: 'uncommon', stack: 1,
+    desc: 'Pistola semi-automática. Equipar para empunhar.',
+  },
+  weapon_rifle: {
+    name: 'Rifle Pesado', type: 'weapon', weaponIndex: 1,
+    icon: '🪓', rarity: 'rare', stack: 1,
+    desc: 'Rifle de dano alto. Equipar para empunhar.',
+  },
+};
+
+// Ícones (emoji) p/ o grid do inventário — injetados em cima do DB
+function _injectIcons() {
+  const icons = {
+    hpSmall: '🧪', hpLarge: '🧪', hpFull: '❤️', mpPotion: '🔵',
+    elixirStr: '💪', elixirSpeed: '⚡',
+    ironGloves: '🧤', swiftBoots: '🥾', guardianPlate: '🛡️', critAmulet: '📿',
+  };
+  for (const [id, ic] of Object.entries(icons)) {
+    if (ItemCatalog[id] && !ItemCatalog[id].icon) ItemCatalog[id].icon = ic;
   }
 }
 

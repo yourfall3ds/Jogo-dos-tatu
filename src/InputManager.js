@@ -13,6 +13,7 @@ export class InputManager {
     this._mouseY       = 0;
     this._clicked      = false;
     this._rightClicked = false;
+    this._wheelDelta   = 0;     // acumula scroll p/ trocar de arma
     this.gameActive    = false;
 
     // Double-tap W para dash
@@ -79,6 +80,12 @@ export class InputManager {
     canvas.addEventListener('contextmenu', e => {
       if (this.gameActive) e.preventDefault();
     });
+
+    // ── Scroll do mouse → troca de arma ──────────────────────────────
+    window.addEventListener('wheel', e => {
+      if (!this.gameActive) return;
+      this._wheelDelta += Math.sign(e.deltaY);
+    }, { passive: true });
 
     // ── Pointer lock change ─────────────────────────────────────────
     // O browser libera o pointer lock quando o usuário pressiona ESC,
@@ -153,5 +160,12 @@ export class InputManager {
     const c = this._wDoubleTap;
     this._wDoubleTap = false;
     return c;
+  }
+
+  /** Retorna o acumulado de scroll desde a última chamada (-n / +n) e zera */
+  consumeWheel() {
+    const w = this._wheelDelta;
+    this._wheelDelta = 0;
+    return w;
   }
 }

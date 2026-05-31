@@ -122,12 +122,18 @@ export class MeshyClient {
   }
 
   // ── 2. Imagem → 3D ───────────────────────────────────────────────
-  async imageTo3D(imageUrl, { enablePbr = true, onProgress } = {}) {
-    const create = await this._req('POST', '/openapi/v1/image-to-3d', {
+  //  Por padrão NÃO remesha (remesh manual na etapa 3 = Normal/30k).
+  //  Low Poly: passa shouldRemesh+targetPolycount → o próprio image-to-3d
+  //  já entrega no polígono baixo, SEM precisar de uma 2ª chamada de remesh.
+  async imageTo3D(imageUrl, { enablePbr = true, shouldRemesh = false, targetPolycount = null, topology = null, onProgress } = {}) {
+    const body = {
       image_url: imageUrl,
       enable_pbr: enablePbr,
-      should_remesh: false,   // remesh manual na etapa 3
-    });
+      should_remesh: shouldRemesh,
+    };
+    if (shouldRemesh && targetPolycount) body.target_polycount = targetPolycount;
+    if (topology) body.topology = topology;
+    const create = await this._req('POST', '/openapi/v1/image-to-3d', body);
     const id = create.result || create.id;
     const done = await this._poll(`/openapi/v1/image-to-3d/${id}`, onProgress);
     return { taskId: id, glbUrl: done.model_urls?.glb, raw: done };
@@ -145,15 +151,17 @@ export class MeshyClient {
     return { taskId: id, glbUrl: done.model_urls?.glb, raw: done };
   }
 
-  // ── 4. Texturização PBR ──────────────────────────────────────────
+  // ── 4. Texturização PBR (retexture) ──────────────────────────────
+  //  Endpoint correto é /openapi/v1/retexture (text-to-texture é 404).
   async textureModel(taskId, prompt, { onProgress } = {}) {
-    const create = await this._req('POST', '/openapi/v1/text-to-texture', {
-      input_task_id: taskId,
-      text_style_prompt: prompt,
-      enable_pbr: true,
+    const create = await this._req('POST', '/openapi/v1/retexture', {
+      input_task_id:     taskId,
+      text_style_prompt: (prompt || 'detailed surface texture').slice(0, 600),
+      enable_pbr:        true,
+      enable_original_uv: true,
     });
     const id = create.result || create.id;
-    const done = await this._poll(`/openapi/v1/text-to-texture/${id}`, onProgress);
+    const done = await this._poll(`/openapi/v1/retexture/${id}`, onProgress);
     return { taskId: id, glbUrl: done.model_urls?.glb, raw: done };
   }
 
@@ -198,9 +206,40 @@ export class MeshyClient {
     return { taskId: id, glbUrl: done.model_urls?.glb, raw: done };
   }
 
-  // ── Baixa um GLB pra Blob URL (importável no Babylon) ────────────
+  // ── Cache local: baixa a URL pro disco e retorna o caminho local ──
+  //  O servidor grava em assets/generated/<name> e devolve o path.
+  //  Retorna o caminho local (ex: 'assets/generated/x.glb') ou null.
+  async cacheAsset(url, name) {
+    if (!url || !name) return null;
+    // já é local? não precisa cachear
+    if (/^assets\//.test(url)) return url;
+    try {
+      const r = await fetch('http://127.0.0.1:3099/cache-asset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, name }),
+        signal: AbortSignal.timeout(120000),
+      });
+      if (!r.ok) { console.warn('[MeshyClient] cache-asset falhou:', r.status); return null; }
+      const j = await r.json();
+      return j.path || null;
+    } catch (e) {
+      console.warn('[MeshyClient] cache-asset erro:', e.message);
+      return null;
+    }
+  }
+
+  // ── Baixa um GLB / imagem pra Blob URL (importável no Babylon) ─────
+  // Roteia pelo proxy local para evitar CORS com assets.meshy.ai
   async downloadToBlobURL(url) {
-    const resp = await fetch(url);
+    const proxyUrl = `http://127.0.0.1:3099/proxy-image?url=${encodeURIComponent(url)}`;
+    let resp;
+    try {
+      resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(60000) });
+    } catch (_) {
+      // proxy offline — tenta direto (pode falhar por CORS fora do localhost)
+      resp = await fetch(url);
+    }
     if (!resp.ok) throw new Error('download falhou: ' + resp.status);
     const blob = await resp.blob();
     return URL.createObjectURL(blob);

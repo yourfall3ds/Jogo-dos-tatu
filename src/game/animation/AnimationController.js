@@ -52,10 +52,21 @@ export class AnimationController {
     this._fadeT   = 0;
     this._fadeDur = fade;
 
-    // Callback de fim (usado pelos ataques para encadear combos)
+    // Callback de fim (usado pelos ataques para encadear combos).
+    // onAnimationGroupEndObservable = fim do GRUPO inteiro (mais confiável
+    // que onAnimationEndObservable, que dispara por animação-osso).
     if (!loop && options.onComplete) {
-      anim.onAnimationEndObservable.addOnce(() => options.onComplete());
+      const obs = anim.onAnimationGroupEndObservable || anim.onAnimationEndObservable;
+      obs.addOnce(() => options.onComplete());
     }
+  }
+
+  /** Duração (em segundos) de uma animação, p/ timeouts de segurança */
+  getDuration(name) {
+    const anim = this.library.get(name);
+    if (!anim) return 0;
+    const fps = anim.targetedAnimations?.[0]?.animation?.framePerSecond || 60;
+    return Math.abs((anim.to - anim.from) / fps);
   }
 
   /** Tick do crossfade — chamar a cada frame com dt em segundos */

@@ -22,6 +22,7 @@ import { MonsterDebugMode }    from './game/debug/MonsterDebugMode.js';
 import { BUCANEIRA_CONFIG }     from './game/weapons/BucaneiraConfig.js';
 import { WeaponEditor }         from './game/weapons/WeaponEditor.js';
 import { SceneEditor }          from './game/scene/SceneEditor.js';
+import { sweepHeavyColliders }   from './game/scene/ColliderOptimizer.js';
 import { MoveListUI }           from './game/ui/MoveListUI.js';
 import { EnemyManager }         from './game/enemies/EnemyManager.js';
 import { CatalogUI }            from './game/ui/CatalogUI.js';
@@ -33,6 +34,11 @@ import { SkillSystem }          from './game/skills/SkillSystem.js';
 import { Inventory }            from './game/items/Inventory.js';
 import { RpgHUD }               from './game/ui/RpgHUD.js';
 import { LocalDB }              from './game/data/LocalDB.js';
+import { AssetGroupsUI }        from './game/ui/AssetGroupsUI.js';
+import { initItemCatalog }      from './game/items/ItemCatalog.js';
+import { ColliderDebug }        from './game/debug/ColliderDebug.js';
+import { ThumbnailGen }         from './game/debug/ThumbnailGen.js';
+import { initPhysics }          from './game/physics/PhysicsWorld.js';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -127,6 +133,11 @@ async function init() {
   scene.clearColor      = new BABYLON.Color4(.58, .70, .92, 1);
   scene.collisionsEnabled = true;
 
+  // ── Física real (Havok) — habilita ANTES de criar mundo/player ──────
+  //  Stage 1 da migração: motor ligado. Mundo/objetos/player passam a
+  //  usar corpos rígidos nos próximos estágios.
+  await initPhysics(scene, -28);
+
   animatorMode     = new AnimatorMode(engine, canvas);
   monsterDebugMode = new MonsterDebugMode(engine, canvas);
   window._monsterDebug = monsterDebugMode;
@@ -146,6 +157,9 @@ async function init() {
   const shadowGen = new BABYLON.ShadowGenerator(2048, sun);
   shadowGen.useBlurExponentialShadowMap = true;
   shadowGen.blurScale = 2;
+  shadowGen.normalBias = 0.02;        // reduz acne/cintilação de sombra
+  shadowGen.bias       = 0.0008;
+  shadowGen.darkness   = 0.35;
 
   // ── Névoa ────────────────────────────────────────────────────────
   scene.fogMode    = BABYLON.Scene.FOGMODE_EXP2;
@@ -184,8 +198,21 @@ async function init() {
   const meshyPanel = new MeshyPanel(scene, buildMode);
   window._meshyPanel = meshyPanel;
 
+  const assetGroupsUI = new AssetGroupsUI(buildMode);
+  window._assetGroupsUI = assetGroupsUI;
+  const { AssetEditorUI } = await import('./game/ui/AssetEditorUI.js');
+  window._assetEditor = new AssetEditorUI();
+
   // Máquinas gerenciadas globalmente — restauradas do DB em _loadAssetsBackground
   window._assetMachines = [];
+
+  // ── Anti-lag de colisão ───────────────────────────────────────────
+  //  GLBs pesados (escada, estátuas) com colisão de malha-cheia fazem o
+  //  moveWithCollisions custar ~20-130ms/chamada → joga trava perto deles.
+  //  Convertemos pra caixa colisora. Como os assets carregam async (Scene
+  //  Editor / BuildMode / DB), varremos algumas vezes após o load.
+  window._sweepColliders = () => sweepHeavyColliders(scene);
+  for (const ms of [1500, 3500, 6500, 10000]) setTimeout(window._sweepColliders, ms);
 
   // ── Sistemas RPG: Stats + Skills + Inventário ────────────────────
   const stats = new PlayerStats();
@@ -197,8 +224,10 @@ async function init() {
   const skills = new SkillSystem(player, scene, stats);
   player.skills = skills;
 
+  await initItemCatalog();   // popula o catálogo (consumíveis, equips, armas)
   const inventory = new Inventory(player, stats);
   try { inventory.load(JSON.parse(localStorage.getItem('digifps_inv') || 'null')); } catch (_) {}
+  inventory.ensureStarterItems();   // começa com as armas no inventário
   player.inventory = inventory;
   // Kit inicial de poções
   if (!inventory.bag.length) { inventory.add('hpSmall', 3); inventory.add('mpPotion', 2); }
@@ -290,12 +319,23 @@ async function init() {
   window._gameLoader = loader;
   window._gameLevel  = level;
 
+  // Debug de colliders (tecla L)
+  const colliderDebug = new ColliderDebug(scene);
+  window._colliderDebug = colliderDebug;
+
+  // Gerador de miniaturas dos assets
+  window._thumbnailGen = new ThumbnailGen(scene);
+
   // ── Tecla J: fallback para abrir a Máquina de Criação de qualquer lugar ──
   window.addEventListener('keydown', e => {
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.code === 'KeyJ' && $('start-screen').style.display === 'none' && !e.repeat) {
       meshyPanel.toggle();
+    }
+    // L → liga/desliga visualização dos colliders
+    if (e.code === 'KeyL' && !e.repeat && $('start-screen').style.display === 'none') {
+      colliderDebug.toggle();
     }
   });
 
