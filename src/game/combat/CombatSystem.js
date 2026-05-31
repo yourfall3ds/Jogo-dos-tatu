@@ -22,6 +22,14 @@ export class CombatSystem {
       kick_01: { hits: [{ hitTime: 0.20, damage: 30, bone: 'RightFoot', kb: 2.5 }], comboWindow: 0.50 }, // Chute levanta
       kick_02: { hits: [{ hitTime: 0.25, damage: 50, bone: 'RightFoot', kb: 4.0 }], comboWindow: 0.70 }, // Roundhouse finalizador
 
+      // ── CHUTES EXTRAS (Meshy biped — já carregados) → combo "bala" ──
+      high_kick:   { hits: [{ hitTime: 0.22, damage: 38, bone: 'RightFoot', kb: 3.2 }], comboWindow: 0.55 },
+      flying_fist: { hits: [{ hitTime: 0.20, damage: 40, bone: 'RightFoot', kb: 3.5 }], comboWindow: 0.55 },
+      double_kick: { hits: [
+        { hitTime: 0.16, damage: 20, bone: 'RightFoot', kb: 1.5 },
+        { hitTime: 0.34, damage: 30, bone: 'LeftFoot',  kb: 3.5 }
+      ], comboWindow: 0.60 },
+
       // ── CHUTES EXTRAS (pasta Chutes/ — ativados quando convertidos de FBX → GLB) ──
       roundhouse:     { hits: [{ hitTime: 0.22, damage: 45, bone: 'RightFoot', kb: 3.5 }], comboWindow: 0.60 },
       side_kick:      { hits: [{ hitTime: 0.18, damage: 35, bone: 'RightFoot', kb: 2.8 }], comboWindow: 0.50 },

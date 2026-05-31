@@ -5,7 +5,8 @@ export class ComboSystem {
     // Ordem reajustada (feedback): punch_02 abre melhor, punch_03 vem como 2º.
     // punch_04 (cotovelada) é o finalizador pesado.
     this.punchChain = ["punch_02", "punch_03", "punch_01", "punch_04"];
-    this.kickChain  = ["kick_01",  "kick_02"];
+    // Combo de chute "bala": mistura os chutes carregados pra ficar variado.
+    this.kickChain  = ["kick_01", "high_kick", "kick_02", "flying_fist", "double_kick"];
 
     // Índices independentes — avançam somente no tipo correto
     this.punchIdx = 0;

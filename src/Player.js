@@ -453,6 +453,16 @@ export class Player {
       this._vz = BABYLON.Scalar.Lerp(this._vz, moveDir.z * spd, smooth);
     }
 
+    // ── 5.3 Chute PLANTA o movimento ─────────────────────────────────
+    //  Não dá pra correr E chutar com a perna (ficava bugado). Quando
+    //  chuta no chão, freia forte o horizontal → "para e chuta", limpo.
+    if (this.isGrounded &&
+        this.stateMachine?.isAttacking() &&
+        this.combatSystem?._currentAttackAnim?.includes('kick')) {
+      this._vx *= 0.55;
+      this._vz *= 0.55;
+    }
+
     // ── 6. Pulo / Wall jump ──────────────────────────────────────────
     const spaceNow  = this.input.isDown('Space');
     const jumpPress = spaceNow && !this._wasSpace && canMove;

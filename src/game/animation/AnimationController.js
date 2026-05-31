@@ -22,8 +22,15 @@ export class AnimationController {
     const speed = options.speed ?? 1.0;
     const fade  = options.fade  ?? 0.12;
 
-    // Já tocando esta animação em loop → nada a fazer (evita reinício)
-    if (this.currentName === name && loop) return;
+    // Já tocando esta animação em loop → não reinicia, mas ATUALIZA a
+    // velocidade (pra run/walk acelerarem junto com o movimento — senão a
+    // passada fica travada na velocidade do primeiro play).
+    if (this.currentName === name && loop) {
+      if (this.currentAnim && options.speed != null) {
+        try { this.currentAnim.speedRatio = options.speed; } catch (_) {}
+      }
+      return;
+    }
 
     const anim = this.library.get(name);
     if (!anim) {
@@ -97,10 +104,13 @@ export class AnimationController {
   updateLocomotion(moveAmount) {
     if (moveAmount < 0.1) {
       this.play("idle", { loop: true, speed: 1.0, fade: 0.20 });
-    } else if (moveAmount < 0.65) {
-      this.play("walk", { loop: true, speed: Math.max(0.5, moveAmount * 1.5), fade: 0.16 });
+    } else if (moveAmount < 0.45) {
+      // devagar (strafe/desacelerando) → andar de verdade
+      this.play("walk", { loop: true, speed: Math.max(0.8, moveAmount * 2.2), fade: 0.16 });
     } else {
-      this.play("run", { loop: true, speed: moveAmount, fade: 0.18 });
+      // correndo → passos LIGEIROS (antes a passada ficava lenta/flutuante
+      // porque tocava em 1.0; agora acelera com a velocidade → corrida real)
+      this.play("run", { loop: true, speed: 1.35 + moveAmount * 0.5, fade: 0.18 });
     }
   }
 
