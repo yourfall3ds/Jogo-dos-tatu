@@ -733,6 +733,27 @@ export class Player {
               this.animCtrl.play("jump", { loop: true });
             }
           }
+        } else {
+          // ── ATACANDO + correndo → RUN-WHILE-PUNCH (anti-slide) ───────
+          //  Pernas correm (lower) e os braços socam (upper). Só pra SOCO:
+          //  o chute usa as pernas, então fica corpo-inteiro.
+          const atkAnim = this.combatSystem?._currentAttackAnim;
+          const grnd    = this.groundedVisual ?? this.isGrounded;
+          if (atkAnim && atkAnim.includes('punch') && animMoving && grnd &&
+              this.layered && this.animLib.has(atkAnim)) {
+            this.layered.setEnabled(true);
+            this.animCtrl.stopAll();
+            let lk = speed > 6.5 ? 'run' : 'walk';
+            let ls = speed > 6.5 ? speed / 11 : Math.max(0.6, speed / 4);
+            if (!this.animLib.has(lk)) lk = 'idle';
+            const aSpd = this.combatSystem?._currentAttackSpeed ?? 3.0;
+            this.layered.playLayer('lower', lk,      { loop: true,  speed: ls,   fade: 0.12 });
+            this.layered.playLayer('upper', atkAnim, { loop: false, speed: aSpd, fade: 0.06 });
+            this.layered.update(dt);
+          } else if (this.layered) {
+            // chute ou parado → corpo inteiro (CombatSystem já tocou)
+            this.layered.setEnabled(false);
+          }
         }
       } else {
         // Fallback para o animator antigo

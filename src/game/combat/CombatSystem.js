@@ -113,6 +113,11 @@ export class CombatSystem {
     const token = this._comboToken;
     clearTimeout(this._cancelTimer);
 
+    // Expõe o golpe atual p/ o Player decidir run-while-attack (tronco golpeia,
+    // pernas correm via LayeredAnimator).
+    this._currentAttackAnim  = attackAnim;
+    this._currentAttackSpeed = speed;
+
     // Sem onComplete aqui: o onAnimationGroupEndObservable do Babylon era
     // não-confiável (ora nunca disparava → travava em 'attacking', ora
     // disparava na hora → anim nem aparecia). O fim agora é por TIMER com
@@ -282,6 +287,7 @@ export class CombatSystem {
   }
 
   _onAttackFinish() {
+    this._currentAttackAnim = null;
     const nextType = this.comboSystem.consumeBuffer();
     if (nextType) {
       this._executeAttack(nextType);
