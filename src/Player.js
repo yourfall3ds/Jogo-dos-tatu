@@ -151,8 +151,9 @@ export class Player {
   _initCharacterController() {
     if (!physicsReady()) { this._cc = null; return; }
     try {
-      this._charGravity = new BABYLON.Vector3(0, -this.GRAVITY, 0);
-      this._ccDown      = new BABYLON.Vector3(0, -1, 0);
+      this._charGravity     = new BABYLON.Vector3(0, -this.GRAVITY, 0);
+      this._charGravityWeak = new BABYLON.Vector3(0, -1.5, 0);  // grude no chão sem escorregar
+      this._ccDown          = new BABYLON.Vector3(0, -1, 0);
       this._cc = new BABYLON.PhysicsCharacterController(
         new BABYLON.Vector3(0, 2.5, 0),
         { capsuleHeight: this.HEIGHT, capsuleRadius: this.RADIUS },
@@ -161,7 +162,10 @@ export class Player {
       // ⭐ maxStepHeight vem 0 por padrão → o CC NÃO sobe degrau nenhum (trava
       //   em escada). Setar isso é o que faz subir degraus/escadas nativamente.
       this._cc.maxStepHeight = 0.6;       // ~altura de um degrau (era STEP=0.70)
-      this._cc.maxSlopeCosine = 0.5;      // sobe rampas até ~60°
+      this._cc.maxSlopeCosine = 0.45;     // sobe rampas íngremes (~63°) — rampa da escada
+      // Atrito alto → não escorrega na rampa do convex hull da escada.
+      if ('staticFriction'  in this._cc) this._cc.staticFriction  = 0.95;
+      if ('dynamicFriction' in this._cc) this._cc.dynamicFriction = 0.9;
       // O corpo do CC é o colisor agora → o capsule visual não colide.
       this.mesh.checkCollisions = false;
       // Estado SUPPORTED do Havok (2). Cache do enum c/ fallback numérico.
@@ -349,8 +353,14 @@ export class Player {
     }
 
     // ── 3. Gravidade manual ──────────────────────────────────────────
-    if (this.isGrounded) {
-      if (this.velY < this.GROUND_SNAP) this.velY = this.GROUND_SNAP;
+    //  No CC, o suporte numa rampa irregular (convex hull de escada) OSCILA
+    //  entre supported/unsupported. Usamos o coyote (tolerância) pra decidir
+    //  a gravidade: assim frames "soltos" momentâneos não te escorregam.
+    const ccGrounded = this._cc ? (this.isGrounded || this._coyoteT > 0) : this.isGrounded;
+    if (ccGrounded) {
+      // NÃO empurra pra baixo quando está no chão (senão escorrega na rampa).
+      if (this._cc) { if (this.velY < 0) this.velY = 0; }
+      else if (this.velY < this.GROUND_SNAP) this.velY = this.GROUND_SNAP;
     } else {
       this.velY -= this.GRAVITY * dt;
       this.velY  = Math.max(this.velY, -this.MAX_FALL);
@@ -480,7 +490,10 @@ export class Player {
       this._cc.setVelocity(new BABYLON.Vector3(
         this._vx + this._kbVx, this.velY, this._vz + this._kbVz
       ));
-      this._cc.integrate(dt, this._support, this._charGravity);
+      // No chão parado/andando, passa gravidade FRACA pro integrate → não
+      // escorrega na rampa íngreme. No ar/pulando, gravidade cheia.
+      const grav = (this.isGrounded && this.velY <= 0.1) ? this._charGravityWeak : this._charGravity;
+      this._cc.integrate(dt, this._support, grav);
       this.mesh.position.copyFrom(this._cc.getPosition());
       // Empurra objetos dinâmicos que o player encostou
       this._pushTouchedBodies();
