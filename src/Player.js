@@ -541,20 +541,24 @@ export class Player {
     this._wasR = rNow;
 
     // ── LMB — soco ou tiro ──────────────────────────────────────────
-    if (this.input.consumeClick()) {
+    //  Usa a CONTAGEM de cliques: mashing rápido (vários no mesmo frame)
+    //  alimenta TODOS no combo, nada se perde.
+    const lmbN = this.input.consumeClickCount();
+    if (lmbN > 0) {
       const isArmed = this.stateMachine ? this.stateMachine.isArmedFlag : true;
       if (!isArmed && this.combatSystem) {
-        this.combatSystem.lightAttack();
+        for (let i = 0; i < lmbN; i++) this.combatSystem.lightAttack();
       } else {
         this.weapon.shoot();
       }
     }
 
     // ── RMB — chute (desarmado) ou mira (armado) ─────────────────
-    if (this.input.consumeRightClick()) {
+    const rmbN = this.input.consumeRightClickCount();
+    if (rmbN > 0) {
       const isArmed = this.stateMachine ? this.stateMachine.isArmedFlag : true;
       if (!isArmed && this.combatSystem) {
-        this.combatSystem.kickAttack();
+        for (let i = 0; i < rmbN; i++) this.combatSystem.kickAttack();
       } else {
         this._toggleAim();
       }

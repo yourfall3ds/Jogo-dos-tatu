@@ -44,9 +44,11 @@ export class CombatSystem {
       pontera:        { hits: [{ hitTime: 0.20, damage: 35, bone: 'LeftFoot',  kb: 2.8 }], comboWindow: 0.50 },
     };
 
-    // Sequência de chutes AÉREOS (ataque enquanto pula → chute voador "bala")
-    this._airChain = ['rising_flying', 'flying_fist', 'lunge_spin', 'spartan_kick'];
-    this._airIdx   = 0;
+    // Ataques AÉREOS (pulando): soco voador vs chute voador
+    this._airPunchChain = ['flying_fist'];                       // soco voador poderoso
+    this._airKickChain  = ['rising_flying', 'lunge_spin', 'spartan_kick'];
+    this._airPunchIdx = 0;
+    this._airKickIdx  = 0;
 
     const scene = this.playerMesh.getScene();
     
@@ -102,15 +104,19 @@ export class CombatSystem {
   _executeAttack(type) {
     this.stateMachine.setState("attacking");
 
-    // ── Ataque AÉREO → chute voador "bala" ──────────────────────────
-    //  No ar (pulando), soco OU chute viram um chute voador. Cicla entre
-    //  os voadores carregados pra variar.
+    // ── Ataque AÉREO (pulando) → "bala" ─────────────────────────────
+    //  Soco no ar → SOCO voador poderoso. Chute no ar → chute voador.
     const _pl = this.playerMesh?._playerRef;
     const airborne = _pl && !_pl.isGrounded;
     let attackAnim;
     if (airborne) {
-      this._airIdx = (this._airIdx || 0) % this._airChain.length;
-      attackAnim = this._airChain[this._airIdx++];
+      if (type === 'punch') {
+        this._airPunchIdx = (this._airPunchIdx || 0) % this._airPunchChain.length;
+        attackAnim = this._airPunchChain[this._airPunchIdx++];
+      } else {
+        this._airKickIdx = (this._airKickIdx || 0) % this._airKickChain.length;
+        attackAnim = this._airKickChain[this._airKickIdx++];
+      }
     } else {
       attackAnim = type === 'kick'
         ? this.comboSystem.getNextKick()

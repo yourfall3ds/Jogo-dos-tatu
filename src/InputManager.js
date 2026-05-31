@@ -72,8 +72,10 @@ export class InputManager {
       if (e.target?.id === 'focus-btn') return;
       // Re-adquire lock se perdido (chamado dentro de handler de clique = gesto válido)
       if (!document.pointerLockElement) this._requestLock();
-      if (e.button === 0) this._clicked      = true;
-      if (e.button === 2) this._rightClicked = true;
+      // Conta os cliques (não só um boolean) → mashing rápido não perde
+      // cliques no mesmo frame; o combo encadeia todos.
+      if (e.button === 0) { this._clicked = true;      this._clicks      = (this._clicks      || 0) + 1; }
+      if (e.button === 2) { this._rightClicked = true; this._rightClicks = (this._rightClicks || 0) + 1; }
     });
 
     // Impede menu de contexto do browser no canvas durante o jogo
@@ -146,14 +148,28 @@ export class InputManager {
 
   consumeClick() {
     const c = this._clicked;
-    this._clicked = false;
+    this._clicked = false; this._clicks = 0;
     return c;
   }
 
   consumeRightClick() {
     const c = this._rightClicked;
-    this._rightClicked = false;
+    this._rightClicked = false; this._rightClicks = 0;
     return c;
+  }
+
+  /** Quantos cliques esquerdos desde o último consumo (p/ combo mashing). */
+  consumeClickCount() {
+    const n = this._clicks || 0;
+    this._clicks = 0; this._clicked = false;
+    return n;
+  }
+
+  /** Quantos cliques direitos desde o último consumo. */
+  consumeRightClickCount() {
+    const n = this._rightClicks || 0;
+    this._rightClicks = 0; this._rightClicked = false;
+    return n;
   }
 
   consumeDoubleTapW() {
