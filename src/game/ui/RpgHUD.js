@@ -48,6 +48,16 @@ export class RpgHUD {
       <span id="rpg-mp-text" style="min-width:54px;">100/100</span>`;
     bar.appendChild(mpWrap);
 
+    // Estamina (sprint)
+    const stWrap = document.createElement('div');
+    stWrap.style.cssText = 'display:flex;align-items:center;gap:8px;color:#ffd86a;font-size:11px;text-shadow:0 0 4px #000;';
+    stWrap.innerHTML = `
+      <span style="font-weight:bold;">⚡</span>
+      <div style="width:200px;height:9px;background:rgba(0,0,0,.55);border:1px solid #ffffff30;border-radius:4px;overflow:hidden;">
+        <div id="rpg-stamina" style="height:100%;width:100%;background:linear-gradient(90deg,#ffae2c,#ffe06a);transition:width .1s;"></div>
+      </div>`;
+    bar.appendChild(stWrap);
+
     // Skills (ícones com cooldown)
     this._skillRow = document.createElement('div');
     this._skillRow.style.cssText = 'display:flex;gap:6px;margin-top:2px;';
@@ -401,6 +411,18 @@ export class RpgHUD {
     const mpText = document.getElementById('rpg-mp-text');
     if (mpEl) mpEl.style.width = (this.stats.mp / this.stats.maxMp * 100) + '%';
     if (mpText) mpText.textContent = `${Math.round(this.stats.mp)}/${this.stats.maxMp}`;
+
+    // ── Estamina (sprint) ───────────────────────────────────────────
+    const stEl = document.getElementById('rpg-stamina');
+    const pl = window._gamePlayer;
+    if (stEl && pl) {
+      const pct = (pl.stamina / pl.maxStamina) * 100;
+      stEl.style.width = pct + '%';
+      // vermelho quando exausto, dourado normal
+      stEl.style.background = pl._exhausted
+        ? 'linear-gradient(90deg,#ff5a3c,#ff9a6a)'
+        : 'linear-gradient(90deg,#ffae2c,#ffe06a)';
+    }
 
     // ── XP / nível ──────────────────────────────────────────────────
     const lvl = document.getElementById('rpg-level');

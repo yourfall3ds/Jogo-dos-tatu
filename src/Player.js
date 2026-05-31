@@ -71,6 +71,16 @@ export class Player {
     this._dodgeT      = 0;
     this._wasShift    = false;
 
+    // ── Sprint + Estamina ───────────────────────────────────────────
+    this.maxStamina    = 100;
+    this.stamina       = 100;
+    this.STAMINA_DRAIN = 32;    // por segundo correndo (segurando Shift)
+    this.STAMINA_REGEN = 20;    // por segundo recuperando
+    this.SPRINT_MULT   = 1.55;  // quão mais rápido o sprint é
+    this._sprinting    = false;
+    this._exhausted    = false; // sem fôlego (estamina zerou) → não sprinta até recuperar
+    this._breathT      = 0;     // timer da animação de recuperar o fôlego
+
     // ── Dash (double-tap W) ─────────────────────────────────────────
     this._dashT       = 0;   // timer ativo do dash (>0 = dashing)
     this._dashCdT     = 0;   // cooldown entre dashes
@@ -433,11 +443,33 @@ export class Player {
       );
     }
 
+    // ── 5.25 Sprint (segurar Shift) + Estamina ───────────────────────
+    const shiftHeld = this.input.isDown('ShiftLeft') || this.input.isDown('ShiftRight');
+    // Recupera fôlego: só volta a sprintar quando a estamina passa de 30.
+    if (this._exhausted && this.stamina > 30) this._exhausted = false;
+    this._sprinting = shiftHeld && moving && this.isGrounded && !this._exhausted &&
+                      this._dodgeT <= 0 && this.stamina > 1;
+    if (this._sprinting) {
+      this.stamina = Math.max(0, this.stamina - this.STAMINA_DRAIN * dt);
+      if (this.stamina <= 0) {
+        this._exhausted = true;
+        this._breathT = 1.1;   // toca recuperar o fôlego
+        if (this.animCtrl && this.animLib?.has('catch_breath')) {
+          this.animCtrl.play('catch_breath', { loop: false, speed: 1.0, fade: 0.12 });
+        }
+      }
+    } else {
+      this.stamina = Math.min(this.maxStamina, this.stamina + this.STAMINA_REGEN * dt);
+    }
+    if (this._breathT > 0) this._breathT -= dt;
+
     let spd = this.SPEED;
     if (this._dodgeT > 0) {
       this._dodgeT -= dt;
       spd *= 1.8;
     } else {
+      if (this._sprinting) spd *= this.SPRINT_MULT;
+      else if (this._exhausted) spd *= 0.78;   // cansado → mais lento
       spd *= (this.isGrounded ? 1 : this.AIR_CTRL);
     }
 
@@ -702,8 +734,8 @@ export class Player {
         const isAttacking = this.stateMachine && this.stateMachine.isAttacking();
         if (this._armShootT > 0) this._armShootT -= dt;
 
-        if (this._hitStunT > 0) {
-          // Reação de dano tocando → não deixa a locomoção sobrescrever.
+        if (this._hitStunT > 0 || this._breathT > 0) {
+          // Reação de dano / recuperar fôlego tocando → locomoção não sobrescreve.
           if (this.layered) this.layered.setEnabled(false);
         } else if (!isAttacking) {
           const isArmed = this.stateMachine && this.stateMachine.state === 'armed';
