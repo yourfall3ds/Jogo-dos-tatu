@@ -75,10 +75,15 @@ export function makeStaticBody(root, scene, shape = 'box') {
     meshes.forEach(m => { m.checkCollisions = false; });   // Havok assume
 
     if (shape === 'mesh') {
-      // malha real na peça dominante (escada/rampa)
+      // ESCADA/RAMPA/PROP → CONVEX HULL na peça dominante.
+      //  MESH (84k triângulos) fazia o character controller consultar a malha
+      //  inteira por frame → FPS despencava ao subir. O convex hull tem
+      //  poucas faces (barato) E vira uma RAMPA sobre os degraus → o CC sobe
+      //  liso ("colisão = rampa invisível", padrão de jogo). Concavidade se
+      //  perde, mas pra props/escadas/plataformas é o ideal.
       meshes.sort((a, b) => b.getTotalVertices() - a.getTotalVertices());
       const dom = meshes[0];
-      const agg = new BABYLON.PhysicsAggregate(dom, BABYLON.PhysicsShapeType.MESH, { mass: 0, friction: 0.6 }, scene);
+      const agg = new BABYLON.PhysicsAggregate(dom, BABYLON.PhysicsShapeType.CONVEX_HULL, { mass: 0, friction: 0.6 }, scene);
       root._staticBody = agg.body; root._colliderOptimized = true;
       return agg.body;
     }
