@@ -108,9 +108,10 @@ export class AnimationController {
       // devagar (strafe/desacelerando) → andar de verdade
       this.play("walk", { loop: true, speed: Math.max(0.8, moveAmount * 2.2), fade: 0.16 });
     } else {
-      // correndo → passos LIGEIROS (antes a passada ficava lenta/flutuante
-      // porque tocava em 1.0; agora acelera com a velocidade → corrida real)
-      this.play("run", { loop: true, speed: 1.35 + moveAmount * 0.5, fade: 0.18 });
+      // correndo → usa o "run_fast" (corrida de verdade) se carregado, senão
+      // o run normal. Acelera a passada com a velocidade.
+      const runAnim = this.library.has('run_fast') ? 'run_fast' : 'run';
+      this.play(runAnim, { loop: true, speed: 1.1 + moveAmount * 0.4, fade: 0.18 });
     }
   }
 

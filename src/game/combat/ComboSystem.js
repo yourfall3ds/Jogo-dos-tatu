@@ -4,7 +4,8 @@ export class ComboSystem {
     // LMB = socos | RMB = chutes
     // Ordem reajustada (feedback): punch_02 abre melhor, punch_03 vem como 2º.
     // punch_04 (cotovelada) é o finalizador pesado.
-    this.punchChain = ["punch_02", "punch_03", "punch_01", "punch_04"];
+    // Novo combo de socos Meshy (5 golpes fluidos), finalizador no 5.
+    this.punchChain = ["combo_punch_1", "combo_punch_2", "combo_punch_3", "combo_punch_4", "combo_punch_5"];
     // Combo de chute "bala": os mais foda carregados, encadeados.
     this.kickChain  = ["kick_01", "roundhouse", "high_kick", "spartan_kick", "kick_02"];
 

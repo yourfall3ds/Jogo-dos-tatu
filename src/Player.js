@@ -702,7 +702,10 @@ export class Player {
         const isAttacking = this.stateMachine && this.stateMachine.isAttacking();
         if (this._armShootT > 0) this._armShootT -= dt;
 
-        if (!isAttacking) {
+        if (this._hitStunT > 0) {
+          // Reação de dano tocando → não deixa a locomoção sobrescrever.
+          if (this.layered) this.layered.setEnabled(false);
+        } else if (!isAttacking) {
           const isArmed = this.stateMachine && this.stateMachine.state === 'armed';
           const groundedAnim = this.groundedVisual ?? this.isGrounded;
 
@@ -826,6 +829,7 @@ export class Player {
     }
     this._hitFlashT    = Math.max(0, this._hitFlashT - dt);
     this._damageFlashT = Math.max(0, this._damageFlashT - dt);
+    this._hitStunT     = Math.max(0, (this._hitStunT || 0) - dt);
   }
 
   // ── Seta o modelo 3D do personagem com animator ───────────────────
@@ -966,6 +970,28 @@ export class Player {
       
       if (attackType === 'slam' || kbForce > 20) {
         this.velY = attackType === 'slam' ? 7 : 4; // arremessa um pouco para cima se for forte
+      }
+    }
+
+    // ── Reação de dano (hitstun curto) ───────────────────────────────
+    //  Frente → "hit_face". Levando por trás CORRENDO → "hit_back_run"
+    //  (é empurrado pra frente como se tivesse levado nas costas).
+    if (this.hp > 0 && this.animCtrl && this.animLib) {
+      let reactAnim = this.animLib.has('hit_face') ? 'hit_face'
+                    : (this.animLib.has('hit_face_2') ? 'hit_face_2' : null);
+      if (fromPos) {
+        const dx = this.mesh.position.x - fromPos.x;
+        const dz = this.mesh.position.z - fromPos.z;
+        const yawRad = BABYLON.Tools.ToRadians(this.yaw);
+        const fwd = new BABYLON.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad));
+        const fromDir = new BABYLON.Vector3(dx, 0, dz).normalize();   // atacante→player
+        const fromBehind = BABYLON.Vector3.Dot(fromDir, fwd) > 0.35;
+        const running = Math.hypot(this._vx, this._vz) > 6;
+        if (fromBehind && running && this.animLib.has('hit_back_run')) reactAnim = 'hit_back_run';
+      }
+      if (reactAnim) {
+        this._hitStunT = 0.30;
+        this.animCtrl.play(reactAnim, { loop: false, speed: 1.3, fade: 0.06 });
       }
     }
 

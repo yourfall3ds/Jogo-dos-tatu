@@ -54,6 +54,27 @@ export const MOVESETS = {
     sweep_kick:      'assets/animations/Chutes-glb/Meshy_AI_Faça_um_rato_mistura_biped_Animation_Sweep_Kick_withSkin.glb',
   },
 
+  // ── Animações novas (features) — pasta assets/animations/extras/ ──
+  extras: {
+    run_fast:     'assets/animations/extras/run_fast.glb',       // correr rápido (sprint)
+    idle_02:      'assets/animations/extras/idle_02.glb',        // idle alternativo
+    hit_face:     'assets/animations/extras/hit_face.glb',       // reação a soco no rosto
+    hit_face_2:   'assets/animations/extras/hit_face_2.glb',     // reação a soco no rosto 2
+    hit_back_run: 'assets/animations/extras/hit_back_run.glb',   // pancada nas costas correndo
+    vault_rifle:  'assets/animations/extras/vault_rifle.glb',    // pulo armado (rifle)
+    jump_punch:   'assets/animations/extras/jump_punch.glb',     // soco saltitante
+    kungfu_punch: 'assets/animations/extras/kungfu_punch.glb',   // skill modo luta
+    catch_breath: 'assets/animations/extras/catch_breath.glb',   // recuperar fôlego
+    pickup:       'assets/animations/extras/pickup.glb',         // pegar do chão
+    // Novo combo de socos (6 golpes)
+    combo_punch_0: 'assets/animations/extras/combo_punch_0.glb',
+    combo_punch_1: 'assets/animations/extras/combo_punch_1.glb',
+    combo_punch_2: 'assets/animations/extras/combo_punch_2.glb',
+    combo_punch_3: 'assets/animations/extras/combo_punch_3.glb',
+    combo_punch_4: 'assets/animations/extras/combo_punch_4.glb',
+    combo_punch_5: 'assets/animations/extras/combo_punch_5.glb',
+  },
+
   com_espada: {
     idle:      'assets/animations/com_espada/idle.glb',
     attack_01: 'assets/animations/com_espada/attack_01.glb',

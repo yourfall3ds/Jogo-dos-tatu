@@ -18,6 +18,16 @@ export class CombatSystem {
       ], comboWindow: 0.45 }, // Uppercut duplo
       punch_04: { hits: [{ hitTime: 0.12, damage: 25, bone: 'RightHand', kb: 1.8 }], comboWindow: 0.45 }, // Cotovelada
 
+      // ── NOVO COMBO DE SOCOS (Meshy biped) ───────────────────────────
+      combo_punch_1: { hits: [{ hitTime: 0.10, damage: 15, bone: 'RightHand', kb: 1.0 }], comboWindow: 0.32 },
+      combo_punch_2: { hits: [{ hitTime: 0.12, damage: 17, bone: 'LeftHand',  kb: 1.2 }], comboWindow: 0.35 },
+      combo_punch_3: { hits: [{ hitTime: 0.11, damage: 19, bone: 'RightHand', kb: 1.4 }], comboWindow: 0.38 },
+      combo_punch_4: { hits: [{ hitTime: 0.13, damage: 21, bone: 'LeftHand',  kb: 1.6 }], comboWindow: 0.40 },
+      combo_punch_5: { hits: [{ hitTime: 0.15, damage: 30, bone: 'RightHand', kb: 2.8 }], comboWindow: 0.48 }, // finalizador
+      // Soco saltitante / kung fu / aéreo
+      jump_punch:    { hits: [{ hitTime: 0.16, damage: 28, bone: 'RightHand', kb: 3.0 }], comboWindow: 0.50 },
+      kungfu_punch:  { hits: [{ hitTime: 0.18, damage: 45, bone: 'RightHand', kb: 4.0 }], comboWindow: 0.55 },
+
       // ── CHUTES (RMB) — GLBs existentes ──────────────────────────────
       kick_01: { hits: [{ hitTime: 0.20, damage: 30, bone: 'RightFoot', kb: 2.5 }], comboWindow: 0.50 }, // Chute levanta
       kick_02: { hits: [{ hitTime: 0.25, damage: 50, bone: 'RightFoot', kb: 4.0 }], comboWindow: 0.70 }, // Roundhouse finalizador
