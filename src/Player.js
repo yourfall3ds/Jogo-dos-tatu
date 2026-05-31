@@ -448,17 +448,17 @@ export class Player {
     // Recupera fôlego: só volta a sprintar quando a estamina passa de 30.
     if (this._exhausted && this.stamina > 30) this._exhausted = false;
     this._sprinting = shiftHeld && moving && this.isGrounded && !this._exhausted &&
-                      this._dodgeT <= 0 && this.stamina > 1;
+                      this._dodgeT <= 0 && this.stamina > 0;
     if (this._sprinting) {
       this.stamina = Math.max(0, this.stamina - this.STAMINA_DRAIN * dt);
       if (this.stamina <= 0) {
         this._exhausted = true;
-        this._breathT = 1.1;   // toca recuperar o fôlego
+        this._breathT = 1.4;   // toca recuperar o fôlego
         if (this.animCtrl && this.animLib?.has('catch_breath')) {
-          this.animCtrl.play('catch_breath', { loop: false, speed: 1.0, fade: 0.12 });
+          this.animCtrl.play('catch_breath', { loop: false, speed: 1.0, fade: 0.10 });
         }
       }
-    } else {
+    } else if (!this._sprinting) {
       this.stamina = Math.min(this.maxStamina, this.stamina + this.STAMINA_REGEN * dt);
     }
     if (this._breathT > 0) this._breathT -= dt;
@@ -754,6 +754,8 @@ export class Player {
             let lowerKey, lowerSpd = 1.0;
             if (movingBack && speed > 0.8 && this.animLib.has('aim_walk_back')) {
               lowerKey = 'aim_walk_back'; lowerSpd = Math.max(0.6, speed / 4);
+            } else if (this._sprinting && this.animLib.has('run_fast')) {
+              lowerKey = 'run_fast'; lowerSpd = speed / 15;   // SPRINT armado
             } else if (speed > 6.5) { lowerKey = 'run';  lowerSpd = speed / 11; }
             else if (speed > 0.8)   { lowerKey = 'walk'; lowerSpd = Math.max(0.6, speed / 4); }
             else                    { lowerKey = 'idle'; }
