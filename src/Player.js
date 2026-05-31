@@ -6,6 +6,7 @@ import { WallJumpController } from './WallJumpController.js';
 import { WeaponSystem }       from './WeaponSystem.js';
 import { PlayerAnimator }     from './PlayerAnimator.js';
 import { AnimConfigUI }       from './AnimConfigUI.js';
+import { physicsReady }       from './game/physics/PhysicsWorld.js';
 
 export class Player {
   constructor(scene, canvas, input, level = null) {
@@ -91,6 +92,7 @@ export class Player {
 
     this._createMesh();
     this._createCamera();
+    this._initCharacterController();
 
     this.wallJump    = new WallJumpController(this);
     this.weapon      = new WeaponSystem(this.camera, scene, level);
@@ -142,10 +144,44 @@ export class Player {
     } catch (_) {}
   }
 
+  // ── Character Controller (Havok) ──────────────────────────────────
+  //  Substitui o moveWithCollisions manual. Sobe escada/rampa/degrau
+  //  NATIVAMENTE (sem encravar), colide com o mundo e os objetos Havok.
+  //  Se a física não estiver pronta, cai no sistema antigo (this._cc null).
+  _initCharacterController() {
+    if (!physicsReady()) { this._cc = null; return; }
+    try {
+      this._charGravity = new BABYLON.Vector3(0, -this.GRAVITY, 0);
+      this._ccDown      = new BABYLON.Vector3(0, -1, 0);
+      this._cc = new BABYLON.PhysicsCharacterController(
+        new BABYLON.Vector3(0, 2.5, 0),
+        { capsuleHeight: this.HEIGHT, capsuleRadius: this.RADIUS },
+        this.scene
+      );
+      // ⭐ maxStepHeight vem 0 por padrão → o CC NÃO sobe degrau nenhum (trava
+      //   em escada). Setar isso é o que faz subir degraus/escadas nativamente.
+      this._cc.maxStepHeight = 0.6;       // ~altura de um degrau (era STEP=0.70)
+      this._cc.maxSlopeCosine = 0.5;      // sobe rampas até ~60°
+      // O corpo do CC é o colisor agora → o capsule visual não colide.
+      this.mesh.checkCollisions = false;
+      // Estado SUPPORTED do Havok (2). Cache do enum c/ fallback numérico.
+      this._SUPPORTED = BABYLON.CharacterSupportedState?.SUPPORTED ?? 2;
+    } catch (e) {
+      console.error('[Player] character controller falhou:', e.message);
+      this._cc = null;
+    }
+  }
+
   spawn() {
     this.mesh.position.set(0, 2.5, 0);
     this._vx = 0; this._vz = 0; this.velY = 0;
     this._prevY = 2.5;
+    if (this._cc) {
+      try {
+        this._cc.setPosition(new BABYLON.Vector3(0, 2.5, 0));
+        this._cc.setVelocity(BABYLON.Vector3.Zero());
+      } catch (_) {}
+    }
   }
 
   lockPointer() { this.canvas.requestPointerLock(); }
@@ -219,6 +255,35 @@ export class Player {
     this.mesh.moveWithCollisions(disp);
   }
 
+  // ── Empurrar objetos dinâmicos ────────────────────────────────────
+  //  O character controller não empurra corpos por padrão. Aqui achamos
+  //  os GameObjects dinâmicos perto do player e damos um empurrão na
+  //  direção do movimento (proporcional à velocidade do player).
+  _pushTouchedBodies() {
+    const lvl = this.level || window._gameLevel;
+    if (!lvl?.dynamics?.length) return;
+    const speed = Math.hypot(this._vx, this._vz);
+    if (speed < 1.5) return;                        // parado → não empurra
+    const px = this.mesh.position.x, pz = this.mesh.position.z, py = this.mesh.position.y;
+    const reach = this.RADIUS + 0.7;
+    const dir = new BABYLON.Vector3(this._vx, 0, this._vz).normalize();
+    for (const d of lvl.dynamics) {
+      if (!d._usesHavok || d._broken || d._collected || !d._havok?.body) continue;
+      const m = d._havok.mesh;
+      const dx = m.position.x - px, dz = m.position.z - pz, dy = m.position.y - py;
+      if (Math.abs(dy) > this.HEIGHT) continue;     // muito acima/abaixo
+      const distH = Math.hypot(dx, dz);
+      if (distH > reach + 0.6) continue;
+      // só empurra se está À FRENTE do movimento (não puxa o que ficou atrás)
+      if (dx * dir.x + dz * dir.z < 0) continue;
+      // impulso na direção do movimento, na altura do PEITO (empurra, não rola por baixo)
+      const mass = d._havok.body.getMassProperties?.()?.mass || 2;
+      const push = dir.scale(Math.min(speed, 12) * 0.5 * Math.max(1, mass));
+      const pt = m.getAbsolutePosition().add(new BABYLON.Vector3(0, 0.2, 0));
+      try { d._havok.body.applyImpulse(push, pt); } catch (_) {}
+    }
+  }
+
   // ── Ground clamp ──────────────────────────────────────────────────
   //  Raycast pra baixo a partir de ACIMA dos pés. Se o player afundou
   //  num objeto (pés abaixo da superfície), sobe ele até a superfície.
@@ -260,7 +325,13 @@ export class Player {
 
     // ── 2. Grounded ──────────────────────────────────────────────────
     this._wasGrounded = this.isGrounded;
-    this.isGrounded   = this._checkGrounded();
+    if (this._cc) {
+      // checkSupport faz o ground-cast do Havok (também detecta degraus/rampas)
+      this._support   = this._cc.checkSupport(dt, this._ccDown);
+      this.isGrounded = this._support.supportedState === this._SUPPORTED;
+    } else {
+      this.isGrounded = this._checkGrounded();
+    }
 
     // Coyote time: "grounded visual" só vira false após ~0.12s no ar.
     // Evita o flicker de animação de jump/queda ao passar por frestas
@@ -401,19 +472,28 @@ export class Player {
       this._kbVx = 0; this._kbVz = 0;
     }
 
-    // ── 8. Aplicar deslocamento (com auto step-up p/ escadas/degraus) ─
-    const disp = new BABYLON.Vector3(
-      (this._vx + this._kbVx) * dt,
-      this.velY * dt,
-      (this._vz + this._kbVz) * dt
-    );
-    this._moveWithStepUp(disp);
-
-    // ── Ground clamp: tira o player de DENTRO de objetos ─────────────
-    //  A colisão por malha (ellipsoid) afunda em GLBs irregulares. Aqui
-    //  raycast acha a superfície e SÓ sobe o player até ela (nunca puxa
-    //  pra baixo) — corrige o "afundar" sem atrapalhar pulo/queda.
-    this._groundClamp();
+    // ── 8. Aplicar deslocamento ──────────────────────────────────────
+    if (this._cc) {
+      // CHARACTER CONTROLLER (Havok): sobe escada/degrau nativamente, colide
+      // com mundo e objetos, sem encravar nem afundar. Alimentamos a
+      // velocidade desejada (já com dash/dodge/pulo/knockback/gravidade).
+      this._cc.setVelocity(new BABYLON.Vector3(
+        this._vx + this._kbVx, this.velY, this._vz + this._kbVz
+      ));
+      this._cc.integrate(dt, this._support, this._charGravity);
+      this.mesh.position.copyFrom(this._cc.getPosition());
+      // Empurra objetos dinâmicos que o player encostou
+      this._pushTouchedBodies();
+    } else {
+      // Fallback (física desligada): sistema antigo com step-up + ground clamp
+      const disp = new BABYLON.Vector3(
+        (this._vx + this._kbVx) * dt,
+        this.velY * dt,
+        (this._vz + this._kbVz) * dt
+      );
+      this._moveWithStepUp(disp);
+      this._groundClamp();
+    }
 
     // ── Rotação do CAPSULE: SEMPRE 0 ─────────────────────────────────
     //  O capsule (this.mesh) é só colisão. O modelo visível (animator.root)

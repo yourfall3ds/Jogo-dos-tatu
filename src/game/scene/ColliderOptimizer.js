@@ -20,6 +20,8 @@
 //  embaralhar os materiais → pra essas (raras) usamos caixa colisora.
 // ─────────────────────────────────────────────────────────────────
 
+import { physicsReady, makeStaticBody } from '../physics/PhysicsWorld.js';
+
 const HEAVY_VERTS = 1500;   // acima disso, malha-colisor é cara demais
 
 /** Quantos submeshes criar p/ um nº de vértices (mais verts = mais partições) */
@@ -105,9 +107,16 @@ export function optimizeCollider(root, scene) {
   const aabb = _worldAABB(geom);
   if (!aabb) return 0;
 
-  // ── Decisão: topo PLANO → CAIXA lisa (chão/parede/prop) — mesmo corpo
-  //    de colisão que a decoração/física usa, sem prender o player.
-  //    Topo VARIÁVEL (escada/rampa) → mantém a MALHA (degraus subíveis). ──
+  // ── Física Havok ativa → corpo ESTÁTICO MESH (o CC do player colide e
+  //    SOBE os degraus nativamente; em superfície plana anda liso). O Havok
+  //    acelera a malha com BVH, então não precisa da detecção plano/caixa
+  //    (que era frágil e às vezes transformava escada em parede). ──
+  if (physicsReady()) {
+    makeStaticBody(root, scene, 'mesh');
+    return colliding.length;
+  }
+
+  // ── (Sem física: caminho antigo) topo PLANO → caixa; variável → malha. ──
   let flat = true;
   try { flat = _hasFlatTop(colliding, aabb.min, aabb.max, scene); } catch (_) {}
 

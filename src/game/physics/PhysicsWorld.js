@@ -58,6 +58,55 @@ export function physicsReady() { return _ready; }
 export function getPhysicsPlugin() { return _plugin; }
 
 // ─────────────────────────────────────────────────────────────────
+//  CORPO ESTÁTICO — mundo/plataforma/escada (não cai, o CC colide nele)
+// ─────────────────────────────────────────────────────────────────
+/**
+ * Cria um corpo ESTÁTICO Havok p/ um objeto colocado (construção).
+ *  • shape 'box'  → caixa no bounding box (chão/parede/plataforma — barato)
+ *  • shape 'mesh' → malha real (escada/rampa — o CC sobe os degraus)
+ * Desliga checkCollisions das malhas (o corpo Havok assume a colisão).
+ * @returns {BABYLON.PhysicsBody|null}
+ */
+export function makeStaticBody(root, scene, shape = 'box') {
+  if (!_ready || !root) return null;
+  const meshes = [root, ...(root.getChildMeshes?.(false) || [])].filter(m => (m.getTotalVertices?.() || 0) > 0);
+  if (!meshes.length) return null;
+  try {
+    meshes.forEach(m => { m.checkCollisions = false; });   // Havok assume
+
+    if (shape === 'mesh') {
+      // malha real na peça dominante (escada/rampa)
+      meshes.sort((a, b) => b.getTotalVertices() - a.getTotalVertices());
+      const dom = meshes[0];
+      const agg = new BABYLON.PhysicsAggregate(dom, BABYLON.PhysicsShapeType.MESH, { mass: 0, friction: 0.6 }, scene);
+      root._staticBody = agg.body; root._colliderOptimized = true;
+      return agg.body;
+    }
+
+    // CAIXA no AABB do conjunto (plataforma/prop plano)
+    let min = null, max = null;
+    for (const m of meshes) {
+      m.computeWorldMatrix(true);
+      const bb = m.getBoundingInfo().boundingBox;
+      if (!min) { min = bb.minimumWorld.clone(); max = bb.maximumWorld.clone(); }
+      else { min = BABYLON.Vector3.Minimize(min, bb.minimumWorld); max = BABYLON.Vector3.Maximize(max, bb.maximumWorld); }
+    }
+    const size = max.subtract(min), center = min.add(max).scale(0.5);
+    const box = BABYLON.MeshBuilder.CreateBox(`${root.name}_scol`,
+      { width: Math.max(0.1, size.x), height: Math.max(0.1, size.y), depth: Math.max(0.1, size.z) }, scene);
+    box.position.copyFrom(center);
+    box.rotationQuaternion = BABYLON.Quaternion.Identity();
+    box.isVisible = false; box.isPickable = true; box._isBoxCol = true;
+    const agg = new BABYLON.PhysicsAggregate(box, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.6 }, scene);
+    root._staticBody = agg.body; root._colliderOptimized = true;
+    return agg.body;
+  } catch (e) {
+    console.warn('[Physics] corpo estático falhou:', root.name, e.message);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 //  FORMA AUTOMÁTICA — escolhe o shape pela geometria do objeto
 // ─────────────────────────────────────────────────────────────────
 /**
