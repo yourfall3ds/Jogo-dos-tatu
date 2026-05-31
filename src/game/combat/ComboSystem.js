@@ -4,8 +4,11 @@ export class ComboSystem {
     // LMB = socos | RMB = chutes
     // Ordem reajustada (feedback): punch_02 abre melhor, punch_03 vem como 2º.
     // punch_04 (cotovelada) é o finalizador pesado.
-    // Novo combo de socos Meshy (5 golpes fluidos), finalizador no 5.
-    this.punchChain = ["combo_punch_1", "combo_punch_2", "combo_punch_3", "combo_punch_4", "combo_punch_5"];
+    // Combo PRINCIPAL de soco (os bons) → e no FINAL do movelist solta um
+    // FINALIZADOR flashy (combo_punch). Sem o combo_punch_4 (você não curtiu).
+    this.punchChain     = ["punch_02", "punch_03", "punch_01", "punch_04"];
+    this.punchFinishers = ["combo_punch_1", "combo_punch_2", "combo_punch_3", "combo_punch_5"];
+    this.finisherIdx    = 0;
     // Combo de chute "bala": os mais foda carregados, encadeados.
     this.kickChain  = ["kick_01", "roundhouse", "high_kick", "spartan_kick", "kick_02"];
 
@@ -34,8 +37,15 @@ export class ComboSystem {
 
   // ── Retorna próxima animação de soco ─────────────────────────────
   getNextPunch() {
-    if (this.punchIdx >= this.punchChain.length) this.punchIdx = 0;
-    const anim = this.punchChain[this.punchIdx++];
+    let anim;
+    if (this.punchIdx < this.punchChain.length) {
+      // socos normais do movelist
+      anim = this.punchChain[this.punchIdx++];
+    } else {
+      // completou o movelist → FINALIZADOR flashy, depois reseta o combo
+      anim = this.punchFinishers[this.finisherIdx++ % this.punchFinishers.length];
+      this.punchIdx = 0;
+    }
     this._history.push('punch');
     if (this._history.length > 6) this._history.shift();
     return anim;
