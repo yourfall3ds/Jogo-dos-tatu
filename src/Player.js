@@ -497,6 +497,15 @@ export class Player {
       this._vz *= 0.55;
     }
 
+    // ── 5.4 Recuperar fôlego PLANTA o movimento ──────────────────────
+    //  Antes a anim de catch_breath tocava ENQUANTO o player deslizava
+    //  (exausto mas andando) → bugava. Agora freia forte pra ele PARAR e
+    //  recuperar o fôlego de verdade.
+    if (this._breathT > 0 && this.isGrounded) {
+      this._vx *= 0.30;
+      this._vz *= 0.30;
+    }
+
     // ── 6. Pulo / Wall jump ──────────────────────────────────────────
     const spaceNow  = this.input.isDown('Space');
     const jumpPress = spaceNow && !this._wasSpace && canMove;
@@ -754,8 +763,12 @@ export class Player {
             // Pernas: escolhe pela velocidade. Como o corpo está travado
             // encarando a câmera, o movimento é strafe — recuar usa walk_back.
             let lowerKey, lowerSpd = 1.0;
-            if (movingBack && speed > 0.8 && this.animLib.has('aim_walk_back')) {
-              lowerKey = 'aim_walk_back'; lowerSpd = Math.max(0.6, speed / 4);
+            const _wid = this.weapon.getCurrentWeapon?.()?.id;
+            const _backArmed = (_wid === 'rifle' && this.animLib.has('walk_back_heavy')) ? 'walk_back_heavy'
+                             : this.animLib.has('walk_back_pistol') ? 'walk_back_pistol'
+                             : this.animLib.has('aim_walk_back') ? 'aim_walk_back' : null;
+            if (movingBack && speed > 0.8 && _backArmed) {
+              lowerKey = _backArmed; lowerSpd = Math.max(0.6, speed / 4);
             } else if (this._sprinting && this.animLib.has('run_fast')) {
               lowerKey = 'run_fast'; lowerSpd = speed / 15;   // SPRINT armado
             } else if (speed > 6.5) { lowerKey = 'run';  lowerSpd = speed / 11; }
@@ -781,7 +794,12 @@ export class Player {
             // ── DESARMADO ou NO AR: corpo inteiro normal ─────────────
             if (this.layered) this.layered.setEnabled(false);
             if (groundedAnim) {
-              this.animCtrl.updateLocomotion(speed / 11);
+              if (movingBack && speed > 0.8 && this.animLib.has('walk_back')) {
+                // andando de costas (S) → anim de costas
+                this.animCtrl.play('walk_back', { loop: true, speed: Math.max(0.7, speed / 5), fade: 0.16 });
+              } else {
+                this.animCtrl.updateLocomotion(speed / 11);
+              }
             } else {
               this.animCtrl.play("jump", { loop: true });
             }

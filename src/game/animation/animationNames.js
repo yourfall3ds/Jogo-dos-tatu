@@ -68,6 +68,9 @@ export const MOVESETS = {
     pickup:       'assets/animations/extras/pickup.glb',         // pegar do chão
     falling:      'assets/animations/extras/falling.glb',        // caindo (do mapa / de alto)
     dead:         'assets/animations/extras/dead.glb',           // morto (morte no mapa)
+    walk_back:        'assets/animations/extras/walk_back.glb',        // andar de costas (desarmado)
+    walk_back_pistol: 'assets/animations/extras/walk_back_pistol.glb', // de costas com pistola
+    walk_back_heavy:  'assets/animations/extras/walk_back_heavy.glb',  // de costas com arma pesada
     // Novo combo de socos (6 golpes)
     combo_punch_0: 'assets/animations/extras/combo_punch_0.glb',
     combo_punch_1: 'assets/animations/extras/combo_punch_1.glb',
