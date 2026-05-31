@@ -329,8 +329,10 @@ export class Player {
 
   // ── Update principal ──────────────────────────────────────────────
   update(dt) {
-    // Só roda após o jogador ter clicado em JOGAR
-    if (!this.input.gameActive) return;
+    // Só roda após JOGAR. Exceção: MORTO → continua atualizando (queda/anim/
+    // câmera) mesmo sem pointer-lock, pra você ver a queda enquanto o cursor
+    // fica livre pra clicar Renascer.
+    if (!this.input.gameActive && !this._dead) return;
 
     // ── 1. Mouse look — funciona com ou sem pointer lock ─────────────
     const { dx, dy } = this.input.consumeMouseDelta();
@@ -734,8 +736,8 @@ export class Player {
         const isAttacking = this.stateMachine && this.stateMachine.isAttacking();
         if (this._armShootT > 0) this._armShootT -= dt;
 
-        if (this._hitStunT > 0 || this._breathT > 0) {
-          // Reação de dano / recuperar fôlego tocando → locomoção não sobrescreve.
+        if (this._dead || this._hitStunT > 0 || this._breathT > 0) {
+          // Morte/queda/reação de dano/fôlego tocando → locomoção não sobrescreve.
           if (this.layered) this.layered.setEnabled(false);
         } else if (!isAttacking) {
           const isArmed = this.stateMachine && this.stateMachine.state === 'armed';
@@ -855,11 +857,12 @@ export class Player {
     //  mira da câmera, a cada frame, DEPOIS da animação rodar.
     this._applyTPSAim(dt);
 
-    // ── 11. Morte por queda ───────────────────────────────────────────
-    // Chão fica em y≈0 → kill plane 10m abaixo. Sem paredes de borda, o
-    // jogador cai do mapa e MORRE (animação de morte + respawn).
-    if (this.mesh.position.y < -10 && !this._dead) {
-      this._triggerDeath({ fall: true });
+    // ── 11. Morte por QUEDA ────────────────────────────────────────────
+    // Caiu do mapa (passou ~3m abaixo do chão) → morte por queda: CONTINUA
+    // despencando (mostra a anim de caindo) e a tela de morte aparece. Só
+    // renasce no topo ao clicar Renascer.
+    if (this.mesh.position.y < -3 && !this._dead) {
+      this._startDeath('fall');
     }
     this._hitFlashT    = Math.max(0, this._hitFlashT - dt);
     this._damageFlashT = Math.max(0, this._damageFlashT - dt);
@@ -1030,47 +1033,67 @@ export class Player {
     }
 
     if (this.hp <= 0 && !this._dead) {
-      this._triggerDeath();
+      this._startDeath('enemy');
     }
   }
 
   /**
-   * Sequência de morte reutilizável (dano letal OU queda no vazio).
-   * @param {Object} opts
-   *   opts.fall = true → morte por queda: congela a queda imediatamente
-   *               (reposiciona no spawn) pra animação de morte ser visível.
+   * Inicia a morte. SEM auto-respawn — o jogador renasce clicando em Renascer.
+   * @param {'fall'|'enemy'} type
+   *   'fall'  → caiu do mapa: CONTINUA caindo (anim de queda), tela de morte.
+   *   'enemy' → morreu na fase: para no lugar, anim de morto.
    */
-  _triggerDeath(opts = {}) {
+  _startDeath(type = 'enemy') {
     if (this._dead) return;
     this._dead = true;
-    this.hp    = 0;
+    this._deathType = type;
+    this.hp = 0;
     this._kbVx = 0; this._kbVz = 0;
-    this.velY  = 0;
 
-    // Queda no vazio: para de cair na hora e segura no ponto de spawn
-    // pra não despencar pro infinito durante os 2.5s de animação.
-    if (opts.fall) {
-      this.mesh.position.set(0, 2.5, 0);
-    }
+    if (this.stateMachine) this.stateMachine.setState('knockdown');   // bloqueia controle
 
-    if (this.stateMachine) {
-      this.stateMachine.setState('knockdown');
-      this.animCtrl?.play('knockdown', { loop: false, speed: 1.0 });
-    }
-
-    setTimeout(() => {
-      this.hp    = this.maxHp;
-      this._dead = false;
-      this._kbVx = 0; this._kbVz = 0;
-      this.velY  = 0;
-
-      if (this.stateMachine) {
-        this.stateMachine.setState(this.stateMachine.isArmedFlag ? 'armed' : 'unarmed');
+    if (type === 'fall') {
+      // NÃO congela — deixa despencar mostrando a anim de queda.
+      this._vx = 0; this._vz = 0;
+      if (this.animCtrl && this.animLib?.has('falling')) {
+        this.animCtrl.play('falling', { loop: true, speed: 1.0, fade: 0.08 });
       }
+    } else {
+      // Morte na fase → para no lugar e toca a anim de morto.
+      this._vx = 0; this._vz = 0; this.velY = 0;
+      const dieAnim = this.animLib?.has('dead') ? 'dead' : 'knockdown';
+      this.animCtrl?.play(dieAnim, { loop: false, speed: 1.0, fade: 0.10 });
+    }
 
-      this.spawn();
-      this.onRespawn?.();   // avisa Level para resetar inimigos
-    }, 2500);
+    // Mensagem da tela de morte conforme o tipo
+    const msg = document.getElementById('death-msg');
+    if (msg) msg.textContent = type === 'fall'
+      ? 'Você caiu do mapa! 🔄 Renascer pra voltar ao topo.'
+      : 'Você foi derrotado! 🔄 Renascer pra continuar.';
+
+    // Libera o cursor (pra clicar Renascer). O loop continua atualizando a
+    // morte mesmo sem pointer-lock (ver main.js / update).
+    try { document.exitPointerLock?.(); } catch (_) {}
+
+    // A tela de morte aparece pelo HUD (info.dead). Expõe o respawn global.
+    window.respawnPlayer = () => this.respawn();
+  }
+
+  /** Renasce no topo (chamado pelo botão Renascer). */
+  respawn() {
+    this._dead = false;
+    this._deathType = null;
+    this.hp = this.maxHp;
+    this._kbVx = 0; this._kbVz = 0;
+    this._vx = 0; this._vz = 0; this.velY = 0;
+    this._exhausted = false; this.stamina = this.maxStamina;
+    if (this.stateMachine) {
+      this.stateMachine.setState(this.stateMachine.isArmedFlag ? 'armed' : 'unarmed');
+    }
+    this.spawn();
+    this.onRespawn?.();   // reseta inimigos
+    // Re-trava o cursor e volta o jogo ao normal
+    try { this.input.activate?.(); } catch (_) {}
   }
 
   // ── Camera via setTarget (mais confiável que .rotation) ───────────

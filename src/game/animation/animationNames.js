@@ -66,6 +66,8 @@ export const MOVESETS = {
     kungfu_punch: 'assets/animations/extras/kungfu_punch.glb',   // skill modo luta
     catch_breath: 'assets/animations/extras/catch_breath.glb',   // recuperar fôlego
     pickup:       'assets/animations/extras/pickup.glb',         // pegar do chão
+    falling:      'assets/animations/extras/falling.glb',        // caindo (do mapa / de alto)
+    dead:         'assets/animations/extras/dead.glb',           // morto (morte no mapa)
     // Novo combo de socos (6 golpes)
     combo_punch_0: 'assets/animations/extras/combo_punch_0.glb',
     combo_punch_1: 'assets/animations/extras/combo_punch_1.glb',

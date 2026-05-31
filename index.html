@@ -133,7 +133,21 @@
     }
     #death-screen.visible { display: flex; }
     #death-screen h2 { font-size: 3em; color: #ff4444; text-shadow: 0 0 20px #f00; margin-bottom: 12px; }
-    #death-screen p  { font-size: 1.1em; color: #ffaaaa; }
+    #death-screen p  { font-size: 1.1em; color: #ffaaaa; margin-bottom: 22px; }
+    #respawn-btn {
+      pointer-events: all; cursor: pointer;
+      padding: 14px 44px; font-size: 1.2em; font-weight: 800;
+      background: linear-gradient(135deg,#ff5a3c,#ff2d2d); border: none;
+      border-radius: 10px; color: #fff; letter-spacing: 1px;
+      box-shadow: 0 6px 24px rgba(255,40,40,.5);
+      transition: transform .12s, box-shadow .2s;
+      animation: respawnPulse 1.6s ease-in-out infinite;
+    }
+    #respawn-btn:hover { transform: scale(1.06); }
+    @keyframes respawnPulse {
+      0%,100%{ box-shadow: 0 6px 24px rgba(255,40,40,.5); }
+      50%    { box-shadow: 0 6px 36px rgba(255,90,60,.9); }
+    }
 
     /* ═══════════════════════════════════════════════════════════
        BOTÃO FOCAR / PAUSAR  (sempre visível durante o jogo)
@@ -559,7 +573,8 @@
   <!-- ── Death screen ── -->
   <div id="death-screen">
     <h2>💀 VOCÊ MORREU</h2>
-    <p>Respawnando em instantes…</p>
+    <p id="death-msg">Pressione Renascer para voltar ao topo.</p>
+    <button id="respawn-btn" onclick="window.respawnPlayer && window.respawnPlayer()">🔄 Renascer</button>
   </div>
 
   <!-- ── Botão Focar/Pausar (canto superior direito) ── -->

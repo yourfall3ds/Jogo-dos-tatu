@@ -283,6 +283,7 @@ async function init() {
 
   // ── Pointer lock solto → abre ENGINE MODE diretamente na aba Cena ──
   input.onDeactivated = () => {
+    if (window._gamePlayer?._dead) return;   // morto → tela de morte, não abre editor
     if (!_engineMode) window.enterEngineMode('scene');
   };
 
@@ -326,6 +327,10 @@ async function init() {
       level.update(dt);
       stats.update(dt);
       skills.update(dt, input);
+    } else if (player._dead) {
+      // MORTO com cursor livre → continua a queda/animação + câmera seguindo.
+      player.update(dt);
+      level.update(dt);
     } else if (catalogUI._visible) {
       // Catálogo aberto: cursor livre, mas inimigos/cena continuam vivos para teste
       level.update(dt);
