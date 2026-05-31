@@ -9,6 +9,3 @@ tools/db/
 tools/_*.log
 *.log
 node_modules/
-
-# Assets gerados em runtime (Meshy) — não versionar (pesados, regeneráveis)
-assets/generated/
