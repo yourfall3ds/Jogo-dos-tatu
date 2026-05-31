@@ -12,22 +12,23 @@ export class ComboSystem {
     this.punchIdx = 0;
     this.kickIdx  = 0;
 
-    // Buffer de próximo input durante animação em curso
-    // null | 'punch' | 'kick'
-    this.bufferType = null;
+    // FILA de inputs durante a animação. Antes era um slot único, então
+    // clicar RÁPIDO (mashing) colapsava vários cliques em UM só → combo
+    // parava no 1º/2º golpe. Com fila, cada clique entra e o combo encadeia
+    // até o fim. Capada no tamanho do combo pra não "guardar" cliques demais.
+    this._queue = [];
+    this.QUEUE_MAX = 4;
 
     // Histórico recente para detectar cross-combos (ex: punch→kick→punch)
     this._history = [];
   }
 
-  // ── Registra input durante animação (não executa de imediato) ────
-  registerPunch() { this.bufferType = 'punch'; }
-  registerKick()  { this.bufferType = 'kick';  }
+  // ── Registra input durante animação (entra na fila) ──────────────
+  registerPunch() { if (this._queue.length < this.QUEUE_MAX) this._queue.push('punch'); }
+  registerKick()  { if (this._queue.length < this.QUEUE_MAX) this._queue.push('kick');  }
 
   consumeBuffer() {
-    const t = this.bufferType;
-    this.bufferType = null;
-    return t; // 'punch' | 'kick' | null
+    return this._queue.shift() || null; // 'punch' | 'kick' | null
   }
 
   // ── Retorna próxima animação de soco ─────────────────────────────
@@ -52,7 +53,7 @@ export class ComboSystem {
   reset() {
     this.punchIdx  = 0;
     this.kickIdx   = 0;
-    this.bufferType = null;
+    this._queue    = [];
     this._history  = [];
   }
 

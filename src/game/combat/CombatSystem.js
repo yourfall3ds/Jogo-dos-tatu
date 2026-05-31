@@ -23,12 +23,16 @@ export class CombatSystem {
       kick_02: { hits: [{ hitTime: 0.25, damage: 50, bone: 'RightFoot', kb: 4.0 }], comboWindow: 0.70 }, // Roundhouse finalizador
 
       // ── CHUTES EXTRAS (Meshy biped — já carregados) → combo "bala" ──
-      high_kick:   { hits: [{ hitTime: 0.22, damage: 38, bone: 'RightFoot', kb: 3.2 }], comboWindow: 0.55 },
-      flying_fist: { hits: [{ hitTime: 0.20, damage: 40, bone: 'RightFoot', kb: 3.5 }], comboWindow: 0.55 },
-      double_kick: { hits: [
+      high_kick:     { hits: [{ hitTime: 0.22, damage: 38, bone: 'RightFoot', kb: 3.2 }], comboWindow: 0.55 },
+      flying_fist:   { hits: [{ hitTime: 0.20, damage: 40, bone: 'RightFoot', kb: 3.5 }], comboWindow: 0.55 },
+      double_kick:   { hits: [
         { hitTime: 0.16, damage: 20, bone: 'RightFoot', kb: 1.5 },
         { hitTime: 0.34, damage: 30, bone: 'LeftFoot',  kb: 3.5 }
       ], comboWindow: 0.60 },
+      // ── Chutes AÉREOS (pulando) — "bala" ────────────────────────────
+      rising_flying: { hits: [{ hitTime: 0.18, damage: 45, bone: 'RightFoot', kb: 4.5 }], comboWindow: 0.55 },
+      lunge_spin:    { hits: [{ hitTime: 0.22, damage: 48, bone: 'RightFoot', kb: 5.0 }], comboWindow: 0.55 },
+      spartan_kick:  { hits: [{ hitTime: 0.20, damage: 42, bone: 'RightFoot', kb: 6.0 }], comboWindow: 0.55 },
 
       // ── CHUTES EXTRAS (pasta Chutes/ — ativados quando convertidos de FBX → GLB) ──
       roundhouse:     { hits: [{ hitTime: 0.22, damage: 45, bone: 'RightFoot', kb: 3.5 }], comboWindow: 0.60 },
@@ -39,6 +43,10 @@ export class CombatSystem {
       martelo:        { hits: [{ hitTime: 0.18, damage: 40, bone: 'RightFoot', kb: 3.8 }], comboWindow: 0.55 },
       pontera:        { hits: [{ hitTime: 0.20, damage: 35, bone: 'LeftFoot',  kb: 2.8 }], comboWindow: 0.50 },
     };
+
+    // Sequência de chutes AÉREOS (ataque enquanto pula → chute voador "bala")
+    this._airChain = ['rising_flying', 'flying_fist', 'lunge_spin', 'spartan_kick'];
+    this._airIdx   = 0;
 
     const scene = this.playerMesh.getScene();
     
@@ -94,9 +102,20 @@ export class CombatSystem {
   _executeAttack(type) {
     this.stateMachine.setState("attacking");
 
-    const attackAnim = type === 'kick'
-      ? this.comboSystem.getNextKick()
-      : this.comboSystem.getNextPunch();
+    // ── Ataque AÉREO → chute voador "bala" ──────────────────────────
+    //  No ar (pulando), soco OU chute viram um chute voador. Cicla entre
+    //  os voadores carregados pra variar.
+    const _pl = this.playerMesh?._playerRef;
+    const airborne = _pl && !_pl.isGrounded;
+    let attackAnim;
+    if (airborne) {
+      this._airIdx = (this._airIdx || 0) % this._airChain.length;
+      attackAnim = this._airChain[this._airIdx++];
+    } else {
+      attackAnim = type === 'kick'
+        ? this.comboSystem.getNextKick()
+        : this.comboSystem.getNextPunch();
+    }
 
     const data = this.attackData[attackAnim];
     if (!data) {
