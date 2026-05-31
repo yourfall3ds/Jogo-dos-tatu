@@ -800,6 +800,9 @@ export class Player {
               } else {
                 this.animCtrl.updateLocomotion(speed / 11);
               }
+            } else if (this.velY < -8 && this.animLib.has('falling')) {
+              // CAINDO de verdade (descendo rápido) → anim de queda
+              this.animCtrl.play('falling', { loop: true, speed: 1.0, fade: 0.18 });
             } else {
               this.animCtrl.play("jump", { loop: true });
             }
@@ -876,10 +879,9 @@ export class Player {
     this._applyTPSAim(dt);
 
     // ── 11. Morte por QUEDA ────────────────────────────────────────────
-    // Caiu do mapa (passou ~3m abaixo do chão) → morte por queda: CONTINUA
-    // despencando (mostra a anim de caindo) e a tela de morte aparece. Só
-    // renasce no topo ao clicar Renascer.
-    if (this.mesh.position.y < -3 && !this._dead) {
+    // Cai uns ~50m (chão em y≈0 → kill plane em -50) antes de morrer — dá
+    // tempo de ver a queda. A anim de "caindo" já toca durante o trajeto.
+    if (this.mesh.position.y < -50 && !this._dead) {
       this._startDeath('fall');
     }
     this._hitFlashT    = Math.max(0, this._hitFlashT - dt);
