@@ -436,6 +436,8 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
         p.comboSystem  = new ComboSystem();
         p.impactSystem = new ImpactEffectSystem(scene);
         p.combatSystem = new CombatSystem(p.animCtrl, p.stateMachine, p.comboSystem, p.impactSystem, p.mesh);
+        const { DamageNumbers } = await import('./game/combat/DamageNumbers.js');
+        window._dmgNumbers = new DamageNumbers(scene);
         
         // Jogador começa com arma na mão
         p.stateMachine.equipWeapon();

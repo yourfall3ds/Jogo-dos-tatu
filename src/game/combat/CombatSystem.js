@@ -272,7 +272,8 @@ export class CombatSystem {
             if (animName.includes('punch')) this.impactSystem.spawnPunchImpact(impactPos, true);
             else                            this.impactSystem.spawnKickImpact(impactPos, true);
           }
-          console.log(`[Colisão Física - ${hitDef.bone}] POW! Dano: ${hitDef.damage}`);
+          // Número de dano flutuante (golpes pesados = crit vermelho)
+          window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: (hitDef.kb || 1) >= 3 });
         }
         return;
       }

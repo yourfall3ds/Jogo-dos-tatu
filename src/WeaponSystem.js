@@ -417,7 +417,10 @@ export class WeaponSystem {
 
       // ── Inimigo ──────────────────────────────────────────────────
       if (hit.pickedMesh?._enemyRef) {
-        hit.pickedMesh._enemyRef.takeDamage(this.getCurrentWeapon().damage, dir);
+        const dmg = this.getCurrentWeapon().damage;
+        hit.pickedMesh._enemyRef.takeDamage(dmg, dir);
+        // Número de dano flutuante no ponto do tiro
+        window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, { color: '#ffffff' });
       }
 
       // ── Objeto dinâmico (_gameObject = GameObject) ───────────────
