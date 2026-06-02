@@ -466,22 +466,23 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
         player.attachCurrentWeaponToAnimator();
       }, label: 'Rifle…' },
     
-    // Props de gameplay
-    { key: 'crate',        done: ms => level.replaceObstacles('crate', ms),       label: 'Caixotes…' },
-    { key: 'ammoBox',      done: ms => level.replaceObstacles('ammoBox', ms),     label: 'Caixas de munição…' },
-    { key: 'medkit',       done: ms => level.spawnPickups('medkit', ms),          label: 'Medkits…' },
-    // Decoração Sketchfab
-    { key: 'neonSign',     done: ms => level.placeDecor('neonSign', ms),          label: 'Placas neon…' },
-    { key: 'mushrooms',    done: ms => level.placeDecor('mushrooms', ms),         label: 'Cogumelos…' },
-    { key: 'crystals',     done: ms => level.placeDecor('crystals', ms),          label: 'Cristais…' },
-    { key: 'industrial',   done: ms => level.placeDecor('industrial', ms),        label: 'Pack industrial…' },
-    { key: 'sciTube',      done: ms => level.placeDecor('sciTube', ms),           label: 'Tubos científicos…' },
-    { key: 'crystalAltar', done: ms => level.placeDecor('crystalAltar', ms),      label: 'Altar de cristal…' },
-    // Props Meshy AI únicos
-    { key: 'obelisk',      done: ms => level.placeDecor('obelisk', ms),           label: 'Obeliscos rúnicos…' },
-    { key: 'gargoyle',     done: ms => level.placeDecor('gargoyle', ms),          label: 'Fontes gargoyle…' },
-    { key: 'runicHare',    done: ms => level.placeDecor('runicHare', ms),         label: 'Lebres rúnicas…' },
-    
+    // ── Props/decoração automáticos DESATIVADOS ──────────────────────
+    //  Antes nasciam espalhados (pequenos) no boot. Removidos da cena pra
+    //  começar LIMPO. Continuam na Biblioteca de Assets (categoria decor)
+    //  pra colocar manualmente quando quiser. Reativar = descomentar.
+    // { key: 'crate',        done: ms => level.replaceObstacles('crate', ms),       label: 'Caixotes…' },
+    // { key: 'ammoBox',      done: ms => level.replaceObstacles('ammoBox', ms),     label: 'Caixas de munição…' },
+    // { key: 'medkit',       done: ms => level.spawnPickups('medkit', ms),          label: 'Medkits…' },
+    // { key: 'neonSign',     done: ms => level.placeDecor('neonSign', ms),          label: 'Placas neon…' },
+    // { key: 'mushrooms',    done: ms => level.placeDecor('mushrooms', ms),         label: 'Cogumelos…' },
+    // { key: 'crystals',     done: ms => level.placeDecor('crystals', ms),          label: 'Cristais…' },
+    // { key: 'industrial',   done: ms => level.placeDecor('industrial', ms),        label: 'Pack industrial…' },
+    // { key: 'sciTube',      done: ms => level.placeDecor('sciTube', ms),           label: 'Tubos científicos…' },
+    // { key: 'crystalAltar', done: ms => level.placeDecor('crystalAltar', ms),      label: 'Altar de cristal…' },
+    // { key: 'obelisk',      done: ms => level.placeDecor('obelisk', ms),           label: 'Obeliscos rúnicos…' },
+    // { key: 'gargoyle',     done: ms => level.placeDecor('gargoyle', ms),          label: 'Fontes gargoyle…' },
+    // { key: 'runicHare',    done: ms => level.placeDecor('runicHare', ms),         label: 'Lebres rúnicas…' },
+
     // Novo Sistema de Animação (Extração Dinâmica)
     { key: 'playerUnarmed', done: async (ms) => {
         const p = player;
@@ -541,7 +542,7 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
         p.setMouseCharacter(ms, [], shadowGen);
       }, label: 'Combo Violento…' },
 
-    { key: 'stoneBlock',   done: ms => level.placeDecor('stoneBlock', ms),        label: 'Pedras místicas…' },
+    // { key: 'stoneBlock',   done: ms => level.placeDecor('stoneBlock', ms),        label: 'Pedras místicas…' },  (desativado: começa limpo)
     // Criaturas decorativas
     { key: 'monsterPlant', done: ms => level.spawnEnemyPlants(ms),                 label: 'Plantas monstro…' },
     // 'cockatrice' removido — asset externo (Sketchfab) que não faz parte do jogo.
