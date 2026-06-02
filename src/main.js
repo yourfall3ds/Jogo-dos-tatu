@@ -45,6 +45,8 @@ import { initItemCatalog }      from './game/items/ItemCatalog.js';
 import { ColliderDebug }        from './game/debug/ColliderDebug.js';
 import { ThumbnailGen }         from './game/debug/ThumbnailGen.js';
 import { initPhysics }          from './game/physics/PhysicsWorld.js';
+import { DayNightCycle }        from './game/scene/DayNightCycle.js';
+import { GraphicsEnhancer }     from './game/scene/GraphicsEnhancer.js';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -188,18 +190,31 @@ async function init() {
   ambient.intensity   = 0.55;
   ambient.groundColor = new BABYLON.Color3(.20, .28, .18);
 
-  // ── Sombras ─────────────────────────────────────────────────────
-  const shadowGen = new BABYLON.ShadowGenerator(2048, sun);
-  shadowGen.useBlurExponentialShadowMap = true;
-  shadowGen.blurScale = 2;
-  shadowGen.normalBias = 0.02;        // reduz acne/cintilação de sombra
-  shadowGen.bias       = 0.0008;
-  shadowGen.darkness   = 0.35;
+  // ── Sombras do sol (frustum ortográfico MANUAL cobrindo a cena) ──
+  //  Mundo ~100x100. Frustum manual grande garante que TODOS os objetos
+  //  entrem no shadow map (autoUpdateExtends às vezes não enquadrava).
+  sun.position = new BABYLON.Vector3(40, 100, 40);
+  sun.autoUpdateExtends = false;
+  sun.orthoLeft = -80; sun.orthoRight = 80;
+  sun.orthoTop = 80;   sun.orthoBottom = -80;
+  sun.shadowMinZ = -150; sun.shadowMaxZ = 250;
 
-  // ── Névoa ────────────────────────────────────────────────────────
+  const shadowGen = new BABYLON.ShadowGenerator(2048, sun);
+  shadowGen.usePercentageCloserFiltering = true;   // bordas suaves (PCF)
+  shadowGen.filteringQuality = BABYLON.ShadowGenerator.QUALITY_HIGH;
+  shadowGen.normalBias = 0.02;
+  shadowGen.bias = 0.001;
+  shadowGen.darkness = 0.4;
+  window._shadowGen = shadowGen;
+
+  // ── Névoa (leve — só pra dar profundidade no horizonte) ──────────
   scene.fogMode    = BABYLON.Scene.FOGMODE_EXP2;
-  scene.fogDensity = 0.007;
+  scene.fogDensity = 0.0018;
   scene.fogColor   = new BABYLON.Color3(.58, .70, .92);
+
+  // ── Ciclo dia/noite (sol, lua, fases, céu HD) ────────────────────
+  const dayNight = new DayNightCycle(scene, sun, ambient, shadowGen);
+  window._dayNight = dayNight;
 
   // ── Sistemas base ────────────────────────────────────────────────
   const input  = new InputManager(canvas);
@@ -208,6 +223,11 @@ async function init() {
   level.player     = player;   // inimigos precisam de referência ao jogador
   player.onRespawn = () => level.resetEnemies();  // reseta posição dos inimigos ao respawnar
   const hud    = new HUD(player);
+
+  // ── Acabamento gráfico (bloom, tonemapping, SSAO, glow, FXAA) ─────
+  const gfx = new GraphicsEnhancer(scene, player.camera, engine);
+  window._gfx = gfx;
+  dayNight.gfx = gfx;   // o ciclo ajusta exposure/bloom conforme a hora
 
   // ── Weapon Editor (criado ANTES dos GLBs para configs salvas serem aplicadas) ─
   const weaponEditor = new WeaponEditor(player.weapon, scene);
@@ -391,6 +411,7 @@ async function init() {
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
     navMesh.update(dt);
     dropSystem.update(dt, player.mesh?.position);
+    dayNight.update(dt);
     charSelectUI.update();
     buildMode.update();
     rpgHUD.update(dt);
@@ -562,6 +583,11 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
 
   // Aplica transforms salvos do SceneEditor sobre os GLBs recém carregados
   window._sceneEditor?.applyAllSaved();
+
+  // Sombras: garante que TODA superfície (chão, paredes, plataformas) receba
+  //  a sombra do sol — corrige luzes FX consumindo slots e maxLights baixo.
+  try { gfx.fixSceneShadows(); } catch (_) {}
+  setTimeout(() => { try { gfx.fixSceneShadows(); } catch (_) {} }, 400);
 
   // POR ÚLTIMO: garante a arma na mão. Roda DEPOIS do applyAllSaved (que
   //  podia jogar o viewmodel no chão ao casar nome genérico __root__).

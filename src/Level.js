@@ -151,7 +151,9 @@ export class Level {
     b.material       = mat;
     b.checkCollisions = true;   // ← colisão nativa (coexiste durante a migração)
     b.receiveShadows = true;
-    this.shadowGen.addShadowCaster(b);
+    // Chão/elevações de terreno NÃO projetam sombra (só recebem) — senão o
+    //  plano gigante atrapalha o CSM. Paredes/plataformas continuam casters.
+    if (!/^(ground|bump_)/.test(name)) this.shadowGen.addShadowCaster(b);
     // ── Corpo ESTÁTICO Havok (chão/parede/plataforma firmes) ──────────
     if (this.scene.getPhysicsEngine?.()) {
       try { new BABYLON.PhysicsAggregate(b, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.6, restitution: 0.1 }, this.scene); }

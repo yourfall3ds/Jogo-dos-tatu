@@ -541,7 +541,6 @@ export class Player {
           this.velY = wjVel.y;
           this.weapon.applyWallJumpTilt(wjVel.x >= 0 ? 14 : -14);
           this.animator?.onWallJump();
-          this.sounds?.playNow?.('walljump', 0.8);
         }
       }
     }
