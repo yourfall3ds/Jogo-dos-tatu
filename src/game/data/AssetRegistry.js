@@ -108,10 +108,29 @@ export const AssetRegistry = {
     bushFlowers: NATURE + 'Bush_Flowers.gltf',
   },
 
+  // ── Decoração / props externos (Sketchfab + Meshy) ──────────────
+  //  Antes só eram colocados hardcoded na cena (placeDecor/spawnPickups) e
+  //  NÃO apareciam na biblioteca. Agora registrados → editáveis/spawnáveis.
+  decor: {
+    medkit:       'assets/itens 3d/ExternalAssets/Sketchfab/Items/medkit_pickup.glb',
+    ammoBox:      'assets/itens 3d/ExternalAssets/Sketchfab/Items/ammo_box.glb',
+    neonSign:     'assets/itens 3d/ExternalAssets/Sketchfab/Props/neon_bar_sign.glb',
+    sciTube:      'assets/itens 3d/ExternalAssets/Sketchfab/Props/science_tube.glb',
+    industrial:   'assets/itens 3d/ExternalAssets/Sketchfab/Props/low_poly_industrial_pack.glb',
+    mushrooms:    'assets/itens 3d/ExternalAssets/Sketchfab/RiftfallTheme/Environment/stylized_mushrooms_low_poly.glb',
+    crystals:     'assets/itens 3d/ExternalAssets/Sketchfab/RiftfallTheme/Environment/stylized_crystal_gems_pack.glb',
+    pedestal:     'assets/itens 3d/ExternalAssets/Sketchfab/RiftfallTheme/Teleporters/stone_pedestal_teleporter_base.glb',
+    crystalAltar: 'assets/itens 3d/ExternalAssets/Sketchfab/RiftfallTheme/Teleporters/crystal_altar.glb',
+    obelisk:      'assets/itens 3d/assets/Meshy_AI_Azure_Runic_Obelisk_0521180533_texture.glb',
+    gargoyle:     'assets/itens 3d/assets/Meshy_AI_Gargoyle_Fountain_0521180631_texture.glb',
+    runicHare:    'assets/itens 3d/assets/Meshy_AI_The_Runic_Hare_0521180553_texture.glb',
+    stoneBlock:   'assets/itens 3d/assets/Meshy_AI_Mystical_Stone_Block_0521180612_texture.glb',
+  },
+
   path(category, id) { return this[category]?.[id] ?? null; },
   ids(category) {
     const cat = this[category];
     return cat ? Object.keys(cat).filter(k => typeof cat[k] === 'string') : [];
   },
-  categories() { return ['player', 'digimon', 'creature', 'weapon', 'item', 'nature']; },
+  categories() { return ['player', 'digimon', 'creature', 'weapon', 'item', 'nature', 'decor']; },
 };

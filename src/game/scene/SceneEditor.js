@@ -287,9 +287,21 @@ export class SceneEditor {
   applyAllSaved() {
     let n = 0, g = 0;
     for (const [name, t] of Object.entries(this._saved)) {
+      // NUNCA aplica em nomes GENÉRICOS (__root__, etc): vários GLBs usam
+      //  esse nome e o getMeshByName pegaria o errado (jogava a ARMA no chão).
+      if (/^(__root__|root|node0|Mesh\d*|Cube|Armature)$/i.test(name)) continue;
       const m = this.scene.getMeshByName(name)
              ?? this.scene.getNodeByName(name);
       if (!m) continue;
+      // pula se o mesh pertence à ARMA (viewmodel) ou ao PLAYER — não são
+      //  objetos de cena editáveis e seriam corrompidos.
+      let node = m, skip = false;
+      while (node) {
+        const nm = node.name || '';
+        if (/weaponRoot|fpsCam|tps_|playerCapsule/i.test(nm)) { skip = true; break; }
+        node = node.parent;
+      }
+      if (skip) continue;
       if (t.p) m.position.set(t.p[0], t.p[1], t.p[2]);
       if (t.r) m.rotation.set(t.r[0], t.r[1], t.r[2]);
       if (t.s) m.scaling.set(t.s[0], t.s[1], t.s[2]);

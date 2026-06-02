@@ -186,6 +186,7 @@ export class AssetGroups {
       weapon:   'arma',
       creature: 'inimigo',
       digimon:  'inimigo',
+      decor:    'decorativo',
     };
     // Itens são variados → mapeia pelo nome
     const itemGroup = (id) => {
@@ -194,12 +195,20 @@ export class AssetGroups {
       if (/crate|barrel|torch|dummy/i.test(id)) return 'props';
       return 'props';
     };
+    // Decoração: alguns viram consumível/munição, resto decorativo
+    const decorGroup = (id) => {
+      if (/medkit/i.test(id))  return 'consumivel';
+      if (/ammoBox/i.test(id)) return 'props';
+      return 'decorativo';
+    };
 
     const out = [];
-    for (const cat of ['item', 'nature', 'weapon', 'creature', 'digimon']) {
+    for (const cat of ['item', 'nature', 'weapon', 'creature', 'digimon', 'decor']) {
       for (const id of AssetRegistry.ids(cat)) {
         const aid = `builtin_${cat}_${id}`;
-        const dflt = cat === 'item' ? itemGroup(id) : (catToGroup[cat] || null);
+        const dflt = cat === 'item'  ? itemGroup(id)
+                   : cat === 'decor' ? decorGroup(id)
+                   : (catToGroup[cat] || null);
         out.push({
           id:       aid,
           name:     id,

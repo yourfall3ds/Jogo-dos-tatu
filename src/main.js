@@ -557,15 +557,15 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
   // Restaura máquinas salvas
   await _restoreMachines(scene);
 
-  // Tudo carregado → garante a arma na mão (corrige race de boot onde o
-  //  viewmodel ficava solto/deitado no mundo).
-  try { player._updateWeaponVisibility?.(); } catch (_) {}
-  setTimeout(() => { try { player._updateWeaponVisibility?.(); } catch (_) {} }, 300);
-
   setLoadingUI(100);
 
   // Aplica transforms salvos do SceneEditor sobre os GLBs recém carregados
   window._sceneEditor?.applyAllSaved();
+
+  // POR ÚLTIMO: garante a arma na mão. Roda DEPOIS do applyAllSaved (que
+  //  podia jogar o viewmodel no chão ao casar nome genérico __root__).
+  try { player._updateWeaponVisibility?.(); } catch (_) {}
+  setTimeout(() => { try { player._updateWeaponVisibility?.(); } catch (_) {} }, 300);
 }
 
 // ════════════════════════════════════════════════════════════════
