@@ -2,6 +2,7 @@ import { PistolaBucaneira } from './game/weapons/PistolaBucaneira.js';
 import { RiflePesado }      from './game/weapons/RiflePesado.js';
 import { EspadaPaladin }    from './game/weapons/EspadaPaladin.js';
 import { EspadaZweihander } from './game/weapons/EspadaZweihander.js';
+import { Chibata }          from './game/weapons/Chibata.js';
 import { LocalDB }           from './game/data/LocalDB.js';
 
 /**
@@ -27,7 +28,11 @@ export class WeaponSystem {
     this.slot4 = new EspadaZweihander(scene);
     this.slot4.id = 'sword_zweihander';
 
-    this.weapons = [this.slot1, this.slot2, this.slot3, this.slot4];
+    // ── Chibata (whip) ──
+    this.slot5 = new Chibata(scene);
+    this.slot5.id = 'chibata';
+
+    this.weapons = [this.slot1, this.slot2, this.slot3, this.slot4, this.slot5];
     this.currentWeaponIndex = 0;
 
     // Stats atuais (serão sobrescritos pelo init())

@@ -55,6 +55,8 @@ import { BloodFX }             from './game/combat/BloodFX.js';
 import { WaterSystem }         from './game/scene/WaterSystem.js';
 import { SkillMapExtras }      from './game/scene/SkillMapExtras.js';
 import { SettingsUI }          from './game/ui/SettingsUI.js';
+import { MusicSystem }         from './game/audio/MusicSystem.js';
+import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -326,7 +328,13 @@ async function init() {
   skillExtras.build();
   window._skillExtras = skillExtras;
 
-  const settingsUI = new SettingsUI(bloodFX);
+  // ── Music + Mute button (música começa APENAS no JOGAR) ──
+  const musicSystem = new MusicSystem();
+  window._musicSystem = musicSystem;
+  const musicMuteBtn = new MusicMuteButton(musicSystem);
+  window._musicMuteBtn = musicMuteBtn;
+
+  const settingsUI = new SettingsUI(bloodFX, musicSystem);
   window._settingsUI = settingsUI;
 
   // ── Diretor de combate: povoa a fase com inimigos (tecla H) ───────
@@ -494,6 +502,7 @@ async function init() {
     bloodFX.update(dt);
     waterSystem.update(dt, player);
     settingsUI.update(input);
+    musicMuteBtn.update(input);
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
     navMesh.update(dt);
     dropSystem.update(dt, player.mesh?.position);
@@ -585,6 +594,12 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     { key: 'sword_zweihander', done: ms => {
         player.weapon.setGLBWeapon(ms, 'sword_zweihander');
       }, label: 'Zweihander…' },
+    // ── Chibata (procedural — sem GLB externo) ──
+    { key: '_procedural_chibata', done: async () => {
+        const { Chibata } = await import('./game/weapons/Chibata.js');
+        const result = Chibata.buildMesh(scene);
+        player.weapon.setGLBWeapon(result.meshes, 'chibata');
+      }, label: 'Chibata 🐭…' },
     
     // ── Props/decoração automáticos DESATIVADOS ──────────────────────
     //  Antes nasciam espalhados (pequenos) no boot. Removidos da cena pra
@@ -674,6 +689,11 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
   for (let i = 0; i < queue.length; i++) {
     const item = queue[i];
     setLoadingUI(Math.round((i / queue.length) * 100), item.label);
+    if (item.key.startsWith('_procedural_')) {
+      // Construção procedural — sem download, chama done() direto
+      try { await item.done(); } catch (e) { console.warn('[proc]', item.key, e.message); }
+      continue;
+    }
     const meshes = await loader.load(item.key);
     if (meshes) await item.done(meshes);
   }
@@ -705,6 +725,8 @@ window.startGame = function () {
   if (_engineMode) window.exitEngineMode();
   window._gameInput?.activate();
   setFocusUI(true);
+  // ── INICIA A MÚSICA agora (clique do usuário libera autoplay) ──
+  window._musicSystem?.start();
 };
 
 window.toggleFocus = function () {

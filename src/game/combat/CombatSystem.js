@@ -247,6 +247,16 @@ export class CombatSystem {
     this._hitLanded = false;
     this._playSwingSound(attackAnim);
 
+    // CHIBATA: dispara a animação procedural do lash (chicoteio)
+    const pl_ = this.playerMesh?._playerRef;
+    const cw_ = pl_?.weapon?.getCurrentWeapon?.();
+    if (cw_?.id === 'chibata' && cw_.triggerLash) {
+      const fpsRoot = pl_.weapon._weaponMeshes?.chibata;
+      const tpsRoot = pl_.weapon._tpsMeshes?.chibata;
+      if (pl_._tpsMode && tpsRoot) cw_.triggerLash(tpsRoot);
+      else if (fpsRoot) cw_.triggerLash(fpsRoot);
+    }
+
     // Timing de cada hit (escala com a velocidade da animação)
     let lastHitTime = 0;
     data.hits.forEach(hitDef => {
@@ -303,6 +313,15 @@ export class CombatSystem {
   _playImpactSound(isKick, critLevel = 0) {
     const snd = this.playerMesh?._playerRef?.sounds;
     if (!snd) return;
+
+    // CHIBATA → som CHIBATADA SEMPRE no impacto, ignora tier de crit
+    const pl = this.playerMesh?._playerRef;
+    const curW = pl?.weapon?.getCurrentWeapon?.();
+    if (curW?.id === 'chibata' && curW.isMelee) {
+      snd.playNow('chibatada', 1.0);
+      return;
+    }
+
     let id;
     if (isKick) {
       // chute: normal = chute medio · crit = Golpe Critico forte (manda longe)

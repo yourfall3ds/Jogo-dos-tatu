@@ -790,6 +790,17 @@ export class Player {
         ? Math.atan2(moveDir.x, moveDir.z)
         : null;
 
+      // Update do chicote (Chibata) — anima o lash quando equipada
+      if (this.weapon) {
+        const cw = this.weapon.getCurrentWeapon?.();
+        if (cw?.id === 'chibata' && cw.updateLash) {
+          const fpsRoot = this.weapon._weaponMeshes?.chibata;
+          const tpsRoot = this.weapon._tpsMeshes?.chibata;
+          if (this._tpsMode && tpsRoot) cw.updateLash(dt, tpsRoot);
+          else if (fpsRoot) cw.updateLash(dt, fpsRoot);
+        }
+      }
+
       // Prioridade para o novo sistema dinâmico se carregado
       if (this.animLib && this.animCtrl && this.animLib.has('idle')) {
         // Tick do crossfade por peso (suaviza transições — tira o "robótico")

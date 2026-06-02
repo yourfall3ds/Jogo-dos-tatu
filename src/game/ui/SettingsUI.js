@@ -15,8 +15,9 @@ const BLOOD_INFO = {
 };
 
 export class SettingsUI {
-  constructor(bloodFX) {
+  constructor(bloodFX, musicSystem = null) {
     this.bloodFX = bloodFX;
+    this.music = musicSystem;
     this._visible = false;
     this._wasO = false;
     this._build();
@@ -41,6 +42,11 @@ export class SettingsUI {
       <div style="padding:18px 18px 12px; border-bottom:1px solid #1a1a2a;">
         <div style="font-size:11px;color:#ff5050;font-weight:bold;letter-spacing:2px;margin-bottom:10px;">🩸 SANGUE</div>
         <div id="blood-options"></div>
+      </div>
+
+      <div style="padding:18px 18px 12px; border-bottom:1px solid #1a1a2a;">
+        <div style="font-size:11px;color:#ffd86a;font-weight:bold;letter-spacing:2px;margin-bottom:10px;">♪ MÚSICA</div>
+        <div id="music-controls"></div>
       </div>
 
       <div style="padding:18px;border-bottom:1px solid #1a1a2a;">
@@ -73,6 +79,52 @@ export class SettingsUI {
     this._el = el;
     el.querySelector('#set-close').onclick = () => this.hide();
     this._renderBlood();
+    this._renderMusic();
+  }
+
+  _renderMusic() {
+    const c = this._el.querySelector('#music-controls');
+    if (!c) return;
+    if (!this.music) {
+      c.innerHTML = '<div style="color:#888;font-size:11px;">Sistema de música indisponível.</div>';
+      return;
+    }
+    const vol = Math.round(this.music.getVolume() * 100);
+    const muted = this.music.isMuted();
+    const started = this.music.isStarted();
+    const trackName = this.music.currentTrackName() || '—';
+
+    c.innerHTML = `
+      <div style="font-size:11px;color:#aaa;margin-bottom:8px;">
+        Status: <span style="color:${started ? '#7efa9a' : '#888'};font-weight:600;">${started ? (muted ? 'mudo' : 'tocando') : 'aguardando JOGAR'}</span>
+        ${started ? `<br><span style="color:#666;font-size:10px;">♪ ${trackName}</span>` : ''}
+      </div>
+      <label style="display:block;color:#ccc;font-size:10px;margin-bottom:4px;">VOLUME <span id="music-vol-val">${vol}%</span></label>
+      <input id="music-vol" type="range" min="0" max="100" value="${vol}"
+             style="width:100%;accent-color:#ffd86a;cursor:pointer;" />
+      <div style="display:flex;gap:6px;margin-top:10px;">
+        <button id="music-mute-toggle" style="flex:1;background:${muted ? '#5a1a1a' : '#1a3a1f'};border:1px solid ${muted ? '#a33' : '#3a8'};color:#fff;padding:6px;border-radius:5px;cursor:pointer;font-size:11px;">
+          ${muted ? '🔇 desmutar' : '🔊 mutar'}
+        </button>
+        <button id="music-skip" style="flex:1;background:#1a2a4f;border:1px solid #2a4a8f;color:#cde;padding:6px;border-radius:5px;cursor:pointer;font-size:11px;">⏭ próxima</button>
+      </div>
+    `;
+
+    const slider = c.querySelector('#music-vol');
+    const valSpan = c.querySelector('#music-vol-val');
+    slider.oninput = () => {
+      const v = parseInt(slider.value) / 100;
+      this.music.setVolume(v);
+      valSpan.textContent = slider.value + '%';
+    };
+    c.querySelector('#music-mute-toggle').onclick = () => {
+      this.music.setMuted(!this.music.isMuted());
+      this._renderMusic();
+    };
+    c.querySelector('#music-skip').onclick = () => {
+      this.music.next();
+      setTimeout(() => this._renderMusic(), 200);
+    };
   }
 
   _renderBlood() {

@@ -95,6 +95,10 @@ export class SoundManager {
       flyby           : 'assets/Sound FX/voos e rushs/Barulho do cara voando longe quando recebe um golpe forte.wav',
       // Coleta de drop (moeda/material)
       pickup_item     : 'assets/Sound FX/senzu/mordendo uma fruta.wav',
+      // CHIBATADA — som de impacto da arma Chibata (whip)
+      chibatada       : 'assets/Sound FX/CHIBATADA.mp3',
+      // Dash (sintetizado em runtime se faltar — fallback no WaterSystem é diferente)
+      dash            : 'assets/Sound FX/voos e rushs/jump.wav',
     };
 
     this._openDB();
