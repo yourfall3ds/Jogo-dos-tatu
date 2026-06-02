@@ -48,6 +48,7 @@ import { initPhysics }          from './game/physics/PhysicsWorld.js';
 import { DayNightCycle }        from './game/scene/DayNightCycle.js';
 import { GraphicsEnhancer }     from './game/scene/GraphicsEnhancer.js';
 import { GraphicsDebugPanel }   from './game/scene/GraphicsDebugPanel.js';
+import { TestArena }            from './game/scene/TestArena.js';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -191,28 +192,22 @@ async function init() {
   ambient.intensity   = 0.55;
   ambient.groundColor = new BABYLON.Color3(.20, .28, .18);
 
-  // ── Sombras do sol (frustum ortográfico MANUAL cobrindo a cena) ──
-  //  Mundo ~100x100. Frustum manual grande garante que TODOS os objetos
-  //  entrem no shadow map (autoUpdateExtends às vezes não enquadrava).
+  // ── Sombras do sol (Blur ESM — comprovado no exemplo oficial) ────
+  //  Frustum ortográfico APERTADO (40u) → resolução alta de sombra perto do
+  //  player. Sem isso, os ~80 casters espalhados pelo mapa explodiam o
+  //  auto-frustum e a sombra sumia (virava pixels invisíveis no shadow map).
+  //  O frustum SEGUE o player (atualizado no loop) pra cobrir onde ele está.
   sun.position = new BABYLON.Vector3(40, 100, 40);
   sun.autoUpdateExtends = false;
-  sun.orthoLeft = -80; sun.orthoRight = 80;
-  sun.orthoTop = 80;   sun.orthoBottom = -80;
-  sun.shadowMinZ = -150; sun.shadowMaxZ = 250;
+  sun.shadowMinZ = -120; sun.shadowMaxZ = 220;
+  sun.orthoLeft = -45; sun.orthoRight = 45;
+  sun.orthoTop = 45;   sun.orthoBottom = -45;
 
   const shadowGen = new BABYLON.ShadowGenerator(2048, sun);
-  //  Contact Hardening: sombra suave realista (oficial Babylon). PCF de
-  //  fallback se a GPU não suportar.
-  shadowGen.bias = 0.001;
-  shadowGen.normalBias = 0.02;
-  try {
-    shadowGen.useContactHardeningShadow = true;
-    shadowGen.contactHardeningLightSizeUVRatio = 0.04;
-  } catch (_) {
-    shadowGen.usePercentageCloserFiltering = true;
-    shadowGen.filteringQuality = BABYLON.ShadowGenerator.QUALITY_HIGH;
-  }
-  shadowGen.setDarkness(0.5);   // sombra bem visível (igual exemplo oficial)
+  shadowGen.useBlurExponentialShadowMap = true;
+  shadowGen.useKernelBlur = true;
+  shadowGen.blurKernel = 32;
+  shadowGen.setDarkness(0.45);
   window._shadowGen = shadowGen;
 
   // Helper de teste (rode window.testShadow() no console do jogo): cria um
@@ -253,6 +248,12 @@ async function init() {
   // Painel de calibração gráfica ao vivo (tecla F8)
   const gfxPanel = new GraphicsDebugPanel(gfx, dayNight, shadowGen, scene);
   window._gfxPanel = gfxPanel;
+
+  // Arena de teste limpa (sombras) — window.arena() ou tecla F9
+  const testArena = new TestArena(scene, player, shadowGen);
+  window._testArena = testArena;
+  window.arena = () => { testArena.toggle(); return testArena.active ? 'na arena' : 'voltou'; };
+  window._wasF9 = false;
 
   // ── Weapon Editor (criado ANTES dos GLBs para configs salvas serem aplicadas) ─
   const weaponEditor = new WeaponEditor(player.weapon, scene);
@@ -438,6 +439,10 @@ async function init() {
     dropSystem.update(dt, player.mesh?.position);
     dayNight.update(dt);
     gfxPanel.update();
+    // F9 → entra/sai da arena de teste de sombras
+    const f9 = input.isDown('F9');
+    if (f9 && !window._wasF9) testArena.toggle();
+    window._wasF9 = f9;
     charSelectUI.update();
     buildMode.update();
     rpgHUD.update(dt);

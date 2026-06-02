@@ -97,35 +97,24 @@ export class DayNightCycle {
       return dt;
     };
 
-    // Sol: disco quente com halo. NÃO infiniteDistance (senão cola na câmera
-    //  e o bloom estoura a tela). Fica longe no céu, tamanho moderado.
-    this.sunDisc = BABYLON.MeshBuilder.CreatePlane('sunDisc', { size: 34 }, this.scene);
+    // Sol/Lua = ESFERAS emissivas sólidas (sempre redondas de qualquer
+    //  ângulo). O plano billboard com alpha mostrava um TRIÂNGULO em ângulos
+    //  rasos — esfera resolve. Sem alpha, sem billboard.
+    this.sunDisc = BABYLON.MeshBuilder.CreateSphere('sunDisc', { diameter: 26, segments: 16 }, this.scene);
     const sm = new BABYLON.StandardMaterial('sunDiscMat', this.scene);
-    const sunTex = radialTex('sunTex', 255, 235, 170);
-    sm.emissiveColor = new BABYLON.Color3(1, 0.95, 0.75);
-    sm.diffuseTexture = sunTex; sm.opacityTexture = sunTex; sm.emissiveTexture = sunTex;
-    sm.disableLighting = true; sm.backFaceCulling = false;
-    sm.alphaMode = BABYLON.Engine.ALPHA_ADD;   // aditivo → halo suave
+    sm.emissiveColor = new BABYLON.Color3(1, 0.92, 0.65);
+    sm.diffuseColor = new BABYLON.Color3(0, 0, 0);
+    sm.disableLighting = true;
     this.sunDisc.material = sm;
-    this.sunDisc.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
     this.sunDisc.isPickable = false;
-    this.sunDisc.renderingGroupId = 0;
 
-    // Lua: disco frio com halo
-    this.moonDisc = BABYLON.MeshBuilder.CreatePlane('moonDisc', { size: 22 }, this.scene);
+    this.moonDisc = BABYLON.MeshBuilder.CreateSphere('moonDisc', { diameter: 18, segments: 16 }, this.scene);
     const mm = new BABYLON.StandardMaterial('moonDiscMat', this.scene);
-    const moonTex = radialTex('moonTex', 215, 230, 255);
-    mm.emissiveColor = new BABYLON.Color3(0.85, 0.9, 1.0);
-    mm.diffuseTexture = moonTex; mm.opacityTexture = moonTex; mm.emissiveTexture = moonTex;
-    mm.disableLighting = true; mm.backFaceCulling = false;
-    mm.alphaMode = BABYLON.Engine.ALPHA_ADD;
+    mm.emissiveColor = new BABYLON.Color3(0.82, 0.88, 1.0);
+    mm.diffuseColor = new BABYLON.Color3(0, 0, 0);
+    mm.disableLighting = true;
     this.moonDisc.material = mm;
-    this.moonDisc.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
     this.moonDisc.isPickable = false;
-
-    // Excluir sol/lua do GlowLayer (senão o glow + bloom estouram virando
-    //  aquele borrão branco). O brilho deles já vem do material aditivo.
-    this._excludeFromGlow = ['sunDisc', 'moonDisc'];
   }
 
   // ── Controle de tempo ────────────────────────────────────────────
