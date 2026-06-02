@@ -202,10 +202,13 @@ export class LobbyUI {
       const mapInfo = Object.values(MapCatalog).find((m) => m.id === meta.map);
       const mapName = mapInfo?.name || meta.map || 'default';
       const name = meta.name || ('Sala ' + r.roomId.slice(0, 6));
+      const modeIcon = meta.mode === 'BATTLE_ROYALE'
+        ? '<span style="color:#ffd54a;background:rgba(255,213,74,0.15);padding:1px 6px;border-radius:3px;font-size:0.65em;margin-left:4px;letter-spacing:1px;">BR</span>'
+        : '';
       row.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div style="font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">
-            ${_esc(name)}
+            ${_esc(name)}${modeIcon}
             ${meta.has_password ? '<span style="color:#ffcc00;font-size:0.8em;margin-left:4px;">🔒</span>' : ''}
           </div>
           <div style="font-size:0.78em;color:#7efa9a;font-weight:700;">${r.clients}/${r.maxClients}</div>
@@ -244,15 +247,9 @@ export class LobbyUI {
   }
 
   async _openCreate() {
-    const name = prompt('Nome da sala:', 'Sala de ' + this.auth.getNickname());
-    if (!name) return;
-    const maps = Object.entries(MapCatalog);
-    const list = maps.map(([k, v], i) => `${i + 1}. ${v.name}`).join('\n');
-    const choice = prompt(`Mapa:\n${list}\n\nDigite o número:`, '1');
-    const idx = Math.max(0, Math.min(maps.length - 1, parseInt(choice || '1') - 1));
-    const map = maps[idx][1].id || 'default';
-    const max = parseInt(prompt('Máximo de players (2-16):', '8')) || 8;
-
+    // Modal estilizado em vez de prompt() nativo
+    const config = await this._showCreateModal();
+    if (!config) return;
     try {
       if (this.cs.room) { try { await this.cs.leave(); } catch (_) {} }
       const session = await this.auth.getSupabase().auth.getSession();
@@ -261,13 +258,101 @@ export class LobbyUI {
       this.cs.setPlayerId(this.auth.getUserId());
       await this.cs.createRoom({
         token, nickname: this.auth.getNickname(), avatar_url: avatarUrl,
-        name, map, max_players: max, password: null,
+        name: config.name, map: config.map, max_players: config.max,
+        password: null, mode: config.mode,
       });
       this._refreshRoomView();
-      this._setStatus('sala criada', '#7efa9a');
+      this._setStatus(`sala criada (${config.mode})`, '#7efa9a');
     } catch (e) {
       this._setStatus('erro: ' + e.message, '#f55');
     }
+  }
+
+  _showCreateModal() {
+    return new Promise(resolve => {
+      const maps = Object.entries(MapCatalog);
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        position:fixed; inset:0; z-index:500; background:rgba(0,0,0,0.85);
+        display:flex; align-items:center; justify-content:center;
+        color:#dff5ff; font-family:'Segoe UI',monospace;
+      `;
+      modal.innerHTML = `
+        <div style="background:linear-gradient(180deg,#0a1a2a,#040810);
+                    border:1px solid rgba(126,239,196,0.5); border-radius:10px;
+                    padding:30px; width:520px; max-width:92vw;">
+          <div style="font:900 18px monospace; letter-spacing:3px; color:#2effb6; margin-bottom:18px;">
+            ＋ CRIAR SALA
+          </div>
+          <label style="display:block; font:700 11px monospace; opacity:0.6; letter-spacing:2px; margin-bottom:5px;">NOME</label>
+          <input id="cr-name" value="Sala de ${this.auth.getNickname()}" maxlength="40"
+                 style="width:100%; padding:9px 12px; background:rgba(0,0,0,0.6); border:1px solid rgba(126,239,196,0.3);
+                        color:#fff; border-radius:5px; font:inherit; margin-bottom:14px;">
+
+          <label style="display:block; font:700 11px monospace; opacity:0.6; letter-spacing:2px; margin-bottom:5px;">MODO</label>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:14px;">
+            <div data-mode="CLASSIC" class="mode-opt sel" style="
+              background:rgba(46,255,182,0.15); border:1px solid #2effb6; border-radius:5px;
+              padding:10px 12px; cursor:pointer; text-align:center;">
+              <div style="font:900 14px monospace;">⚔ CLASSIC</div>
+              <div style="font:600 10px monospace; opacity:0.7;">PvE + Boss</div>
+            </div>
+            <div data-mode="BATTLE_ROYALE" class="mode-opt" style="
+              background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.1); border-radius:5px;
+              padding:10px 12px; cursor:pointer; text-align:center;">
+              <div style="font:900 14px monospace;">🪂 BATTLE ROYALE</div>
+              <div style="font:600 10px monospace; opacity:0.7;">queda + zona + último vivo</div>
+            </div>
+          </div>
+
+          <label style="display:block; font:700 11px monospace; opacity:0.6; letter-spacing:2px; margin-bottom:5px;">MAPA</label>
+          <select id="cr-map" style="
+            width:100%; padding:9px 12px; background:rgba(0,0,0,0.6); border:1px solid rgba(126,239,196,0.3);
+            color:#fff; border-radius:5px; font:inherit; margin-bottom:14px;">
+            ${maps.map(([k, v]) => `<option value="${v.id || 'default'}">${v.name}</option>`).join('')}
+          </select>
+
+          <label style="display:block; font:700 11px monospace; opacity:0.6; letter-spacing:2px; margin-bottom:5px;">MÁX PLAYERS</label>
+          <input id="cr-max" type="number" min="2" max="60" value="8"
+                 style="width:100%; padding:9px 12px; background:rgba(0,0,0,0.6); border:1px solid rgba(126,239,196,0.3);
+                        color:#fff; border-radius:5px; font:inherit; margin-bottom:20px;">
+
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button id="cr-cancel" style="background:transparent; color:#fff; border:1px solid rgba(255,255,255,0.2);
+                    padding:9px 22px; border-radius:5px; cursor:pointer; font:700 12px monospace; letter-spacing:2px;">CANCELAR</button>
+            <button id="cr-ok" style="background:#2effb6; color:#04101a; border:0;
+                    padding:9px 26px; border-radius:5px; cursor:pointer; font:800 12px monospace; letter-spacing:2px;">CRIAR</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      let mode = 'CLASSIC';
+      modal.querySelectorAll('.mode-opt').forEach(opt => {
+        opt.onclick = () => {
+          mode = opt.getAttribute('data-mode');
+          modal.querySelectorAll('.mode-opt').forEach(o => {
+            o.style.background = 'rgba(0,0,0,0.4)';
+            o.style.border = '1px solid rgba(255,255,255,0.1)';
+          });
+          opt.style.background = 'rgba(46,255,182,0.15)';
+          opt.style.border = '1px solid #2effb6';
+          // BR sugere mapa "spaceStation" e max alto
+          if (mode === 'BATTLE_ROYALE') {
+            modal.querySelector('#cr-map').value = 'spaceStation';
+            const maxEl = modal.querySelector('#cr-max');
+            if (parseInt(maxEl.value) < 16) maxEl.value = 16;
+          }
+        };
+      });
+      modal.querySelector('#cr-cancel').onclick = () => { modal.remove(); resolve(null); };
+      modal.querySelector('#cr-ok').onclick = () => {
+        const name = modal.querySelector('#cr-name').value.trim() || 'Sala';
+        const map = modal.querySelector('#cr-map').value;
+        const max = Math.max(2, Math.min(60, parseInt(modal.querySelector('#cr-max').value) || 8));
+        modal.remove();
+        resolve({ name, map, max, mode });
+      };
+    });
   }
 
   _refreshRoomView() {
