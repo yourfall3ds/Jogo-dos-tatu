@@ -744,6 +744,8 @@ export class BuildMode {
   async _save() {
     // Quadros têm seu próprio bucket (placed_frames); filtra aqui
     try { await LocalDB.save('placed', this._placed.filter(p => p.record?.kind !== 'frame').map(p => p.record)); } catch (_) {}
+    // Mundo mudou (coloquei/movi/removi algo) → regera a navmesh (debounce).
+    window._navMesh?.markDirty?.();
   }
 
   _undo() {

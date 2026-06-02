@@ -6,6 +6,11 @@ export class CombatSystem {
     this.impactSystem = impactSystem;
     this.playerMesh = playerMesh;
 
+    // Limiar de CRÍTICO (knockback). Só golpes REALMENTE pesados (voadeiras,
+    // finalizadores) são crit → som especial + explosão + freeze forte + voar
+    // longe. O combo normal fica com o som consistente de impacto.
+    this.CRIT_KB = 4.5;
+
     // Hit timings para estilo hack-and-slash dinâmico
     // Suporta múltiplos hits por animação (ex: dois socos rápidos)
     this.attackData = {
@@ -45,7 +50,7 @@ export class CombatSystem {
       spartan_kick:  { hits: [{ hitTime: 0.20, damage: 42, bone: 'RightFoot', kb: 6.0 }], comboWindow: 0.55 },
 
       // ── CHUTES EXTRAS (pasta Chutes/ — ativados quando convertidos de FBX → GLB) ──
-      roundhouse:     { hits: [{ hitTime: 0.22, damage: 45, bone: 'RightFoot', kb: 3.5 }], comboWindow: 0.60 },
+      roundhouse:     { hits: [{ hitTime: 0.22, damage: 45, bone: 'RightFoot', kb: 5.0 }], comboWindow: 0.60 }, // 2º chute = crit launcher (manda longe)
       side_kick:      { hits: [{ hitTime: 0.18, damage: 35, bone: 'RightFoot', kb: 2.8 }], comboWindow: 0.50 },
       leg_sweep:      { hits: [{ hitTime: 0.25, damage: 28, bone: 'RightFoot', kb: 1.5 }], comboWindow: 0.45 }, // derruba
       inside_crescent:{ hits: [{ hitTime: 0.20, damage: 38, bone: 'RightFoot', kb: 3.0 }], comboWindow: 0.55 },
@@ -90,7 +95,9 @@ export class CombatSystem {
 
   lightAttack() {
     if (this.stateMachine.isAttacking()) {
-      this.comboSystem.registerPunch();
+      // Já passou o frame ativo → encadeia AGORA (clique = golpe imediato).
+      if (this._canCancel) { this._canCancel = false; this._executeAttack('punch'); }
+      else this.comboSystem.registerPunch();   // ainda no impacto → enfileira
       return;
     }
     if (!this.stateMachine.canAttack()) return;
@@ -99,7 +106,8 @@ export class CombatSystem {
 
   kickAttack() {
     if (this.stateMachine.isAttacking()) {
-      this.comboSystem.registerKick();
+      if (this._canCancel) { this._canCancel = false; this._executeAttack('kick'); }
+      else this.comboSystem.registerKick();
       return;
     }
     if (!this.stateMachine.canAttack()) return;
@@ -147,10 +155,10 @@ export class CombatSystem {
     const speed = 3.4 + crossBonus;
 
     this._lastAttackType = type;
-    this._executeNextAttack(attackAnim, data, speed);
+    this._executeNextAttack(attackAnim, data, speed, type === 'kick');
   }
 
-  _executeNextAttack(attackAnim, data, speed = 3.4) {
+  _executeNextAttack(attackAnim, data, speed = 3.4, isKick = false) {
     // Invalida qualquer timer de cancelamento do golpe anterior
     this._comboToken = (this._comboToken || 0) + 1;
     const token = this._comboToken;
@@ -167,6 +175,11 @@ export class CombatSystem {
     // a duração REAL da animação (mais abaixo) → toca completo e termina.
     this.animController.play(attackAnim, { loop: false, speed });
 
+    // Swing/whoosh: o golpe corta o ar. Se conectar, o _applyHit toca o som
+    // de IMPACTO por cima. (Só socos/chutes — finalizadores entram também.)
+    this._hitLanded = false;
+    this._playSwingSound(attackAnim);
+
     // Timing de cada hit (escala com a velocidade da animação)
     let lastHitTime = 0;
     data.hits.forEach(hitDef => {
@@ -174,21 +187,26 @@ export class CombatSystem {
       lastHitTime = Math.max(lastHitTime, t);
       setTimeout(() => {
         if (token === this._comboToken && this.stateMachine.isAttacking()) {
-          this._applyHit(hitDef, attackAnim);
+          this._applyHit(hitDef, attackAnim, isKick);
         }
       }, t);
     });
 
+    // (rastro do punho removido — VFX profissional/ghost virá depois)
+
     // ── Janela de cancelamento (cancel window) ──────────────────────
-    // Logo após o último hit conectar, se houver input no buffer já
-    // parte pro próximo golpe SEM esperar a animação inteira terminar.
-    // É isso que dá o ritmo seco/rápido de Dragon Ball.
-    const cancelAt = lastHitTime + 70;   // 70ms de "active frames" após o hit
+    // Assim que o hit conecta abre-se a janela: um clique no buffer JÁ parte
+    // pro próximo golpe (ritmo seco/preciso de Dragon Ball). Em vez de um
+    // único timer que lê o buffer, marcamos _canCancel=true e consumimos na
+    // hora — assim cada clique vira um golpe imediato (sem engasgo).
+    this._canCancel = false;
+    const cancelAt = lastHitTime + 40;   // abre logo após o impacto
     this._cancelTimer = setTimeout(() => {
       if (token !== this._comboToken) return;
       if (!this.stateMachine.isAttacking()) return;
+      this._canCancel = true;
       const next = this.comboSystem.consumeBuffer();
-      if (next) this._executeAttack(next);   // encadeia imediatamente
+      if (next) this._executeAttack(next);   // já tem clique na fila → encadeia
     }, cancelAt);
 
     // ── SAFETY: garante que o ataque termina ────────────────────────
@@ -203,9 +221,57 @@ export class CombatSystem {
     }, Math.max(250, animDur * 1000 + 120));
   }
 
-  _applyHit(hitDef, animName) {
+  // Som de SWING (golpe cortando o ar) — toca ao iniciar o golpe. Rotaciona
+  // ataque 1/2/3 pra não ficar repetitivo no combo.
+  _playSwingSound(animName) {
+    const snd = this.playerMesh?._playerRef?.sounds;
+    if (!snd) return;
+    this._swingIdx = ((this._swingIdx || 0) % 3) + 1;
+    snd.playNow('swing_' + this._swingIdx, 0.5);
+  }
+
+  // Som de IMPACTO (acertou alguém). Combo normal → som CONSISTENTE; só o
+  // CRÍTICO (golpe pesado) troca pro som especial. Chamado só ao CONECTAR.
+  // critLevel: 0 normal · 1 crítico · 2 super crítico
+  _playImpactSound(isKick, critLevel = 0) {
+    const snd = this.playerMesh?._playerRef?.sounds;
+    if (!snd) return;
+    let id;
+    if (isKick) {
+      // chute: normal = chute medio · crit = Golpe Critico forte (manda longe)
+      id = critLevel >= 1 ? 'kick_crit' : 'kick_med';
+    } else {
+      // soco: normal = soco quando acerta · crit = soco critico · super = Super critico
+      id = critLevel >= 2 ? 'punch_supercrit'
+         : critLevel === 1 ? 'punch_crit'
+         : 'punch_hit';
+    }
+    snd.playNow(id, 0.95);
+  }
+
+  _applyHit(hitDef, animName, isKick = false) {
     if (!this.playerMesh) return;
-    
+
+    // ── Nível de crítico ────────────────────────────────────────────
+    //  Chute: determinístico pela força (golpes pesados / 2º chute = crit que
+    //   manda longe). Soco: golpes pesados sempre critam; os leves têm CHANCE
+    //   de virar crítico (raro) ou super crítico (mais raro). 0/1/2.
+    const baseKb = hitDef.kb || 1;
+    let critLevel = 0;
+    if (baseKb >= 6)             critLevel = 2;
+    else if (baseKb >= this.CRIT_KB) critLevel = 1;
+    else if (!isKick) {
+      const r = Math.random();
+      if (r < 0.06)      critLevel = 2;   // super crítico (raro)
+      else if (r < 0.20) critLevel = 1;   // crítico
+    }
+    const isCrit = critLevel >= 1;
+
+    // Força efetiva: num crit garante o "voar longe" mesmo num golpe leve.
+    const kbEff = critLevel === 2 ? Math.max(baseKb, 5.5)
+                : critLevel === 1 ? Math.max(baseKb, 4.5)
+                : baseKb;
+
     const activeHitbox = this.limbHitboxes[hitDef.bone] || this.limbHitboxes['RightHand'];
     
     // Anexa as hitboxes aos ossos reais do Animator copiando a Posição Absoluta
@@ -247,7 +313,7 @@ export class CombatSystem {
     //  adicionamos "está NA FRENTE e dentro do ALCANCE" → soco/chute
     //  acertam de forma confiável (padrão de jogo de ação).
     const fwdFlat = moveDir.clone(); fwdFlat.y = 0; fwdFlat.normalize();
-    const range   = animName.includes('kick') ? 2.4 : 1.9;
+    const range   = isKick ? 2.4 : 2.15;
     const ARC_COS = 0.35;   // ~70° de meia-abertura
     const _inFront = (targetPos) => {
       const to = targetPos.subtract(currentPos); to.y = 0;
@@ -266,14 +332,23 @@ export class CombatSystem {
           hitSomething = true;
           const enemy = m._enemyRef;
           hitEnemies.add(enemy);
-          enemy.takeDamage(hitDef.damage, moveDir, hitDef.kb || 1.0);
+          // "launch" = só o CHUTE forte que lança longe (não soco, não crit normal).
+          //  É o que dispara o som espacial do cara voando.
+          const launch = isKick && critLevel >= 1;
+          enemy.takeDamage(hitDef.damage, moveDir, kbEff, launch);
+          // Som de IMPACTO (só uma vez por golpe, mesmo acertando vários)
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
           const impactPos = activeHitbox.getAbsolutePosition().clone();
           if (this.impactSystem) {
-            if (animName.includes('punch')) this.impactSystem.spawnPunchImpact(impactPos, true);
-            else                            this.impactSystem.spawnKickImpact(impactPos, true);
+            if (isKick) this.impactSystem.spawnKickImpact(impactPos, true);
+            else        this.impactSystem.spawnPunchImpact(impactPos, true);
           }
-          // Número de dano flutuante (golpes pesados = crit vermelho)
-          window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: (hitDef.kb || 1) >= 3 });
+          // Número de dano flutuante (crit = vermelho)
+          window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
+          // Hit-stop escalado: micro no normal · forte no crit · mais no super.
+          if (critLevel >= 2)      window._hitStop?.hit(0.14, { zoom: 0.13, flash: 0.42 });
+          else if (critLevel === 1) window._hitStop?.hit(0.10, { zoom: 0.09, flash: 0.30 });
+          else                      window._hitStop?.hit(0.035);
         }
         return;
       }
@@ -287,14 +362,15 @@ export class CombatSystem {
           hitPhysics.add(go);
           // Impulso forte na direção do golpe + leve "pra cima" (sensação de pancada).
           // Chute = mais forte que soco.
-          const power = (hitDef.kb || 1) * (animName.includes('kick') ? 11 : 7);
+          const power = kbEff * (isKick ? 11 : 7);
           const force = moveDir.scale(power);
-          force.y += animName.includes('kick') ? 4 : 2.5;
+          force.y += isKick ? 4 : 2.5;
           go.applyImpulse(force, activeHitbox.getAbsolutePosition());
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
           if (this.impactSystem) {
             const ip = activeHitbox.getAbsolutePosition().clone();
-            if (animName.includes('punch')) this.impactSystem.spawnPunchImpact(ip, true);
-            else                            this.impactSystem.spawnKickImpact(ip, true);
+            if (isKick) this.impactSystem.spawnKickImpact(ip, true);
+            else        this.impactSystem.spawnPunchImpact(ip, true);
           }
         }
       }
@@ -320,10 +396,10 @@ export class CombatSystem {
 
       if (hit?.hit && hit.pickedPoint) {
         if (this.impactSystem) {
-          if (animName.includes("punch")) {
-            this.impactSystem.spawnPunchImpact(hit.pickedPoint, true);
-          } else {
+          if (isKick) {
             this.impactSystem.spawnKickImpact(hit.pickedPoint, true);
+          } else {
+            this.impactSystem.spawnPunchImpact(hit.pickedPoint, true);
           }
         }
       }

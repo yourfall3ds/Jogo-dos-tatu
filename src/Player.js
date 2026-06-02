@@ -111,7 +111,18 @@ export class Player {
     this._hitFlashT = 0;
     this._armShootT = 0;   // timer da animação de tiro em TPS
     this.weapon.onHit   = () => { this._hitFlashT = .14; };
-    this.weapon.onFired = () => { this.animator?.onShoot(); this._armShootT = 0.28; };
+    this.weapon.onFired = () => {
+      this.animator?.onShoot(); this._armShootT = 0.28;
+      // Som POR TIRO (semi-auto). Automático usa loop (tratado no input).
+      const w = this.weapon.getCurrentWeapon?.();
+      if (w && !w.automatic) this.sounds?.playNow?.(w.fireSound || 'gun_pistol', 0.7);
+    };
+    // Reload: toca o som AJUSTANDO a velocidade pra casar com a duração da
+    //  recarga (reloadDur). Se o áudio for mais longo, acelera; mais curto,
+    //  desacelera — fica sincronizado com a animação.
+    this.weapon.onReload = (reloadDur) => {
+      this.sounds?.playReloadTimed?.('gun_reload', reloadDur, 0.8);
+    };
     this.weapon.onWeaponSwitched = (w) => {
       if (this.stateMachine) {
         this.stateMachine.isArmedFlag = true;
@@ -332,7 +343,7 @@ export class Player {
     // Só roda após JOGAR. Exceção: MORTO → continua atualizando (queda/anim/
     // câmera) mesmo sem pointer-lock, pra você ver a queda enquanto o cursor
     // fica livre pra clicar Renascer.
-    if (!this.input.gameActive && !this._dead) return;
+    if (!this.input.gameActive && !this._dead) { this._stopMgLoop(); this._stopFootsteps(); return; }
 
     // ── 1. Mouse look — funciona com ou sem pointer lock ─────────────
     const { dx, dy } = this.input.consumeMouseDelta();
@@ -357,11 +368,18 @@ export class Player {
     } else if (this._coyoteT > 0) {
       this._coyoteT -= dt;
     }
+
+    // Timer de QUEDA: conta há quanto tempo está caindo. A anim 'falling' só
+    // entra numa queda LONGA (não no pulo normal, que cai rápido e aterrissa).
+    if (!this.isGrounded && this.velY < -2) this._fallT = (this._fallT || 0) + dt;
+    else this._fallT = 0;
     this.groundedVisual = this.isGrounded || (this._coyoteT > 0 && this.velY <= 0.5);
 
     if (!this._wasGrounded && this.isGrounded && this.velY < -5) {
       this._landMag   = Math.min(Math.abs(this.velY), 25);
       this._landShake = 1.0;
+      // Som de aterrissagem (mais forte = queda maior)
+      this.sounds?.playNow?.('ground_hit', Math.min(1, 0.4 + this._landMag / 40));
     }
 
     // ── 3. Gravidade manual ──────────────────────────────────────────
@@ -514,6 +532,7 @@ export class Player {
     if (jumpPress) {
       if (this.isGrounded) {
         this.velY = this.JUMP_FORCE;
+        this.sounds?.playNow?.('jump', 0.7);
       } else {
         const wjVel = this.wallJump.tryWallJump();
         if (wjVel) {
@@ -522,6 +541,7 @@ export class Player {
           this.velY = wjVel.y;
           this.weapon.applyWallJumpTilt(wjVel.x >= 0 ? 14 : -14);
           this.animator?.onWallJump();
+          this.sounds?.playNow?.('walljump', 0.8);
         }
       }
     }
@@ -587,12 +607,22 @@ export class Player {
     //  Usa a CONTAGEM de cliques: mashing rápido (vários no mesmo frame)
     //  alimenta TODOS no combo, nada se perde.
     const lmbN = this.input.consumeClickCount();
-    if (lmbN > 0) {
-      const isArmed = this.stateMachine ? this.stateMachine.isArmedFlag : true;
-      if (!isArmed && this.combatSystem) {
-        for (let i = 0; i < lmbN; i++) this.combatSystem.lightAttack();
-      } else {
-        this.weapon.shoot();
+    const isArmed = this.stateMachine ? this.stateMachine.isArmedFlag : true;
+    const curW = this.weapon.getCurrentWeapon?.();
+    if (this._dead) {
+      this._stopMgLoop();
+    } else if (isArmed && curW?.automatic) {
+      // FULL-AUTO: SEGURA o botão → metralha (o fireRate controla a cadência).
+      if (this.input.isFireDown()) this.weapon.shoot();
+      this._updateMgLoop(curW);
+    } else {
+      this._stopMgLoop();
+      if (lmbN > 0) {
+        if (!isArmed && this.combatSystem) {
+          for (let i = 0; i < lmbN; i++) this.combatSystem.lightAttack();
+        } else {
+          this.weapon.shoot();   // semi-auto: 1 tiro por clique
+        }
       }
     }
 
@@ -800,8 +830,9 @@ export class Player {
               } else {
                 this.animCtrl.updateLocomotion(speed / 11);
               }
-            } else if (this.velY < -8 && this.animLib.has('falling')) {
-              // CAINDO de verdade (descendo rápido) → anim de queda
+            } else if (this._fallT > 0.65 && this.animLib.has('falling')) {
+              // QUEDA LONGA (caindo há >0.65s) → anim de queda. Pulo normal
+              // aterrissa antes disso, então fica em 'jump'.
               this.animCtrl.play('falling', { loop: true, speed: 1.0, fade: 0.18 });
             } else {
               this.animCtrl.play("jump", { loop: true });
@@ -871,6 +902,9 @@ export class Player {
     // Mira ADS só vale em FPS armado; em TPS a arma fica na mão (sem ADS de viewmodel)
     this.weapon.setAiming(this._aiming && !this._tpsMode);
     this.weapon.update(dt, moving, Math.hypot(this._vx, this._vz));
+
+    // ── Passos em LOOP (correndo no chão) ────────────────────────────
+    this._updateFootsteps(moving);
 
     // ── Aim procedural em TPS armado ─────────────────────────────────
     //  A pose da animação aponta a arma pro lado e não acompanha o pitch.
@@ -1075,6 +1109,7 @@ export class Player {
     if (type === 'fall') {
       // NÃO congela — deixa despencar mostrando a anim de queda.
       this._vx = 0; this._vz = 0;
+      this.sounds?.playNow?.('deathfall', 0.9);
       if (this.animCtrl && this.animLib?.has('falling')) {
         this.animCtrl.play('falling', { loop: true, speed: 1.0, fade: 0.08 });
       }
@@ -1250,6 +1285,55 @@ export class Player {
     // Sensibilidade reduzida ao mirar
     this.MOUSE_SENS = this._aiming ? 0.07 : 0.15;
     console.log(`[Aim] ${this._aiming ? 'ON' : 'OFF'}`);
+  }
+
+  // ── Loop de metralhadora: liga enquanto está metralhando de verdade ──
+  //  (segurando + tem munição + não recarregando). Solta/acaba a bala/
+  //  recarrega → para. O fireRate da arma controla a cadência dos tiros;
+  //  o loop é só o som contínuo por cima.
+  _updateMgLoop(w) {
+    const id = w.fireSound || 'mg_loop';
+    const firing = this.input.isFireDown() && this.weapon.ammo > 0 && !this.weapon.reloading;
+    if (firing && !this._mgLoopOn) {
+      this._mgLoopOn = true; this._mgLoopId = id;
+      this.sounds?.startLoop?.(id, 0.8);
+    } else if (!firing && this._mgLoopOn) {
+      this._stopMgLoop();
+    }
+  }
+
+  _stopMgLoop() {
+    if (this._mgLoopOn) {
+      this._mgLoopOn = false;
+      this.sounds?.stopLoop?.(this._mgLoopId || 'mg_loop');
+    }
+  }
+
+  // ── Passos em LOOP enquanto corre no chão ──────────────────────────
+  //  Liga o loop de passos (concreto por padrão; troca por superfície depois)
+  //  quando movendo + no chão + sem atacar. A velocidade do áudio acompanha
+  //  o sprint (corre mais rápido = passos mais rápidos).
+  _updateFootsteps(moving) {
+    const onGround = this.isGrounded;
+    const attacking = this.stateMachine?.isAttacking?.();
+    const run = moving && onGround && !attacking && !this._dead && this._dashT <= 0;
+    const surfaceId = this._footstepSurface || 'run_concrete';
+
+    if (run) {
+      if (!this._footOn) {
+        this._footOn = true; this._footId = surfaceId;
+        this.sounds?.startLoop?.(surfaceId, 0.5);
+      }
+      // velocidade do áudio ~ velocidade real (sprint acelera os passos)
+      const rate = this._sprinting ? 1.35 : 1.0;
+      this.sounds?.setLoopRate?.(this._footId, rate);
+    } else if (this._footOn) {
+      this._stopFootsteps();
+    }
+  }
+
+  _stopFootsteps() {
+    if (this._footOn) { this._footOn = false; this.sounds?.stopLoop?.(this._footId || 'run_concrete'); }
   }
 
   // ── Ajuste SUTIL da arma em TPS pra acompanhar a mira ──────────────

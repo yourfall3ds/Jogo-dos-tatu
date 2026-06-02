@@ -520,9 +520,16 @@ export class Level {
     }
   }
 
-  /** Spawna plantas carnívoras como inimigos interativos */
-  spawnEnemyPlants(meshes) {
+  /** Spawna plantas carnívoras como inimigos interativos.
+   *  DESATIVADO por padrão: o MonsterPlant é o sistema ANTIGO (sem aggro,
+   *  sem navmesh, sem colisão — "vinha sempre e atravessava tudo"). Os
+   *  inimigos agora vêm do AnimatedEnemy (catálogo 'blossomon' = planta) via
+   *  a Horda (tecla H) / CatalogUI (K), que respeitam parede e aggro.
+   *  Passe { force: true } só pra debug do MonsterPlant legado. */
+  spawnEnemyPlants(meshes, { force = false } = {}) {
     if (!meshes?.length) return;
+    meshes[0].setEnabled(false);   // oculta o template
+    if (!force) return;            // não spawna o sistema antigo
 
     const spots = [
       new BABYLON.Vector3(-28, 0, 5),
@@ -530,21 +537,14 @@ export class Level {
       new BABYLON.Vector3(-20, 0,-30),
       new BABYLON.Vector3( 20, 0,-30),
     ];
-
     for (const pos of spots) {
       const enemy = new MonsterPlant(this.scene, this.shadowGen, meshes, pos);
       enemy.onAttack = (dmg, attackType, fromPos, kbForce = 0) => {
         if (this.player) this.player.takeDamage(dmg, attackType, fromPos, kbForce);
       };
-      // Roteamento de sons para o SoundManager do jogador
-      enemy.onPlaySound = (id) => {
-        this.player?.sounds?.playNow(id);
-      };
+      enemy.onPlaySound = (id) => { this.player?.sounds?.playNow(id); };
       this.enemies.push(enemy);
     }
-
-    // Oculta template original
-    meshes[0].setEnabled(false);
   }
 
   // ── Aplica impulso por proximidade (fallback quando _gameObject não existe) ─

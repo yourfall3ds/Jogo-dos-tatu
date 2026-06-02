@@ -1,6 +1,11 @@
 import { ASSET_PATHS } from '../../AssetLoader.js';
 import { MOVESETS } from './animationNames.js';
 import { AnimationLibrary } from './AnimationLibrary.js';
+import { EnemyCatalog } from '../data/EnemyCatalog.js';
+import { AssetRegistry } from '../data/AssetRegistry.js';
+
+// Encoda path com espaços/acentos pro fetch funcionar
+function _encPath(p) { return p ? p.split('/').map(s => encodeURIComponent(s)).join('/') : p; }
 
 export class AnimatorMode {
   constructor(engine, canvas) {
@@ -96,19 +101,26 @@ export class AnimatorMode {
     ui.querySelector('#anim-close-btn').onclick = () => window.closeAnimator();
 
     const charList = ui.querySelector('#char-list');
-    const categories = [
-        { label: 'Player', key: 'playerUnarmed' },
-        { label: 'Cocatriz', key: 'cockatrice' },
-        { label: 'Slime', key: 'monsterPlant' }
-    ];
-    
-    categories.forEach(item => {
-        const path = ASSET_PATHS[item.key];
-        if (!path) return;
+
+    // Lista de personagens: Player + TODOS os inimigos do catálogo (Digimons,
+    // planta Blossomon, etc) resolvidos pelo AssetRegistry. Assim o animator
+    // mostra cada bicho real do jogo (não mais a Cocatriz/asset externo).
+    const entries = [];
+    const playerPath = ASSET_PATHS.playerUnarmed;
+    if (playerPath) entries.push({ label: '🐭 Player', path: playerPath });
+
+    for (const [id, def] of Object.entries(EnemyCatalog)) {
+        const raw = AssetRegistry.path(def.category, def.asset);
+        if (!raw) continue;
+        const tierIcon = { rookie:'🥚', champion:'⭐', ultimate:'🌟', mega:'💫', boss:'👑' }[def.tier] || '👾';
+        entries.push({ label: `${tierIcon} ${def.name}`, path: _encPath(raw) });
+    }
+
+    entries.forEach(item => {
         const btn = document.createElement('button');
         btn.textContent = item.label;
         btn.style.cssText = "padding: 6px; background: #1a1a1a; border: 1px solid #333; color: #eee; cursor: pointer; font-size: 11px; border-radius: 4px;";
-        btn.onclick = () => this.loadModel(path, item.label);
+        btn.onclick = () => this.loadModel(item.path, item.label);
         charList.appendChild(btn);
     });
   }

@@ -92,6 +92,16 @@ export const AssetWishlist = {
     ],
   },
 
+  materiais: {
+    label: '💎 Moeda & Materiais (drops)',
+    items: [
+      { id: 'sp_coin',   name: 'Moeda',      prompt: 'golden coin with emblem, shiny currency, game pickup, floating' },
+      { id: 'mat_scrap', name: 'Sucata',     prompt: 'pile of scrap metal gears bolts and screws, salvage crafting material, game pickup' },
+      { id: 'mat_core',  name: 'DigiNúcleo', prompt: 'glowing blue digital core orb, cyber energy sphere with circuit patterns, sci-fi crafting material' },
+      { id: 'sp_shard',  name: 'Cristal',    prompt: 'glowing magic crystal shard, floating purple gem, collectible crafting material' },
+    ],
+  },
+
   especiais: {
     label: '⭐ Especiais',
     items: [

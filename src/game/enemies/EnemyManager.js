@@ -67,6 +67,7 @@ export class EnemyManager {
 
     enemy.onAttack = (dmg, type, fromPos, kb = 0) => this.player?.takeDamage?.(dmg, type, fromPos, kb);
     enemy.onPlaySound = (sid) => this.player?.sounds?.playNow?.(sid);
+    enemy.onPlaySpatial = (sid, node) => this.player?.sounds?.playSpatial?.(sid, node);
     enemy.onDeath = (e) => this.player?.onEnemyKilled?.(e);
 
     this.level.enemies.push(enemy);

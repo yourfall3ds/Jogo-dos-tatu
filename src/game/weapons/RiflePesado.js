@@ -14,6 +14,8 @@ export class RiflePesado {
     this.fireRate  = 0.09;   // automático rápido
     this.ammo     = 30;
     this.maxAmmo  = 30;
+    this.automatic = true;   // SEGURA o botão → metralha (som em loop)
+    this.fireSound = 'mg_loop';
 
     // ── Ajustes Visuais (FPS) ──────────────────────────────────────
     this.viewmodelScale    = 0.7400;

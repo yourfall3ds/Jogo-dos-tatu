@@ -5,6 +5,7 @@
 import { SKILL_DEFS } from '../skills/SkillSystem.js';
 import { STAT_KEYS, STAT_LABELS } from '../stats/PlayerStats.js';
 import { ItemCatalog } from '../items/ItemCatalog.js';
+import { LocalDB } from '../data/LocalDB.js';
 
 export class RpgHUD {
   constructor(player, stats, skills, inventory) {
@@ -102,6 +103,8 @@ export class RpgHUD {
 
     // Re-renderiza hotbar quando o inventário muda
     this.inventory.onChange(() => this._renderHotbar());
+    this._thumbs = {};
+    this._loadThumbs();      // carrega as fotos/thumbnails dos assets
     this._renderHotbar();
 
     // ── Painel de Stats/Inventário [I] ─────────────────────────────
@@ -168,6 +171,45 @@ export class RpgHUD {
   }
 
   // ── Renderiza os 9 slots da hotbar (consumíveis + imagens) ────────
+  // Thumbnails dos itens (fotos batidas dos assets), salvos em LocalDB
+  // 'asset_thumbnails' keyed por id de asset. Tenta casar pelo id do item,
+  // pelo def.asset (AssetRegistry) e pelo def.wishlist (árvore de assets).
+  async _loadThumbs() {
+    try {
+      this._thumbs   = await LocalDB.get('asset_thumbnails', {}) || {};
+      this._wishDone = await LocalDB.get('wishlist_done', {}) || {};
+      this._hbSig = null;        // força re-render da hotbar
+      this._renderHotbar?.();
+      if (this._panelOpen) this._renderBagGrid?.();
+    } catch (_) { this._thumbs = {}; this._wishDone = {}; }
+  }
+
+  _thumbFor(id, def) {
+    const t = this._thumbs;
+    if (!t) return null;
+    // As fotos ficam keyed por id de asset — builtin vem com prefixo
+    // 'builtin_item_'. Item gerado: wishlist → assetId (wishlist_done).
+    const a = def?.asset, w = def?.wishlist;
+    const genId = w && this._wishDone?.[w]?.assetId;   // foto do asset gerado
+    const keys = [
+      def?.thumb, genId, id, a, w,
+      a && `builtin_item_${a}`, id && `builtin_item_${id}`, w && `builtin_item_${w}`,
+    ];
+    for (const k of keys) if (k && t[k]) return t[k];
+    return null;
+  }
+
+  // Retorna o HTML do ícone: miniatura (thumbnail) se houver, senão o emoji.
+  _iconHTML(id, def, fit = 'contain') {
+    const emoji = (def && def.icon) || '📦';
+    const thumb = this._thumbFor(id, def);
+    if (thumb) {
+      return `<img src="${thumb}" alt="" style="width:100%;height:100%;object-fit:${fit};border-radius:4px"`
+        + ` onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${emoji}'}))">`;
+    }
+    return `<span>${emoji}</span>`;
+  }
+
   _renderHotbar() {
     if (!this._hotbarEls) return;
     // só re-renderiza se algo mudou (chamado todo frame)
@@ -190,7 +232,7 @@ export class RpgHUD {
         const qty = this.inventory.count(id);
         slot.style.borderColor = '#3a5a9f';
         slot.innerHTML = numLabel +
-          `<span>${def?.icon || '📦'}</span>` +
+          this._iconHTML(id, def, 'cover') +
           (qty > 1 ? `<span style="position:absolute;bottom:1px;right:3px;font-size:9px;color:#cde;">×${qty}</span>` : '');
       } else {
         slot.style.borderColor = '#2f3f5f';
@@ -205,6 +247,7 @@ export class RpgHUD {
     if (this._panelOpen) {
       window._gameInput?.deactivate?.();
       document.body.classList.remove('game-active');
+      this._loadThumbs();          // recarrega fotos novas dos assets
       this._renderPanel();
     } else {
       window._gameInput?.activate?.();
@@ -263,7 +306,7 @@ export class RpgHUD {
       } else if (id) {
         const def = ItemCatalog[id];
         const qty = this.inventory.count(id);
-        cell.innerHTML = num + `<span>${def?.icon || '📦'}</span>` + (qty > 1 ? `<span class="qty">${qty}</span>` : '');
+        cell.innerHTML = num + this._iconHTML(id, def) + (qty > 1 ? `<span class="qty">${qty}</span>` : '');
         cell.title = def?.name || id;
       } else {
         cell.innerHTML = num;
@@ -312,7 +355,7 @@ export class RpgHUD {
         cell.className = 'rpg-cell';
         cell.title = def.name;
         const qty = this.inventory.count(slot.id);
-        cell.innerHTML = `<span>${def.icon || '📦'}</span>` +
+        cell.innerHTML = this._iconHTML(slot.id, def) +
           (qty > 1 ? `<span class="qty">${qty}</span>` : '');
         cell.onclick = () => this._showItemDetail(slot, cell);
       }
@@ -367,7 +410,11 @@ export class RpgHUD {
       if (!def) return;
       const name = document.createElement('div');
       const eq = this.inventory.equippedWeapon === slot.id ? ' <span style="color:#5fc;font-size:10px">(equipada)</span>' : '';
-      name.innerHTML = `${def.icon || '📦'} <b style="color:#cde">${def.name}</b> ${this.inventory.count(slot.id) > 1 ? `×${this.inventory.count(slot.id)}` : ''}${eq}`;
+      const thumb = this._thumbFor(slot.id, def);
+      const head = thumb
+        ? `<img src="${thumb}" style="width:34px;height:34px;object-fit:contain;vertical-align:middle;border-radius:5px;margin-right:5px">`
+        : `${def.icon || '📦'} `;
+      name.innerHTML = `${head}<b style="color:#cde">${def.name}</b> ${this.inventory.count(slot.id) > 1 ? `×${this.inventory.count(slot.id)}` : ''}${eq}`;
       name.style.marginBottom = '6px';
       if (def.desc) name.innerHTML += `<div style="color:#678;font-size:10px;margin-top:2px">${def.desc}</div>`;
       detail.appendChild(name);

@@ -13,6 +13,8 @@ export class PistolaBucaneira {
     this.fireRate  = 0.28;
     this.ammo     = 12;
     this.maxAmmo  = 12;
+    this.automatic = false;        // semi-auto: 1 tiro por clique
+    this.fireSound = 'gun_pistol'; // som por tiro
 
     // ── Ajustes Visuais (FPS) — posição de QUADRIL (sem mirar) ─────
     this.viewmodelScale    = 0.50;

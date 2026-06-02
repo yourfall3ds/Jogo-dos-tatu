@@ -11,11 +11,12 @@
 
 export const EnemyCatalog = {
   // ════════ ROOKIE (Dungeon 1) ════════
-  filmon: {
-    name: 'Filmon', category: 'digimon', asset: 'filmon',
+  // Planta carnívora (asset 'filmon_-_digimon.glb' — nome real do bicho é Blossomon)
+  blossomon: {
+    name: 'Blossomon', category: 'digimon', asset: 'filmon',
     tier: 'rookie', behavior: 'walker', targetHeight: 1.4,
     stats: { hp: 45, damage: 8, moveSpeed: 4.5, attackRange: 2.4, attackCd: 1.8, kb: 6 },
-    evolvesTo: 'biyomon',
+    evolvesTo: null,
   },
   pigeon: {
     name: 'Pigeon Virus', category: 'creature', asset: 'pigeon',

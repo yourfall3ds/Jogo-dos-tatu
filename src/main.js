@@ -16,6 +16,8 @@ import { CombatSystem }        from './game/combat/CombatSystem.js';
 import { ComboSystem }         from './game/combat/ComboSystem.js';
 import { ImpactEffectSystem }  from './game/combat/ImpactEffectSystem.js';
 import { PlayerStateMachine }  from './game/player/PlayerStateMachine.js';
+import { CharacterSwapper }    from './game/player/CharacterSwapper.js';
+import { CharacterSelectUI }   from './game/ui/CharacterSelectUI.js';
 import { MOVESETS }            from './game/animation/animationNames.js';
 import { AnimatorMode }        from './game/animation/AnimatorMode.js';
 import { MonsterDebugMode }    from './game/debug/MonsterDebugMode.js';
@@ -25,6 +27,10 @@ import { SceneEditor }          from './game/scene/SceneEditor.js';
 import { sweepHeavyColliders }   from './game/scene/ColliderOptimizer.js';
 import { MoveListUI }           from './game/ui/MoveListUI.js';
 import { EnemyManager }         from './game/enemies/EnemyManager.js';
+import { CombatDirector }       from './game/enemies/CombatDirector.js';
+import { NavMeshManager }       from './game/enemies/NavMeshManager.js';
+import { DropSystem }           from './game/items/DropSystem.js';
+import { HitStop }              from './game/combat/HitStop.js';
 import { CatalogUI }            from './game/ui/CatalogUI.js';
 import { BuildMode }            from './game/build/BuildMode.js';
 import { MeshyPanel }           from './game/meshy/MeshyPanel.js';
@@ -221,6 +227,39 @@ async function init() {
   const catalogUI = new CatalogUI(enemyManager);
   window._catalogUI = catalogUI;
 
+  // ── Diretor de combate: povoa a fase com inimigos (tecla H) ───────
+  const combatDirector = new CombatDirector(enemyManager, player, scene, level);
+  window._combatDirector = combatDirector;
+
+  // ── Troca de personagem (player) reusando as animações ────────────
+  const charSwapper = new CharacterSwapper(player, scene, shadowGen);
+  window._charSwapper = charSwapper;
+  //  API de debug/experimento: troca o player por qualquer GLB e mostra a
+  //  taxa de compatibilidade de rig (quantas anims casaram).
+  window.setPlayerModel = async (url) => {
+    const r = await charSwapper.swap(url);
+    if (r.warning) console.warn('[setPlayerModel]', r.warning);
+    return r;
+  };
+  // Seletor de personagem (tecla P)
+  const charSelectUI = new CharacterSelectUI(charSwapper);
+  window._charSelectUI = charSelectUI;
+
+  // ── NavMesh (Recast): IA dos inimigos contorna paredes/objetos ────
+  //  Inicializa depois dos colisores serem otimizados (chão/construção
+  //  prontos). markDirty() do BuildMode regenera quando o mundo muda.
+  const navMesh = new NavMeshManager(scene);
+  window._navMesh = navMesh;
+  setTimeout(() => navMesh.init(), 4000);
+
+  // ── Hit-stop: freeze-frame de impacto nos golpes fortes ───────────
+  const hitStop = new HitStop(scene, engine, player.camera);
+  window._hitStop = hitStop;
+
+  // ── Drops: inimigos soltam moedas/materiais ao morrer ─────────────
+  const dropSystem = new DropSystem(scene, player);
+  window._dropSystem = dropSystem;
+
   // ── Modo Construção (tecla B) + Máquina de Criação Meshy AI ───────
   const buildMode = new BuildMode(scene, player, level);
   window._buildMode = buildMode;
@@ -267,6 +306,11 @@ async function init() {
     stats.addXp(xp);
     // chance de drop de poção, escalada pela Sorte
     if (Math.random() < 0.35 * stats.lootMult()) inventory.add('hpSmall', 1);
+    // Avisa o diretor → escala a onda (mais inimigos / tiers mais fortes)
+    combatDirector.notifyKill();
+    // Solta drops (moedas + materiais) na posição do inimigo
+    const dpos = enemy?.root?.getAbsolutePosition?.() || enemy?.root?.position;
+    if (dpos) dropSystem.spawnFromEnemy(dpos, enemy?.def);
   };
 
   const rpgHUD = new RpgHUD(player, stats, skills, inventory);
@@ -321,8 +365,13 @@ async function init() {
     // BuildMode pré-consome mouse delta se R/Q segurado (antes do player olhar)
     buildMode.preUpdate(input);
 
+    // Hit-stop: congela a lógica/animações/física por alguns frames no impacto.
+    const frozen = hitStop.update(dt);
+
     // Só atualiza lógica quando o jogo está ativo (pointer lock = focado)
-    if (input.gameActive) {
+    if (frozen) {
+      // congelado → não atualiza lógica (a cena fica na pose do impacto)
+    } else if (input.gameActive) {
       player.update(dt);
       level.update(dt);
       stats.update(dt);
@@ -339,6 +388,10 @@ async function init() {
     if (window._assetMachines) window._assetMachines.forEach(m => m.update(dt));
     moveListUI.update(dt);
     catalogUI.update();
+    combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
+    navMesh.update(dt);
+    dropSystem.update(dt, player.mesh?.position);
+    charSelectUI.update();
     buildMode.update();
     rpgHUD.update(dt);
     hud.update();
@@ -491,7 +544,7 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     { key: 'stoneBlock',   done: ms => level.placeDecor('stoneBlock', ms),        label: 'Pedras místicas…' },
     // Criaturas decorativas
     { key: 'monsterPlant', done: ms => level.spawnEnemyPlants(ms),                 label: 'Plantas monstro…' },
-    { key: 'cockatrice',   done: ms => level.placeDecor('cockatrice', ms),        label: 'Cocatriz…' },
+    // 'cockatrice' removido — asset externo (Sketchfab) que não faz parte do jogo.
     // O personagem agora é carregado via 'playerUnarmed' acima para suportar o novo sistema de combate.
   ];
 

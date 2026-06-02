@@ -6,7 +6,10 @@ export class ComboSystem {
     // punch_04 (cotovelada) é o finalizador pesado.
     // Combo PRINCIPAL de soco (os bons) → e no FINAL do movelist solta um
     // FINALIZADOR flashy (combo_punch). Sem o combo_punch_4 (você não curtiu).
-    this.punchChain     = ["punch_02", "punch_03", "punch_01", "punch_04"];
+    // Ordem natural: punch_01 (jab limpo) abre o combo. punch_02 hook,
+    // punch_03 uppercut duplo, punch_04 cotovelada. (Reordenar aqui se
+    // alguma anim não parecer soco — confirmar qual é qual em jogo.)
+    this.punchChain     = ["punch_01", "punch_02", "punch_03", "punch_04"];
     this.punchFinishers = ["combo_punch_1", "combo_punch_2", "combo_punch_3", "combo_punch_5"];
     this.finisherIdx    = 0;
     // Combo de chute "bala": os mais foda carregados, encadeados.

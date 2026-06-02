@@ -29,11 +29,34 @@ export async function initItemCatalog() {
     await LocalDB.save('items', ItemCatalog);
   }
 
-  // Armas SEMPRE injetadas (mesmo em DB antigo) — são itens equipáveis
-  Object.assign(ItemCatalog, WEAPON_ITEMS);
+  // Armas + drops (moeda/materiais) SEMPRE injetados (mesmo em DB antigo)
+  Object.assign(ItemCatalog, WEAPON_ITEMS, DROP_ITEMS);
   _injectEffects();
   _injectIcons();
 }
+
+// ── Moeda + materiais (drops dos inimigos) ──────────────────────────
+//  color = cor do placeholder no chão · wishlist = id na árvore de assets
+//  (o modelo 3D vem de lá quando gerado; até lá usa o placeholder).
+export const DROP_ITEMS = {
+  coin: {
+    name: 'Moeda', type: 'currency', icon: '🪙', rarity: 'common', stack: 9999,
+    color: [1.0, 0.82, 0.15], wishlist: 'sp_coin', asset: 'coinPile',
+    desc: 'Moeda. Usada pra comprar.',
+  },
+  mat_scrap: {
+    name: 'Sucata', type: 'material', icon: '⚙️', rarity: 'common', stack: 999,
+    color: [0.62, 0.64, 0.70], wishlist: 'mat_scrap', desc: 'Material comum de craft.',
+  },
+  mat_core: {
+    name: 'DigiNúcleo', type: 'material', icon: '🔷', rarity: 'uncommon', stack: 999,
+    color: [0.25, 0.70, 1.0], wishlist: 'mat_core', desc: 'Núcleo digital — craft avançado.',
+  },
+  mat_shard: {
+    name: 'Cristal', type: 'material', icon: '💎', rarity: 'rare', stack: 999,
+    color: [0.78, 0.40, 1.0], wishlist: 'sp_shard', desc: 'Cristal raro de craft.',
+  },
+};
 
 // ── Armas como itens equipáveis do inventário ───────────────────────
 export const WEAPON_ITEMS = {

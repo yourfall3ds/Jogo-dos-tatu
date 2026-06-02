@@ -74,9 +74,17 @@ export class InputManager {
       if (!document.pointerLockElement) this._requestLock();
       // Conta os cliques (não só um boolean) → mashing rápido não perde
       // cliques no mesmo frame; o combo encadeia todos.
-      if (e.button === 0) { this._clicked = true;      this._clicks      = (this._clicks      || 0) + 1; }
-      if (e.button === 2) { this._rightClicked = true; this._rightClicks = (this._rightClicks || 0) + 1; }
+      if (e.button === 0) { this._clicked = true;      this._clicks      = (this._clicks      || 0) + 1; this._leftHeld  = true; }
+      if (e.button === 2) { this._rightClicked = true; this._rightClicks = (this._rightClicks || 0) + 1; this._rightHeld = true; }
     });
+
+    // Solta o botão → para de segurar (full-auto / loop de metralhadora)
+    document.addEventListener('mouseup', e => {
+      if (e.button === 0) this._leftHeld  = false;
+      if (e.button === 2) this._rightHeld = false;
+    });
+    // Se perder o foco/lock, zera o "segurando" (senão a metralhadora trava ligada)
+    window.addEventListener('blur', () => { this._leftHeld = false; this._rightHeld = false; });
 
     // Impede menu de contexto do browser no canvas durante o jogo
     canvas.addEventListener('contextmenu', e => {
@@ -139,6 +147,10 @@ export class InputManager {
   }
 
   isDown(code) { return !!this.keys[code]; }
+
+  /** True enquanto o botão esquerdo está SEGURADO (full-auto / metralhadora). */
+  isFireDown()  { return !!this._leftHeld; }
+  isAimDown()   { return !!this._rightHeld; }
 
   consumeMouseDelta() {
     const dx = this._mouseX, dy = this._mouseY;

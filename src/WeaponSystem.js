@@ -510,6 +510,7 @@ export class WeaponSystem {
     if (this.reloading || this.ammo === this.maxAmmo) return;
     this.reloading = true;
     this._reloadT = 1.5;
+    if (this.onReload) this.onReload(this._reloadT);   // dispara o som casando com a duração
   }
 
   update(dt, isMoving, speed) {
