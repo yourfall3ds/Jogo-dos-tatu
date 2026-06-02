@@ -47,6 +47,7 @@ import { ThumbnailGen }         from './game/debug/ThumbnailGen.js';
 import { initPhysics }          from './game/physics/PhysicsWorld.js';
 import { DayNightCycle }        from './game/scene/DayNightCycle.js';
 import { GraphicsEnhancer }     from './game/scene/GraphicsEnhancer.js';
+import { GraphicsDebugPanel }   from './game/scene/GraphicsDebugPanel.js';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -202,10 +203,24 @@ async function init() {
   const shadowGen = new BABYLON.ShadowGenerator(2048, sun);
   shadowGen.usePercentageCloserFiltering = true;   // bordas suaves (PCF)
   shadowGen.filteringQuality = BABYLON.ShadowGenerator.QUALITY_HIGH;
-  shadowGen.normalBias = 0.02;
-  shadowGen.bias = 0.001;
-  shadowGen.darkness = 0.4;
+  // bias BAIXO — bias alto fazia a sombra "fugir" do objeto e sumir.
+  shadowGen.normalBias = 0.012;
+  shadowGen.bias = 0.00005;
+  shadowGen.darkness = 0.25;
   window._shadowGen = shadowGen;
+
+  // Helper de teste (rode window.testShadow() no console do jogo): cria um
+  //  pilar vermelho 5m à frente — confirma a sombra projetada no chão.
+  window.testShadow = () => {
+    const p = window._gamePlayer, s = scene;
+    const yaw = BABYLON.Tools.ToRadians(p.yaw || 0);
+    const pos = p.mesh.position.add(new BABYLON.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).scale(5));
+    const pillar = BABYLON.MeshBuilder.CreateBox('shadowTest', { width: 1, height: 6, depth: 1 }, s);
+    pillar.position.set(pos.x, 3, pos.z);
+    const m = new BABYLON.StandardMaterial('stm', s); m.diffuseColor = new BABYLON.Color3(1, 0, 0); pillar.material = m;
+    window._shadowGen.addShadowCaster(pillar);
+    return 'pilar vermelho 5m à frente — veja a sombra no chão';
+  };
 
   // ── Névoa (leve — só pra dar profundidade no horizonte) ──────────
   scene.fogMode    = BABYLON.Scene.FOGMODE_EXP2;
@@ -228,6 +243,10 @@ async function init() {
   const gfx = new GraphicsEnhancer(scene, player.camera, engine);
   window._gfx = gfx;
   dayNight.gfx = gfx;   // o ciclo ajusta exposure/bloom conforme a hora
+
+  // Painel de calibração gráfica ao vivo (tecla F8)
+  const gfxPanel = new GraphicsDebugPanel(gfx, dayNight, shadowGen, scene);
+  window._gfxPanel = gfxPanel;
 
   // ── Weapon Editor (criado ANTES dos GLBs para configs salvas serem aplicadas) ─
   const weaponEditor = new WeaponEditor(player.weapon, scene);
@@ -412,6 +431,7 @@ async function init() {
     navMesh.update(dt);
     dropSystem.update(dt, player.mesh?.position);
     dayNight.update(dt);
+    gfxPanel.update();
     charSelectUI.update();
     buildMode.update();
     rpgHUD.update(dt);
