@@ -53,51 +53,131 @@ export class RemotePlayer {
     this.body._isRemotePlayer = true;
     this.body._remoteRef = this;
 
-    // Nameplate (HTML overlay)
+    // Nameplate (HTML overlay) com avatar + nickname + HP bar
+    const colorRgb = `rgb(${(r * 255) | 0}, ${(g * 255) | 0}, ${(b * 255) | 0})`;
     this._nameEl = document.createElement('div');
     this._nameEl.style.cssText = `
       position: fixed; pointer-events: none; z-index: 80;
-      background: rgba(0,0,0,0.65); color: rgb(${(r * 255) | 0}, ${(g * 255) | 0}, ${(b * 255) | 0});
-      padding: 2px 8px; border-radius: 4px;
-      font: 700 11px 'Segoe UI', monospace;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.9);
-      transform: translate(-50%, -100%); white-space: nowrap;
-      border: 1px solid rgba(${(r * 255) | 0}, ${(g * 255) | 0}, ${(b * 255) | 0}, 0.5);
-      letter-spacing: 0.5px;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      transform: translate(-50%, -100%);
     `;
-    this._nameEl.textContent = this.nickname;
+    this._nameEl.innerHTML = `
+      <div style="display:flex; align-items:center; gap:5px;
+                  background:rgba(0,0,0,0.72); padding:2px 7px 2px 3px;
+                  border:1px solid ${colorRgb}; border-radius:10px;
+                  font:700 11px 'Segoe UI',monospace; color:${colorRgb};
+                  text-shadow:0 1px 2px rgba(0,0,0,0.9); letter-spacing:0.5px;">
+        <img class="rp-avatar" src="" style="width:16px;height:16px;border-radius:50%;display:none;border:1px solid ${colorRgb};" />
+        <span class="rp-name">${this._esc(this.nickname)}</span>
+      </div>
+      <div style="width:60px;height:4px;background:rgba(0,0,0,0.6);border-radius:2px;overflow:hidden;border:1px solid rgba(0,0,0,0.7);">
+        <div class="rp-hp" style="height:100%;width:100%;background:linear-gradient(90deg,#22dd44,#66ff88);transition:width 0.15s;"></div>
+      </div>
+    `;
     document.body.appendChild(this._nameEl);
+    this._avatarEl = this._nameEl.querySelector('.rp-avatar');
+    this._nameTextEl = this._nameEl.querySelector('.rp-name');
+    this._hpEl = this._nameEl.querySelector('.rp-hp');
+    if (info.avatar_url) this.setAvatar(info.avatar_url);
 
-    // Snapshot atual + alvo (pra interpolação)
-    this._target = { x: 0, y: 0, z: 0, ry: 0 };
+    // ── Buffer de snapshots (técnica Source/Quake) ──
+    //  Render-lag de 100ms: sempre interpola entre snapshot[t-100ms] e [t].
+    //  Bem mais suave que lerp simples sob latência variável.
+    this._snapshots = [];          // [{ t, x, y, z, ry }, ...] máx 8
+    this.RENDER_LAG_MS = 100;
     this._current = { x: 0, y: 0, z: 0, ry: 0 };
-    if (info.x != null) this.applySnapshot(info);
+    if (info.x != null) {
+      this._current.x = info.x; this._current.y = info.y; this._current.z = info.z;
+      this._current.ry = info.ry || 0;
+      this.applySnapshot(info);
+    }
   }
 
   applySnapshot(snap) {
-    this._target.x = snap.x || 0;
-    this._target.y = snap.y || 0;
-    this._target.z = snap.z || 0;
-    this._target.ry = snap.ry || 0;
     if (snap.nickname) this.setNickname(snap.nickname);
+    if (snap.avatar_url && !this._avatarSet) {
+      this.setAvatar(snap.avatar_url);
+      this._avatarSet = true;
+    }
+    if (snap.x == null) return;
+    // Empurra na buffer; descarta antigos
+    this._snapshots.push({
+      t: performance.now(),
+      x: snap.x, y: snap.y, z: snap.z, ry: snap.ry || 0,
+    });
+    while (this._snapshots.length > 8) this._snapshots.shift();
   }
+
+  _esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
   setNickname(name) {
     if (name === this.nickname) return;
     this.nickname = name;
-    this._nameEl.textContent = name;
+    if (this._nameTextEl) this._nameTextEl.textContent = name;
+  }
+
+  setAvatar(url) {
+    if (!this._avatarEl || !url) return;
+    this._avatarEl.src = url;
+    this._avatarEl.style.display = 'block';
+  }
+
+  setHp(hp, maxHp = 100) {
+    this.hp = hp;
+    if (this._hpEl) {
+      const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+      this._hpEl.style.width = pct + '%';
+      if (pct < 30) this._hpEl.style.background = 'linear-gradient(90deg,#dd2222,#ff5555)';
+      else if (pct < 60) this._hpEl.style.background = 'linear-gradient(90deg,#dd8822,#ffaa33)';
+      else this._hpEl.style.background = 'linear-gradient(90deg,#22dd44,#66ff88)';
+    }
   }
 
   update(dt, camera) {
-    // Lerp suave (10Hz snap incoming → 60Hz render)
-    const k = Math.min(1, dt * 12);
-    this._current.x += (this._target.x - this._current.x) * k;
-    this._current.y += (this._target.y - this._current.y) * k;
-    this._current.z += (this._target.z - this._current.z) * k;
-    let dy = this._target.ry - this._current.ry;
-    while (dy > 180) dy -= 360;
-    while (dy < -180) dy += 360;
-    this._current.ry += dy * k;
+    // ── Render-lag interpolation ──
+    //  Busca os 2 snapshots que cercam (now - RENDER_LAG_MS).
+    //  Interpola entre eles por tempo. Se faltar buffer, mantém último.
+    const renderT = performance.now() - this.RENDER_LAG_MS;
+    let target = null;
+    if (this._snapshots.length >= 2) {
+      // Acha par [a, b] onde a.t <= renderT <= b.t
+      let a = null, b = null;
+      for (let i = this._snapshots.length - 1; i >= 0; i--) {
+        if (this._snapshots[i].t <= renderT) {
+          a = this._snapshots[i];
+          b = this._snapshots[i + 1] || a;
+          break;
+        }
+      }
+      if (a && b && b.t > a.t) {
+        const f = Math.max(0, Math.min(1, (renderT - a.t) / (b.t - a.t)));
+        let dy = b.ry - a.ry;
+        while (dy > 180) dy -= 360;
+        while (dy < -180) dy += 360;
+        target = {
+          x: a.x + (b.x - a.x) * f,
+          y: a.y + (b.y - a.y) * f,
+          z: a.z + (b.z - a.z) * f,
+          ry: a.ry + dy * f,
+        };
+      } else if (this._snapshots.length) {
+        target = this._snapshots[this._snapshots.length - 1];
+      }
+    } else if (this._snapshots.length === 1) {
+      target = this._snapshots[0];
+    }
+
+    if (target) {
+      // Pequeno smoothing pra suavizar saltos quando o buffer afina
+      const k = Math.min(1, dt * 18);
+      this._current.x += (target.x - this._current.x) * k;
+      this._current.y += (target.y - this._current.y) * k;
+      this._current.z += (target.z - this._current.z) * k;
+      let dy = target.ry - this._current.ry;
+      while (dy > 180) dy -= 360;
+      while (dy < -180) dy += 360;
+      this._current.ry += dy * k;
+    }
 
     this.root.position.set(this._current.x, this._current.y, this._current.z);
     this.root.rotation.y = BABYLON.Tools.ToRadians(this._current.ry);

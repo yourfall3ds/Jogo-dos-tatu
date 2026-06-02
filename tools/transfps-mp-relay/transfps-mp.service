@@ -7,6 +7,9 @@ Type=simple
 WorkingDirectory=/opt/transfps-mp
 Environment=NODE_ENV=production
 Environment=TRANSFPS_MP_PORT=8091
+Environment=JWT_REQUIRED=1
+Environment=SUPABASE_URL=https://myylkpoisqijfnptlnyk.supabase.co
+EnvironmentFile=-/opt/transfps-mp/.env
 ExecStart=/usr/bin/node /opt/transfps-mp/server.js
 Restart=on-failure
 RestartSec=5

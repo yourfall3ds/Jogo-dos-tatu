@@ -366,12 +366,92 @@ async function init() {
     const rp = _remotePlayers.get(s.player_id);
     if (rp) rp.applySnapshot(s);
   });
+
+  // ── HIT recebido: aplica dano LOCAL e dispara sendHp ──
   mpClient.on('hit', (h) => {
-    if (h.to === auth.getUserId()) {
-      // Tomei dano de player remoto
-      player.takeDamage?.(h.dmg, 'melee', null, 2);
+    if (h.to !== auth.getUserId()) return;
+    if (player._dead) return;
+    // Sangue + dano + flinch
+    const isMelee = !h.weapon?.includes('pistol') && !h.weapon?.includes('rifle');
+    player.takeDamage?.(h.dmg, isMelee ? 'melee' : 'bullet', null, isMelee ? 3 : 1);
+    // Anuncia HP atualizado para os outros
+    mpClient.sendHp(player.hp, player.maxHp);
+    // Se morri, anuncia
+    if (player.hp <= 0 && !player._dead_announced) {
+      player._dead_announced = true;
+      mpClient.sendDied(h.from);
     }
   });
+
+  // ── HP de outro player atualizou ──
+  mpClient.on('hp', (h) => {
+    const rp = _remotePlayers.get(h.player_id);
+    if (rp) rp.setHp(h.hp, h.maxHp);
+  });
+
+  // ── Player remoto morreu — flash de kill feed ──
+  mpClient.on('died', (d) => {
+    const rp = _remotePlayers.get(d.player_id);
+    if (rp) {
+      // Faz o ragdoll cair: rotaciona body e desce
+      try {
+        rp.body.rotation.x = -Math.PI / 2;
+        rp.body.position.y = 0.4;
+      } catch (_) {}
+    }
+    // Kill feed
+    const killerNick = d.killer === auth.getUserId() ? 'VOCÊ'
+      : (_remotePlayers.get(d.killer)?.nickname || 'alguém');
+    const victimNick = rp?.nickname || 'player';
+    _showKillFeed(`${killerNick} ☠ ${victimNick}`);
+  });
+
+  mpClient.on('respawn', (r) => {
+    const rp = _remotePlayers.get(r.player_id);
+    if (rp) {
+      try {
+        rp.body.rotation.x = 0;
+        rp.body.position.y = 0.9;
+      } catch (_) {}
+      rp.setHp(100, 100);
+    }
+  });
+
+  // Hook no respawn LOCAL pra anunciar
+  const _origRespawn = player.onRespawn;
+  player.onRespawn = () => {
+    if (_origRespawn) _origRespawn();
+    player._dead_announced = false;
+    if (mpClient.connected) {
+      mpClient.sendRespawn();
+      mpClient.sendHp(player.maxHp, player.maxHp);
+    }
+  };
+
+  // ── Kill feed (canto superior direito) ──
+  function _showKillFeed(text) {
+    let f = document.getElementById('kill-feed');
+    if (!f) {
+      f = document.createElement('div');
+      f.id = 'kill-feed';
+      f.style.cssText = `
+        position: fixed; top: 90px; right: 16px; z-index: 90;
+        display: flex; flex-direction: column; gap: 5px;
+        font: 700 12px 'Segoe UI', monospace;
+        pointer-events: none;`;
+      document.body.appendChild(f);
+    }
+    const item = document.createElement('div');
+    item.style.cssText = `
+      background: rgba(20,5,5,0.85); color: #ff7a8a;
+      border: 1px solid #ff5050; border-radius: 6px;
+      padding: 5px 12px; opacity: 1;
+      transition: opacity 0.5s; text-shadow: 0 1px 2px black;`;
+    item.textContent = text;
+    f.appendChild(item);
+    setTimeout(() => { item.style.opacity = '0'; }, 3000);
+    setTimeout(() => { try { f.removeChild(item); } catch (_) {} }, 3700);
+  }
   window._remotePlayers = _remotePlayers;
 
   const loginScreen = new LoginScreen(auth);
@@ -395,12 +475,14 @@ async function init() {
     const cfg = await getConfig();
     const wsUrl = cfg.TRANSFPS_MP_WS_URL || 'wss://overpixel.online/transfps-mp';
     const session = await auth.getSupabase().auth.getSession();
+    const avatarUrl = auth.profile?.avatar_url || auth.user?.user_metadata?.avatar_url || null;
     try {
       await mpClient.connect(wsUrl, {
         roomId: room.id,
         playerId: auth.getUserId(),
         nickname: auth.getNickname(),
         jwt: session.data?.session?.access_token,
+        avatarUrl,
       });
       console.log(`[MP] conectado em sala ${room.name}`);
     } catch (e) {
@@ -638,11 +720,16 @@ async function init() {
 
   // ── Login screen aparece após boot ──
   //  Esconde a start-screen padrão e mostra LoginScreen.
-  //  Se já logado, fluxo passa direto (LoginScreen mostra "continuar" + lobby).
-  setTimeout(() => {
+  //  Se já logado e tem ?room=UUID na URL, vai direto pra sala.
+  setTimeout(async () => {
     const ss = $('start-screen');
     if (ss) ss.style.display = 'none';
-    loginScreen.show();
+    // Se já logado e tem invite link, auto-entra na sala
+    if (window._auth.isAuthenticated() && !window._auth.isGuest()) {
+      const joined = await window._lobbyUI.checkInviteLink();
+      if (joined) return; // checkInviteLink mostra o lobby
+    }
+    window._loginScreen.show();
   }, 100);
 }
 

@@ -23,7 +23,7 @@ export class MultiplayerClient {
     this.jwt = null;
     this.url = null;
     this.players = new Map();  // player_id → { x, y, z, ry, nickname, lastUpdate, weapon }
-    this._listeners = { snapshot: new Set(), hit: new Set(), join: new Set(), leave: new Set(), chat: new Set(), open: new Set(), close: new Set() };
+    this._listeners = { snapshot: new Set(), hit: new Set(), join: new Set(), leave: new Set(), chat: new Set(), open: new Set(), close: new Set(), hp: new Set(), died: new Set(), respawn: new Set() };
     this._snapshotInterval = null;
     this._snapshotRate = 20; // Hz
     this._lastSnapshot = 0;
@@ -32,12 +32,13 @@ export class MultiplayerClient {
   }
 
   /** Conecta ao relay. */
-  async connect(url, { roomId, playerId, nickname, jwt }) {
+  async connect(url, { roomId, playerId, nickname, jwt, avatarUrl }) {
     this.url = url;
     this.roomId = roomId;
     this.playerId = playerId;
     this.nickname = nickname;
     this.jwt = jwt;
+    this.avatarUrl = avatarUrl || null;
     return this._openSocket();
   }
 
@@ -57,6 +58,7 @@ export class MultiplayerClient {
           player_id: this.playerId,
           nickname: this.nickname,
           jwt: this.jwt,
+          avatar_url: this.avatarUrl,
         });
         this._notify('open');
         resolve();
@@ -115,6 +117,21 @@ export class MultiplayerClient {
       case 'chat':
         this._notify('chat', msg);
         break;
+      case 'hp':
+        // Atualiza HP cacheado do player remoto
+        if (this.players.has(msg.player_id)) {
+          const p = this.players.get(msg.player_id);
+          p.hp = msg.hp;
+          p.maxHp = msg.maxHp;
+        }
+        this._notify('hp', msg);
+        break;
+      case 'died':
+        this._notify('died', msg);
+        break;
+      case 'respawn':
+        this._notify('respawn', msg);
+        break;
     }
   }
 
@@ -142,6 +159,21 @@ export class MultiplayerClient {
   /** Reporta hit em outro player. */
   sendHit(targetId, dmg, weapon) {
     this._send({ type: 'hit', from: this.playerId, to: targetId, dmg, weapon });
+  }
+
+  /** Anuncia HP atual (após dano/cura). */
+  sendHp(hp, maxHp = 100) {
+    this._send({ type: 'hp', hp, maxHp });
+  }
+
+  /** Anuncia morte (com matador opcional). */
+  sendDied(killerId = null) {
+    this._send({ type: 'died', killer: killerId });
+  }
+
+  /** Anuncia respawn. */
+  sendRespawn() {
+    this._send({ type: 'respawn' });
   }
 
   /** Chat in-game (canal extra além do Supabase). */

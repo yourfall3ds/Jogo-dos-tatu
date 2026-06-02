@@ -11,6 +11,7 @@ scp -P 2222 -i ~/.ssh/id_montador -r \
   "D:/GAMES/Jogo-dos-tatu/tools/transfps-mp-relay/server.js" \
   "D:/GAMES/Jogo-dos-tatu/tools/transfps-mp-relay/package.json" \
   "D:/GAMES/Jogo-dos-tatu/tools/transfps-mp-relay/transfps-mp.service" \
+  "D:/GAMES/Jogo-dos-tatu/tools/transfps-mp-relay/.env.example" \
   root@72.61.25.35:/tmp/
 ```
 
@@ -19,9 +20,18 @@ scp -P 2222 -i ~/.ssh/id_montador -r \
 ```bash
 ssh -p 2222 -i ~/.ssh/id_montador root@72.61.25.35 << 'EOF'
 mkdir -p /opt/transfps-mp
-mv /tmp/server.js /tmp/package.json /opt/transfps-mp/
+mv /tmp/server.js /tmp/package.json /tmp/.env.example /opt/transfps-mp/
 cd /opt/transfps-mp
 npm install --omit=dev
+
+# Cria .env real (copia anon key do projeto Supabase)
+cat > /opt/transfps-mp/.env <<ENV_EOF
+SUPABASE_URL=https://myylkpoisqijfnptlnyk.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15eWxrcG9pc3FpamZucHRsbnlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY0MzQxNTIsImV4cCI6MjA3MjAxMDE1Mn0.me7aXILmeIHvjbkYWUVczOZt7gxrz8Rddv515Xa9ZTU
+JWT_REQUIRED=1
+TRANSFPS_MP_PORT=8091
+ENV_EOF
+chmod 600 /opt/transfps-mp/.env
 
 # Service systemd
 mv /tmp/transfps-mp.service /etc/systemd/system/

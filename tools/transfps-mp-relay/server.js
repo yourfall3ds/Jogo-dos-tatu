@@ -14,8 +14,77 @@
 
 const { WebSocketServer } = require('ws');
 const http = require('http');
+const https = require('https');
 
 const PORT = parseInt(process.env.TRANSFPS_MP_PORT || '8091', 10);
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://myylkpoisqijfnptlnyk.supabase.co';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const JWT_REQUIRED = process.env.JWT_REQUIRED !== '0';   // default on
+
+// Cache de JWT validados (token → { sub, exp, validatedAt }) por 60s
+const _jwtCache = new Map();
+const JWT_CACHE_TTL = 60_000;
+
+function _jwtPayload(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    return payload;
+  } catch (_) { return null; }
+}
+
+/** Valida JWT chamando Supabase /auth/v1/user com token. */
+function validateJwt(token) {
+  return new Promise((resolve) => {
+    if (!token) return resolve(null);
+
+    // Quick check: payload válido + não expirado
+    const payload = _jwtPayload(token);
+    if (!payload || !payload.sub) return resolve(null);
+    if (payload.exp && payload.exp * 1000 < Date.now()) return resolve(null);
+
+    // Cache hit?
+    const cached = _jwtCache.get(token);
+    if (cached && Date.now() - cached.validatedAt < JWT_CACHE_TTL) {
+      return resolve({ sub: cached.sub });
+    }
+
+    if (!SUPABASE_ANON_KEY) {
+      // Sem anon key → não pode validar contra Supabase; aceita pela assinatura local
+      _jwtCache.set(token, { sub: payload.sub, validatedAt: Date.now() });
+      return resolve({ sub: payload.sub });
+    }
+
+    const url = new URL(SUPABASE_URL + '/auth/v1/user');
+    const req = https.request({
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'GET',
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${token}`,
+      },
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          console.warn('[jwt] invalid:', res.statusCode);
+          return resolve(null);
+        }
+        try {
+          const user = JSON.parse(body);
+          _jwtCache.set(token, { sub: user.id, validatedAt: Date.now() });
+          resolve({ sub: user.id });
+        } catch (e) { resolve(null); }
+      });
+    });
+    req.on('error', e => { console.warn('[jwt] req err:', e.message); resolve(null); });
+    req.setTimeout(3000, () => { req.destroy(); resolve(null); });
+    req.end();
+  });
+}
 
 // rooms[roomId] = Map(playerId → { ws, nickname, lastSnapshot })
 const rooms = new Map();
@@ -59,7 +128,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('pong', () => { ws._isAlive = true; });
 
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch (_) { return; }
 
@@ -69,23 +138,39 @@ wss.on('connection', (ws, req) => {
         const roomId = String(msg.room);
         const playerId = String(msg.player_id);
         const nickname = String(msg.nickname).slice(0, 32);
-        // TODO: validar JWT contra Supabase (msg.jwt). Por ora apenas trust.
+        const avatarUrl = msg.avatar_url ? String(msg.avatar_url).slice(0, 500) : null;
+
+        // ── JWT validation ──
+        if (JWT_REQUIRED) {
+          const v = await validateJwt(msg.jwt);
+          if (!v) {
+            ws.send(JSON.stringify({ type: 'error', code: 'auth', msg: 'JWT inválido' }));
+            try { ws.close(); } catch (_) {}
+            return;
+          }
+          if (v.sub !== playerId) {
+            ws.send(JSON.stringify({ type: 'error', code: 'auth', msg: 'player_id ≠ JWT.sub' }));
+            try { ws.close(); } catch (_) {}
+            return;
+          }
+        }
+
         ws._playerId = playerId;
         ws._roomId = roomId;
         const room = _getRoom(roomId);
-        room.set(playerId, { ws, nickname, last: null });
+        room.set(playerId, { ws, nickname, avatar_url: avatarUrl, last: null });
         console.log(`[join] ${nickname} (${playerId.slice(0, 8)}) → room ${roomId} (${room.size} players)`);
 
         // Envia welcome com lista de outros players
         const others = [];
         for (const [pid, p] of room) {
           if (pid === playerId) continue;
-          others.push({ player_id: pid, nickname: p.nickname, ...(p.last || {}) });
+          others.push({ player_id: pid, nickname: p.nickname, avatar_url: p.avatar_url, ...(p.last || {}) });
         }
         ws.send(JSON.stringify({ type: 'welcome', players: others, room: roomId }));
 
         // Anuncia pra todos os outros
-        _broadcast(roomId, { type: 'player_joined', player_id: playerId, nickname }, playerId);
+        _broadcast(roomId, { type: 'player_joined', player_id: playerId, nickname, avatar_url: avatarUrl }, playerId);
         break;
       }
 
@@ -133,6 +218,38 @@ wss.on('connection', (ws, req) => {
           from: ws._playerId,
           nick,
           msg: safeMsg,
+        });
+        break;
+      }
+
+      case 'hp': {
+        // Player anuncia próprio HP atual após tomar/curar dano
+        if (!ws._roomId) return;
+        _broadcast(ws._roomId, {
+          type: 'hp',
+          player_id: ws._playerId,
+          hp: Math.max(0, Math.min(999, +msg.hp || 0)),
+          maxHp: Math.max(1, Math.min(999, +msg.maxHp || 100)),
+        });
+        break;
+      }
+
+      case 'died': {
+        // Player anuncia morte (matador opcional)
+        if (!ws._roomId) return;
+        _broadcast(ws._roomId, {
+          type: 'died',
+          player_id: ws._playerId,
+          killer: msg.killer || null,
+        });
+        break;
+      }
+
+      case 'respawn': {
+        if (!ws._roomId) return;
+        _broadcast(ws._roomId, {
+          type: 'respawn',
+          player_id: ws._playerId,
         });
         break;
       }

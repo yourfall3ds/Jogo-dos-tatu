@@ -413,6 +413,46 @@ export class CombatSystem {
     scene.meshes.forEach(m => {
       if (!m.isEnabled()) return;
 
+      // ── REMOTE PLAYER (PvP) ─────────────────────────────────────────
+      //  Se for capsule de outro player → manda hit pelo MP relay.
+      //  Cliente local NÃO aplica dano direto: relay propaga pro alvo
+      //  que sente takeDamage no próprio cliente (server-authority light).
+      if (m._isRemotePlayer && m._remoteRef && !hitEnemies.has(m._remoteRef)) {
+        if (activeHitbox.intersectsMesh(m, false) || _inFront(m.getAbsolutePosition())) {
+          hitSomething = true;
+          hitEnemies.add(m._remoteRef);
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
+          // Envia hit via MP — o cliente-alvo recebe e aplica dano local
+          window._mpClient?.sendHit?.(m._remoteRef.playerId, hitDef.damage, animName);
+          // Damage number visual no cliente que atacou (feedback imediato)
+          window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
+          if (this.impactSystem) {
+            const ip = activeHitbox.getAbsolutePosition().clone();
+            if (isKick) this.impactSystem.spawnKickImpact(ip, true);
+            else        this.impactSystem.spawnPunchImpact(ip, true);
+          }
+          // Sangue
+          if (window._bloodFX) {
+            const enemyPos = m.getAbsolutePosition();
+            const impactPos = activeHitbox.getAbsolutePosition();
+            const bloodPos = new BABYLON.Vector3(
+              (impactPos.x + enemyPos.x) / 2,
+              (impactPos.y + enemyPos.y) / 2 + 0.3,
+              (impactPos.z + enemyPos.z) / 2,
+            );
+            window._bloodFX.spawn(bloodPos, moveDir, {
+              multiplier: hitDef.melee === 'sword' ? 2.0 : (critLevel >= 2 ? 1.6 : 1.0),
+              sourceNode: m,
+              isHeavy: hitDef.melee === 'sword' || critLevel >= 2,
+            });
+          }
+          // Hit-stop leve
+          if (critLevel >= 1) window._hitStop?.hit(0.10, { zoom: 0.08, flash: 0.25 });
+          else window._hitStop?.hit(0.035);
+        }
+        return;
+      }
+
       // ── Inimigos ────────────────────────────────────────────────────
       if (m._enemyRef && m._enemyRef.hp > 0 && !hitEnemies.has(m._enemyRef)) {
         // hitbox precisa OU alcance frontal (mais tolerante)

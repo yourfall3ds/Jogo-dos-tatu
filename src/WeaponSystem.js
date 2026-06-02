@@ -457,6 +457,18 @@ export class WeaponSystem {
         }
       }
 
+      // ── PvP: tiro acertou outro player remoto ──
+      if (hit.pickedMesh?._isRemotePlayer && hit.pickedMesh._remoteRef) {
+        const dmg = this.getCurrentWeapon().damage;
+        window._mpClient?.sendHit?.(hit.pickedMesh._remoteRef.playerId, dmg, this.getCurrentWeapon().id);
+        window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, { color: '#ff6666' });
+        if (window._bloodFX) {
+          window._bloodFX.spawn(hit.pickedPoint, dir, {
+            multiplier: dmg >= 60 ? 1.4 : 0.85, sourceNode: hit.pickedMesh,
+          });
+        }
+      }
+
       // ── Objeto dinâmico (_gameObject = GameObject) ───────────────
       const gameObj = hit.pickedMesh?._gameObject;
       if (gameObj) {

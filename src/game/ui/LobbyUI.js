@@ -112,12 +112,20 @@ export class LobbyUI {
               </div>
             </div>
 
-            <button id="lb-enter-game" style="padding:13px; background:linear-gradient(135deg,#3aa05c,#1e6f3a);
-                    color:#fff; border:none; border-radius:10px; cursor:pointer;
-                    font-weight:900; letter-spacing:1.5px; font-size:1em;
-                    box-shadow:0 4px 18px rgba(58,160,92,0.30);">
-              ▶ ENTRAR NA PARTIDA
-            </button>
+            <div style="display:flex; gap:8px;">
+              <button id="lb-copy-invite" style="flex:0 0 auto; padding:13px 18px;
+                      background:rgba(120,180,255,0.18); color:#cef;
+                      border:1px solid rgba(120,180,255,0.45); border-radius:10px;
+                      cursor:pointer; font-weight:700; font-size:0.95em;">
+                🔗 copiar link
+              </button>
+              <button id="lb-enter-game" style="flex:1; padding:13px; background:linear-gradient(135deg,#3aa05c,#1e6f3a);
+                      color:#fff; border:none; border-radius:10px; cursor:pointer;
+                      font-weight:900; letter-spacing:1.5px; font-size:1em;
+                      box-shadow:0 4px 18px rgba(58,160,92,0.30);">
+                ▶ ENTRAR NA PARTIDA
+              </button>
+            </div>
           </div>
         </main>
       </div>
@@ -133,6 +141,7 @@ export class LobbyUI {
       if (e.key === 'Enter') this._sendChat();
     };
     el.querySelector('#lb-enter-game').onclick = () => this._enterGame();
+    el.querySelector('#lb-copy-invite').onclick = () => this._copyInvite();
   }
 
   async _loadRooms() {
@@ -206,6 +215,42 @@ export class LobbyUI {
     await this._loadChat();
     this._subscribeRealtime(room.id);
     this._setStatus(`entrou em ${room.name}`, '#7efa9a');
+  }
+
+  /** Verifica se a URL tem ?room=UUID e auto-entra. */
+  async checkInviteLink() {
+    const params = new URLSearchParams(window.location.search);
+    const roomId = params.get('room');
+    if (!roomId) return false;
+    // Limpa o param da URL pra não disparar de novo no refresh
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    window.history.replaceState({}, '', url.toString());
+    const supabase = this.auth.getSupabase();
+    const { data } = await supabase
+      .from('transfps_rooms_listing')
+      .select('*')
+      .eq('id', roomId)
+      .maybeSingle();
+    if (!data) {
+      alert('Sala não encontrada ou já fechada.');
+      return false;
+    }
+    this.show();
+    await this._joinRoom(data);
+    return true;
+  }
+
+  /** Copia o link de convite pra clipboard. */
+  async _copyInvite() {
+    if (!this.currentRoom) return;
+    const url = window.location.origin + window.location.pathname + '?room=' + this.currentRoom.id;
+    try {
+      await navigator.clipboard.writeText(url);
+      this._setStatus('🔗 link copiado!', '#7efa9a');
+    } catch (e) {
+      prompt('Copie o link manualmente:', url);
+    }
   }
 
   async _loadRoomDetails() {
