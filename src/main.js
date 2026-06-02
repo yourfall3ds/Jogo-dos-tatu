@@ -199,15 +199,22 @@ async function init() {
   //  O frustum SEGUE o player (atualizado no loop) pra cobrir onde ele está.
   sun.position = new BABYLON.Vector3(40, 100, 40);
   sun.autoUpdateExtends = false;
-  sun.shadowMinZ = -120; sun.shadowMaxZ = 220;
-  sun.orthoLeft = -45; sun.orthoRight = 45;
-  sun.orthoTop = 45;   sun.orthoBottom = -45;
+  sun.shadowMinZ = 1; sun.shadowMaxZ = 200;
+  sun.orthoLeft = -40; sun.orthoRight = 40;
+  sun.orthoTop = 40;   sun.orthoBottom = -40;
+  // Frustum SEGUE o player: a luz se reposiciona acima dele mantendo a
+  //  direção do sol → sombra sempre nítida onde o jogador está.
+  window._updateShadowFrustum = () => {
+    const pp = window._gamePlayer?.mesh?.position; if (!pp) return;
+    const dir = sun.direction;   // direção do sol (muda com a hora)
+    sun.position.set(pp.x - dir.x * 60, pp.y - dir.y * 60, pp.z - dir.z * 60);
+  };
 
   const shadowGen = new BABYLON.ShadowGenerator(2048, sun);
   shadowGen.useBlurExponentialShadowMap = true;
   shadowGen.useKernelBlur = true;
   shadowGen.blurKernel = 32;
-  shadowGen.setDarkness(0.45);
+  shadowGen.setDarkness(0.3);   // mais escura (0=preto, 1=sem sombra)
   window._shadowGen = shadowGen;
 
   // Helper de teste (rode window.testShadow() no console do jogo): cria um
@@ -221,6 +228,28 @@ async function init() {
     const m = new BABYLON.StandardMaterial('stm', s); m.diffuseColor = new BABYLON.Color3(1, 0, 0); pillar.material = m;
     window._shadowGen.addShadowCaster(pillar);
     return 'pilar vermelho 5m à frente — veja a sombra no chão';
+  };
+
+  // DIAGNÓSTICO 1: liga/desliga TODO o pós-processamento. Se a sombra
+  //  aparecer com pós-proc OFF, o culpado é o pipeline/SSAO/imageProcessing.
+  window.togglePosProc = () => {
+    const cam = window._gamePlayer.camera, mgr = scene.postProcessRenderPipelineManager;
+    window._ppOff = !window._ppOff;
+    try { mgr[window._ppOff ? 'detachCamerasFromRenderPipeline' : 'attachCamerasToRenderPipeline']('mainPipeline', cam); } catch (_) {}
+    try { mgr[window._ppOff ? 'detachCamerasFromRenderPipeline' : 'attachCamerasToRenderPipeline']('ssao', cam); } catch (_) {}
+    scene.imageProcessingConfiguration.isEnabled = !window._ppOff;
+    return window._ppOff ? 'POS-PROC OFF — a sombra apareceu agora?' : 'pos-proc ON de novo';
+  };
+
+  // DIAGNÓSTICO 2: sombra MÁXIMA (preta) + pilar + sol de lado. Pra não ter
+  //  dúvida se é a sombra que está fraca ou ausente.
+  window.sombraForte = () => {
+    window._shadowGen.setDarkness(0);     // preto total
+    const sun = scene.getLightByName('sun');
+    sun.direction = new BABYLON.Vector3(-1, -0.8, 0).normalize();
+    window._dayNight?.pause(true);
+    window.testShadow();
+    return 'darkness 0 (preto) + pilar. Olhe o chão ao lado do pilar vermelho.';
   };
 
   // ── Névoa (leve — só pra dar profundidade no horizonte) ──────────
@@ -438,6 +467,7 @@ async function init() {
     navMesh.update(dt);
     dropSystem.update(dt, player.mesh?.position);
     dayNight.update(dt);
+    window._updateShadowFrustum?.();   // frustum da sombra segue o player
     gfxPanel.update();
     // F9 → entra/sai da arena de teste de sombras
     const f9 = input.isDown('F9');

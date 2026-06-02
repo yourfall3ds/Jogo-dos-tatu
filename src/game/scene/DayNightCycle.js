@@ -42,7 +42,9 @@ export class DayNightCycle {
   _buildSky() {
     // SkyMaterial vem no bundle do Babylon (materialsLibrary). Se não houver,
     //  cai num gradiente simples (fallback).
-    this.skyDome = BABYLON.MeshBuilder.CreateBox('skyHD', { size: 1000 }, this.scene);
+    // ESFERA (não box!) — o SkyMaterial deforma o sol nas quinas de um box,
+    //  virando aquele "triângulo" branco. Esfera dá céu/sol redondo correto.
+    this.skyDome = BABYLON.MeshBuilder.CreateSphere('skyHD', { diameter: 1000, segments: 24 }, this.scene);
     this.skyDome.infiniteDistance = true;
     this.skyDome.isPickable = false;
     if (BABYLON.SkyMaterial) {
@@ -51,8 +53,10 @@ export class DayNightCycle {
       sky.turbidity = 8;          // atmosfera (haze)
       sky.luminance = 1;
       sky.rayleigh = 2;           // azul do céu
-      sky.mieCoefficient = 0.005;
-      sky.mieDirectionalG = 0.8;
+      // mie BAIXO → mata o "cone/raio" de luz do sol que virava o triângulo
+      //  branco gritante no céu. Halo do sol fica sutil.
+      sky.mieCoefficient = 0.001;
+      sky.mieDirectionalG = 0.05;
       sky.useSunPosition = true;  // controlamos o sol manualmente
       this.skyMat = sky;
       this.skyDome.material = sky;
@@ -149,11 +153,10 @@ export class DayNightCycle {
     const isDay = elev > -0.05;
     const dayF = Math.max(0, Math.min(1, (elev + 0.15) / 0.5));   // 0 noite → 1 dia pleno
 
-    // SOL: forte de dia, some à noite. A DIREÇÃO muda com a hora; a POSIÇÃO
-    //  fica ALTA e centrada (frustum de sombra manual depende disso — não
-    //  empurrar a luz pra longe, senão a sombra sai do shadow map).
+    // SOL: forte de dia, some à noite. Só a DIREÇÃO muda com a hora; a
+    //  POSIÇÃO da luz é controlada por _updateShadowFrustum (segue o player)
+    //  pra manter a sombra nítida. Aqui só atualizamos a direção.
     this.sun.direction = sunDir.clone();
-    this.sun.position = sunDir.scale(-120);   // 120u "atrás" da direção, centrado
     this.sun.intensity = 0.15 + dayF * 1.7;
     // cor do sol: alaranjada perto do horizonte, branca alto
     const horizon = 1 - Math.min(1, Math.abs(elev) / 0.35);   // 1 no horizonte
@@ -188,12 +191,12 @@ export class DayNightCycle {
 
     // ── CÉU ───────────────────────────────────────────────────────────
     if (this._hasSkyMat) {
-      // SkyMaterial: posiciona o sol → ele calcula as cores HD sozinho
-      const inc = Math.PI/2 - Math.asin(Math.max(-1, Math.min(1, elev)));  // 0=zênite
-      this.skyMat.sunPosition = new BABYLON.Vector3(cosA, Math.max(-0.4, elev), 0.35).normalize().scale(100);
-      this.skyMat.luminance = 0.4 + dayF * 0.4;        // menos "estouro" branco
-      this.skyMat.turbidity = 3 + (1 - dayF) * 8;
-      this.skyMat.rayleigh = 1.2 + dayF * 1.3;         // azul mais presente
+      // SkyMaterial: posição do sol ALINHADA com a esfera visual (mesma
+      //  direção), pra não desenhar um halo deslocado (o triângulo branco).
+      this.skyMat.sunPosition = new BABYLON.Vector3(cosA, Math.max(-0.35, elev), 0.35).normalize();
+      this.skyMat.luminance = 0.5 + dayF * 0.5;
+      this.skyMat.turbidity = 4 + (1 - dayF) * 6;
+      this.skyMat.rayleigh = 1.5 + dayF * 1.2;
     } else {
       // fallback gradiente: cor do céu por fase
       const c = this._skyColorFor(elev, horizon);

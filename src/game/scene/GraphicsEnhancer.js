@@ -114,7 +114,25 @@ export class GraphicsEnhancer {
     }
     // garante receiveShadows em todo o cenário
     cenario.forEach(m => { m.receiveShadows = true; });
-    console.log(`[GFX] sombras: ${cenario.length} superfícies, luzes FX isoladas`);
+
+    // Registra os CASTERS: objetos sólidos (paredes/torres/construção/props)
+    //  projetam sombra. Chão/terreno NÃO (só recebem). Inclui child meshes
+    //  dos GLB (root costuma ser vazio). Pega via shadowGen global.
+    const sg = window._shadowGen;
+    if (sg) {
+      const sm = sg.getShadowMap();
+      const isCaster = (m) => {
+        const n = m.name || '';
+        if (/ground|bump_/i.test(n)) return false;   // chão não projeta
+        return /alley|tower|tplat|twall|ramp|cover|sniper|cheese|placed_|_decor_|crate|barrel/i.test(n)
+          && (m.getTotalVertices?.() || 0) > 0;
+      };
+      let added = 0;
+      for (const m of scene.meshes) {
+        if (isCaster(m) && sm.renderList && !sm.renderList.includes(m)) { sg.addShadowCaster(m); added++; }
+      }
+      console.log(`[GFX] sombras: ${cenario.length} recebem · ${added} casters add · luzes FX isoladas`);
+    }
   }
 
   // Ajusta exposure/bloom conforme a hora (chamado pelo DayNightCycle)
