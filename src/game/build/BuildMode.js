@@ -25,6 +25,7 @@
 // ─────────────────────────────────────────────────────────────────
 import { LocalDB }       from '../data/LocalDB.js';
 import { AssetRegistry } from '../data/AssetRegistry.js';
+import { AssetGroups }   from '../data/AssetGroups.js';
 import { optimizeCollider } from '../scene/ColliderOptimizer.js';
 
 const MACHINE_P1 = 'assets/itens 3d/Maquina de assets/Meshy_AI_Phase_1_Compact_Disc_0530011922_image-to-3d-texture.glb';
@@ -346,7 +347,11 @@ export class BuildMode {
   async _selectItem(item) {
     this._ghostSrc = item;
     this._rotY     = 0;
-    this._scaleM   = 1.0;
+    // Usa a ESCALA PADRÃO do asset (se definida na biblioteca) → o ghost já
+    //  nasce no tamanho certo, sem precisar ajustar toda vez.
+    let defScale = 1.0;
+    try { const ds = await AssetGroups.getDefaultScale(item.id); if (ds != null) defScale = ds; } catch (_) {}
+    this._scaleM   = defScale;
     this._offX = this._offY = this._offZ = 0;
     this._disposeGhost();
 
@@ -667,6 +672,35 @@ export class BuildMode {
     } catch (e) {
       console.warn('[BuildMode] falha ao colocar:', e.message);
     }
+  }
+
+  /**
+   * Aplica uma ESCALA a TODOS os objetos colocados de um mesmo tipo (assetId).
+   * Atualiza o mesh, o colisor/física e o record salvo. Salva a escala como
+   * padrão do asset (novos spawns já nascem com ela). Retorna quantos mudaram.
+   */
+  async applyScaleToAll(assetId, scale) {
+    scale = Math.max(0.05, Math.min(20, scale));
+    let n = 0;
+    for (const entry of this._placed) {
+      const rec = entry.record;
+      if (!rec || rec.id !== assetId || !entry.root) continue;
+      entry.root.scaling.setAll(scale);
+      rec.sc = scale;
+      // Reaplica colisão/física no novo tamanho (recria o corpo se preciso)
+      try {
+        const meshes = [entry.root, ...entry.root.getChildMeshes(false)];
+        this._applyCollisionProps(entry.root, meshes, rec.groupProps || {});
+      } catch (_) {}
+      n++;
+    }
+    // persiste a escala padrão + os records atualizados
+    try { await AssetGroups.setDefaultScale(assetId, scale); } catch (_) {}
+    this._save();
+    // mundo mudou → regenera navmesh
+    window._navMesh?.markDirty?.();
+    console.log(`[BuildMode] escala ${scale} aplicada a ${n} "${assetId}"`);
+    return n;
   }
 
   /**

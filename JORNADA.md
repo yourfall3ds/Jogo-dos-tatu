@@ -105,6 +105,7 @@
 - [x] AssetMachine + wishlist de assets
 - [x] SceneEditor, AssetGroups, AssetEditorUI
 - [x] Persistência: LocalDB / TemplateDB / localStorage
+- [x] **Escala padrão por asset** — define o tamanho de um tipo na biblioteca (📐) e aplica a TODOS do mesmo tipo no mapa de uma vez; novos spawns já nascem com ela
 - [x] Debug: MonsterDebugMode, AnimatorMode, ColliderDebug, ThumbnailGen
 
 ## 🗺️ Mundo & Progressão

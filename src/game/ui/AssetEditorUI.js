@@ -74,6 +74,18 @@ export class AssetEditorUI {
             <label class="ae-gl"><input type="checkbox" id="ae-g-collect"> 🎒 É Coletável (vai pro inventário)</label>
             <div id="ae-g-status" style="font-size:10px;color:#5fc;min-height:13px;margin-top:3px"></div>
 
+            <!-- ESCALA PADRÃO (aplica a todas as cópias no mapa) -->
+            <div class="ae-sec" style="margin-top:14px">📐 Escala padrão</div>
+            <div style="font-size:10px;color:#668;margin-bottom:6px">Tamanho de todas as cópias deste asset no mapa.</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+              <input id="ae-scale-range" type="range" min="0.1" max="8" step="0.05" value="1" style="flex:1">
+              <input id="ae-scale-num" type="number" min="0.1" max="20" step="0.05" value="1" style="width:58px;background:#0c1020;border:1px solid #345;color:#fff;border-radius:5px;padding:3px;text-align:center;font-size:11px">
+            </div>
+            <button id="ae-scale-apply" class="ae-btn" style="width:100%;background:#1a2a4a;border-color:#46a;color:#bdf">
+              📐 Aplicar a todas as cópias
+            </button>
+            <div id="ae-scale-status" style="font-size:10px;color:#5fc;min-height:13px;margin-top:3px"></div>
+
             <!-- ANIMAÇÕES -->
             <div class="ae-sec" style="margin-top:14px">🎬 Animações</div>
             <div id="ae-anims" style="display:flex;flex-direction:column;gap:4px;font-size:11px"></div>
@@ -128,6 +140,13 @@ export class AssetEditorUI {
     // Gameplay: salva ao marcar
     ['ae-g-collide', 'ae-g-phys', 'ae-g-break', 'ae-g-collect'].forEach(id =>
       el.querySelector('#' + id).addEventListener('change', () => this._saveProps()));
+
+    // Escala padrão: slider <-> número sincronizados; botão aplica a todos
+    const sRange = el.querySelector('#ae-scale-range');
+    const sNum   = el.querySelector('#ae-scale-num');
+    sRange.addEventListener('input', () => { sNum.value = sRange.value; });
+    sNum.addEventListener('input',   () => { sRange.value = sNum.value; });
+    el.querySelector('#ae-scale-apply').onclick = () => this._applyScale();
   }
 
   async _loadProps() {
@@ -137,6 +156,23 @@ export class AssetEditorUI {
     this._el.querySelector('#ae-g-phys').checked    = !!p.physics;
     this._el.querySelector('#ae-g-break').checked   = !!p.breakable;
     this._el.querySelector('#ae-g-collect').checked = !!p.collectable;
+    // escala padrão atual (default 1)
+    const ds = (await AssetGroups.getDefaultScale(this._asset.id).catch(() => null)) ?? 1.0;
+    const n = (window._buildMode?._placed || []).filter(x => x.record?.id === this._asset.id).length;
+    this._el.querySelector('#ae-scale-range').value = ds;
+    this._el.querySelector('#ae-scale-num').value   = ds;
+    const st = this._el.querySelector('#ae-scale-status');
+    if (st) st.textContent = n ? `${n} cópia(s) no mapa` : '';
+  }
+
+  async _applyScale() {
+    if (!this._asset) return;
+    const { AssetGroups } = await import('../data/AssetGroups.js');
+    const s = parseFloat(this._el.querySelector('#ae-scale-num').value) || 1.0;
+    const n = (await window._buildMode?.applyScaleToAll?.(this._asset.id, s)) ?? 0;
+    await AssetGroups.setDefaultScale(this._asset.id, s);   // garante padrão mesmo sem cópias
+    const st = this._el.querySelector('#ae-scale-status');
+    if (st) { st.textContent = `✅ escala ${s} · ${n} cópia(s) atualizada(s)`; setTimeout(() => { if (st) st.textContent = ''; }, 2500); }
   }
 
   async _saveProps() {

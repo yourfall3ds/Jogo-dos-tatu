@@ -261,6 +261,22 @@ export class AssetGroups {
     await LocalDB.save('asset_props_overrides', ov);
   }
 
+  // ── Escala PADRÃO por asset (todos do mesmo tipo usam) ───────────
+  //  Guardada em 'asset_default_scale' { [assetId]: number }. Usada pelo
+  //  ghost ao colocar e pelo "Aplicar a todos" pra padronizar o mapa.
+  static async getDefaultScale(assetId) {
+    const map = await LocalDB.get('asset_default_scale', {});
+    return map[assetId] ?? null;
+  }
+  static async setDefaultScale(assetId, scale) {
+    const map = await LocalDB.get('asset_default_scale', {});
+    map[assetId] = scale;
+    await LocalDB.save('asset_default_scale', map);
+  }
+  static async allDefaultScales() {
+    return await LocalDB.get('asset_default_scale', {});
+  }
+
   static async deleteAsset(assetId) {
     let all = await LocalDB.get(STORE_ASSETS, []);
     all     = all.filter(a => a.id !== assetId);

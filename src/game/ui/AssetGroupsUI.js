@@ -370,6 +370,7 @@ export class AssetGroupsUI {
       : `<div class="no-thumb">📦</div>`;
 
     // Editar abre o editor isolado pra TODOS; built-in não deleta/renomeia
+    // (escala padrão fica dentro do Editor, junto do Gameplay)
     const actions = asset.builtin
       ? `<button class="btn-edit">✎ Editar</button>
          <button class="btn-spawn">▶ Spawnar</button>
