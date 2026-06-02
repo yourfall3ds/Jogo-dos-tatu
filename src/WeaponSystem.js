@@ -1,5 +1,7 @@
 import { PistolaBucaneira } from './game/weapons/PistolaBucaneira.js';
 import { RiflePesado }      from './game/weapons/RiflePesado.js';
+import { EspadaPaladin }    from './game/weapons/EspadaPaladin.js';
+import { EspadaZweihander } from './game/weapons/EspadaZweihander.js';
 import { LocalDB }           from './game/data/LocalDB.js';
 
 /**
@@ -18,7 +20,14 @@ export class WeaponSystem {
     this.slot2 = new RiflePesado(scene);
     this.slot2.id = 'rifle';
 
-    this.weapons = [this.slot1, this.slot2];
+    // ── Espadas (melee) — ordem ao ciclar com scroll ──
+    this.slot3 = new EspadaPaladin(scene);
+    this.slot3.id = 'sword_paladin';
+
+    this.slot4 = new EspadaZweihander(scene);
+    this.slot4.id = 'sword_zweihander';
+
+    this.weapons = [this.slot1, this.slot2, this.slot3, this.slot4];
     this.currentWeaponIndex = 0;
 
     // Stats atuais (serão sobrescritos pelo init())
@@ -128,6 +137,14 @@ export class WeaponSystem {
           this._muzzlePoint.position = w.muzzleOffset;
       }
       w.applyToMesh(this._glbRoot, false);
+    }
+
+    // ── Sincroniza modo do PlayerStateMachine ──
+    // Espada equipada → state 'sword' (canAttack true); arma de fogo → 'armed'.
+    const sm = this._stateMachine || window._gamePlayer?.stateMachine;
+    if (sm) {
+      if (w.isMelee) sm.equipSword();
+      else if (sm.isArmedFlag) sm.equipWeapon();
     }
 
     if (this.onWeaponSwitched) this.onWeaponSwitched(w);
@@ -343,6 +360,10 @@ export class WeaponSystem {
   }
 
   shoot() {
+    // Melee (espada): WeaponSystem.shoot é no-op. Player.js detecta isMelee
+    // e roteia LMB para combatSystem.swordAttack().
+    const curW = this.getCurrentWeapon();
+    if (curW?.isMelee) return;
     if (this.reloading || this.ammo <= 0 || this._fireT > 0) return;
     this.ammo--;
     this._fireT = this.FIRE_RATE;
@@ -507,6 +528,8 @@ export class WeaponSystem {
   }
 
   startReload() {
+    const curW = this.getCurrentWeapon();
+    if (curW?.isMelee) return;
     if (this.reloading || this.ammo === this.maxAmmo) return;
     this.reloading = true;
     this._reloadT = 1.5;

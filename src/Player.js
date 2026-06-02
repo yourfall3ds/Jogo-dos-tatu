@@ -608,16 +608,20 @@ export class Player {
     const lmbN = this.input.consumeClickCount();
     const isArmed = this.stateMachine ? this.stateMachine.isArmedFlag : true;
     const curW = this.weapon.getCurrentWeapon?.();
+    const isMelee = !!curW?.isMelee;
     if (this._dead) {
       this._stopMgLoop();
-    } else if (isArmed && curW?.automatic) {
+    } else if (isArmed && !isMelee && curW?.automatic) {
       // FULL-AUTO: SEGURA o botão → metralha (o fireRate controla a cadência).
       if (this.input.isFireDown()) this.weapon.shoot();
       this._updateMgLoop(curW);
     } else {
       this._stopMgLoop();
       if (lmbN > 0) {
-        if (!isArmed && this.combatSystem) {
+        if (isArmed && isMelee && this.combatSystem) {
+          // ESPADA: cada clique = swordAttack (encadeia chain do ComboSystem)
+          for (let i = 0; i < lmbN; i++) this.combatSystem.swordAttack();
+        } else if (!isArmed && this.combatSystem) {
           for (let i = 0; i < lmbN; i++) this.combatSystem.lightAttack();
         } else {
           this.weapon.shoot();   // semi-auto: 1 tiro por clique
@@ -660,6 +664,14 @@ export class Player {
       this.weapon.switchWeapon(next);
       this._updateWeaponVisibility();
     }
+
+    // ── Q — Ultimate de espada (se equipada). Se NÃO equipada, deixa
+    //  o SkillSystem processar Q normalmente (ultimate de skill).
+    const qNow = this.input.isDown('KeyQ');
+    if (qNow && !this._wasQ && isArmed && isMelee && this.combatSystem) {
+      this.combatSystem.swordUltimate();
+    }
+    this._wasQ = qNow;
 
     const gNow = this.input.isDown('KeyG');
     if (gNow && !this._wasG) {

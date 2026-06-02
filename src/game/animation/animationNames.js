@@ -87,6 +87,14 @@ export const MOVESETS = {
     combo_3:   'assets/animations/com_espada/attack_combo_3.glb',
     charged:   'assets/animations/com_espada/attack_charged.glb',
     ultimate:  'assets/animations/com_espada/ultimate.glb',
+    // Nomes canônicos usados pelo CombatSystem (chain de espada).
+    // Apontam para os mesmos GLBs — apenas alias com prefixo 'sword_'.
+    sword_attack_01: 'assets/animations/com_espada/attack_01.glb',
+    sword_combo_2:   'assets/animations/com_espada/attack_combo_2.glb',
+    sword_combo_3:   'assets/animations/com_espada/attack_combo_3.glb',
+    sword_charged:   'assets/animations/com_espada/attack_charged.glb',
+    sword_ultimate:  'assets/animations/com_espada/ultimate.glb',
+    sword_idle:      'assets/animations/com_espada/idle.glb',
   },
 
   parkour: {

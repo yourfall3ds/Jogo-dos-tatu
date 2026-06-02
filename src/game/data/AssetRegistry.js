@@ -161,6 +161,9 @@ export const AssetRegistry = {
     meshyGun2:   'assets/itens 3d/Armas/Meshy_AI_Faça_uma_Arma_QUE_DE_0527020413_texture.glb',
     swordBronze: FANTASY + 'Sword_Bronze.gltf',
     axeBronze:   FANTASY + 'Axe_Bronze.gltf',
+    // ── Espadas PBR (Forgotten Insanity) ──
+    sword_paladin:    'assets/weapons/longsword_paladin.glb',
+    sword_zweihander: 'assets/weapons/zweihander.glb',
   },
 
   // ── Itens (poções, baús — já existem como GLB) ──────────────────

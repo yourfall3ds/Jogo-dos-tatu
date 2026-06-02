@@ -548,14 +548,21 @@ async function _restoreMachines(scene) {
 async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
   const queue = [
     // Armas de fogo principais
-    { key: 'pistol', done: ms => { 
+    { key: 'pistol', done: ms => {
         player.weapon.setGLBWeapon(ms, 'pistol');
         player.attachCurrentWeaponToAnimator();
       }, label: 'Pistola…' },
-    { key: 'rifle',  done: ms => { 
+    { key: 'rifle',  done: ms => {
         player.weapon.setGLBWeapon(ms, 'rifle');
         player.attachCurrentWeaponToAnimator();
       }, label: 'Rifle…' },
+    // ── Espadas (Forgotten Insanity PBR) ──
+    { key: 'sword_paladin', done: ms => {
+        player.weapon.setGLBWeapon(ms, 'sword_paladin');
+      }, label: 'Longsword Paladino…' },
+    { key: 'sword_zweihander', done: ms => {
+        player.weapon.setGLBWeapon(ms, 'sword_zweihander');
+      }, label: 'Zweihander…' },
     
     // ── Props/decoração automáticos DESATIVADOS ──────────────────────
     //  Antes nasciam espalhados (pequenos) no boot. Removidos da cena pra
@@ -583,6 +590,8 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
         p.animCtrl     = new AnimationController(p.animLib);
         p.layered      = new LayeredAnimator(p.animLib, scene);   // upper/lower split
         p.stateMachine = new PlayerStateMachine();
+        // Conecta WeaponSystem ao stateMachine para sincronizar 'sword' vs 'armed'
+        if (p.weapon) p.weapon._stateMachine = p.stateMachine;
         p.comboSystem  = new ComboSystem();
         p.impactSystem = new ImpactEffectSystem(scene);
         p.combatSystem = new CombatSystem(p.animCtrl, p.stateMachine, p.comboSystem, p.impactSystem, p.mesh);

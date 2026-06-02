@@ -15,6 +15,9 @@ export const ASSET_PATHS = {
   // ── Armas (Nova Estrutura) ──────────────────────────────────────
   pistol:        'assets/itens 3d/Armas/Arma inicial.glb',
   rifle:         'assets/itens 3d/ExternalAssets/Sketchfab/Weapons/sci_fi_plasma_rifle.glb',
+  // ── Espadas (Forgotten Insanity PBR) ──
+  sword_paladin:    'assets/weapons/longsword_paladin.glb',
+  sword_zweihander: 'assets/weapons/zweihander.glb',
   weaponMain:    'assets/itens 3d/Armas/Arma inicial.glb',
   weaponAlt:     'assets/itens 3d/ExternalAssets/Sketchfab/Weapons/sci_fi_plasma_rifle.glb',
   weaponOld:     'assets/itens 3d/Armas/Arma inicial.glb',

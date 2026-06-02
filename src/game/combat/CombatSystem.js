@@ -57,6 +57,22 @@ export class CombatSystem {
       armada:         { hits: [{ hitTime: 0.22, damage: 42, bone: 'RightFoot', kb: 3.2 }], comboWindow: 0.60 },
       martelo:        { hits: [{ hitTime: 0.18, damage: 40, bone: 'RightFoot', kb: 3.8 }], comboWindow: 0.55 },
       pontera:        { hits: [{ hitTime: 0.20, damage: 35, bone: 'LeftFoot',  kb: 2.8 }], comboWindow: 0.50 },
+
+      // ── ESPADA (LMB com sword equipada — feel The Duel / GunZ) ──────
+      //  melee: 'sword' → _applyHit usa cone amplo na frente (range 3.0,
+      //  arc ~120°) em vez de osso. Damage alto, kb pesado, hitstop maior.
+      sword_attack_01: { hits: [{ hitTime: 0.10, damage: 40, melee: 'sword', kb: 2.5 }], comboWindow: 0.35 }, // slash diagonal
+      sword_combo_2:   { hits: [{ hitTime: 0.12, damage: 50, melee: 'sword', kb: 3.0 }], comboWindow: 0.40 }, // slash horizontal
+      sword_combo_3:   { hits: [
+        { hitTime: 0.10, damage: 30, melee: 'sword', kb: 1.5 },
+        { hitTime: 0.28, damage: 45, melee: 'sword', kb: 3.5 }
+      ], comboWindow: 0.50 }, // 2 hits encadeados
+      sword_charged:   { hits: [{ hitTime: 0.30, damage: 110, melee: 'sword', kb: 6.0 }], comboWindow: 0.55 }, // finisher pesado
+      sword_ultimate:  { hits: [
+        { hitTime: 0.25, damage: 60, melee: 'sword', kb: 4.0 },
+        { hitTime: 0.50, damage: 80, melee: 'sword', kb: 5.0 },
+        { hitTime: 0.75, damage: 120, melee: 'sword', kb: 7.0 }
+      ], comboWindow: 0.70 }, // Q — 3 hits devastadores
     };
 
     // Ataques AÉREOS (pulando): soco voador vs chute voador
@@ -119,6 +135,29 @@ export class CombatSystem {
     console.log("Heavy attack — em desenvolvimento");
   }
 
+  // ── ESPADA ──────────────────────────────────────────────────────
+  //  swordAttack: LMB com espada equipada. Encadeia slash 1→2→3→charged.
+  //  Mesma lógica de cancel/queue do soco — mas roteia para sword chain.
+  swordAttack() {
+    if (this.stateMachine.isAttacking()) {
+      if (this._canCancel) { this._canCancel = false; this._executeAttack('sword'); }
+      else this.comboSystem.registerSword();
+      return;
+    }
+    if (!this.stateMachine.canAttack()) return;
+    this._executeAttack('sword');
+  }
+
+  swordUltimate() {
+    if (!this.stateMachine.canAttack() && !this.stateMachine.isAttacking()) return;
+    this.stateMachine.setState("attacking");
+    this.comboSystem.reset();
+    const data = this.attackData['sword_ultimate'];
+    if (!data) { this.stateMachine.setState("sword"); return; }
+    this._lastAttackType = 'sword';
+    this._executeNextAttack('sword_ultimate', data, 2.6, false);
+  }
+
   _executeAttack(type) {
     this.stateMachine.setState("attacking");
 
@@ -136,9 +175,9 @@ export class CombatSystem {
         attackAnim = this._airKickChain[this._airKickIdx++];
       }
     } else {
-      attackAnim = type === 'kick'
-        ? this.comboSystem.getNextKick()
-        : this.comboSystem.getNextPunch();
+      attackAnim = type === 'kick'  ? this.comboSystem.getNextKick()
+                : type === 'sword' ? this.comboSystem.getNextSword()
+                                   : this.comboSystem.getNextPunch();
     }
 
     const data = this.attackData[attackAnim];
@@ -155,7 +194,9 @@ export class CombatSystem {
     const speed = 3.4 + crossBonus;
 
     this._lastAttackType = type;
-    this._executeNextAttack(attackAnim, data, speed, type === 'kick');
+    // Espada usa velocidade mais "GunZ" (rápida e seca, sem o bonus de cross)
+    const swordSpeed = type === 'sword' ? 2.6 : speed;
+    this._executeNextAttack(attackAnim, data, swordSpeed, type === 'kick');
   }
 
   _executeNextAttack(attackAnim, data, speed = 3.4, isKick = false) {
@@ -312,9 +353,11 @@ export class CombatSystem {
     //  porque o pé fica baixo e o hit dispara antes de estender. Aqui
     //  adicionamos "está NA FRENTE e dentro do ALCANCE" → soco/chute
     //  acertam de forma confiável (padrão de jogo de ação).
+    //  Espada (melee:'sword'): alcance 3.2u + arco ~120° (mais largo).
+    const isSword = hitDef.melee === 'sword';
     const fwdFlat = moveDir.clone(); fwdFlat.y = 0; fwdFlat.normalize();
-    const range   = isKick ? 2.4 : 2.15;
-    const ARC_COS = 0.35;   // ~70° de meia-abertura
+    const range   = isSword ? 3.2 : (isKick ? 2.4 : 2.15);
+    const ARC_COS = isSword ? -0.10 : 0.35;   // sword ~107° meia-abertura, soco/chute ~70°
     const _inFront = (targetPos) => {
       const to = targetPos.subtract(currentPos); to.y = 0;
       const d = to.length();

@@ -1,7 +1,8 @@
 export class PlayerStateMachine {
   constructor() {
-    this.state = "unarmed"; // idle, moving, armed, unarmed, attacking, shooting, stunned
+    this.state = "unarmed"; // idle, moving, armed, sword, unarmed, attacking, shooting, stunned
     this.isArmedFlag = false;
+    this.isSwordFlag = false; // subtipo de armed: melee em vez de tiro
   }
 
   setState(newState) {
@@ -19,7 +20,14 @@ export class PlayerStateMachine {
   }
 
   canAttack() {
-    return (this.state === "unarmed" || this.state === "moving" || this.state === "idle") && this.state !== "dodging";
+    // Inclui 'sword' (espada saca = pode atacar com slash) e 'armed' (pra
+    // permitir melee como fallback se o WeaponSystem habilitar isMelee).
+    return (
+      this.state === "unarmed" ||
+      this.state === "moving"  ||
+      this.state === "idle"    ||
+      this.state === "sword"
+    ) && this.state !== "dodging";
   }
 
   canShoot() {
@@ -40,11 +48,19 @@ export class PlayerStateMachine {
 
   equipWeapon() {
     this.isArmedFlag = true;
+    this.isSwordFlag = false;
     this.setState("armed");
+  }
+
+  equipSword() {
+    this.isArmedFlag = true;
+    this.isSwordFlag = true;
+    this.setState("sword");
   }
 
   dropWeapon() {
     this.isArmedFlag = false;
+    this.isSwordFlag = false;
     this.setState("unarmed");
   }
 }

@@ -15,9 +15,17 @@ export class ComboSystem {
     // Combo de chute "bala": os mais foda carregados, encadeados.
     this.kickChain  = ["kick_01", "roundhouse", "high_kick", "spartan_kick", "kick_02"];
 
+    // ── ESPADA (estilo The Duel / GunZ) ─────────────────────────────
+    // slash básico → combo 2 → combo 3 → carregado (finisher pesado)
+    // ultimate fica para Q (chamada separada via swordUltimate()).
+    this.swordChain     = ["sword_attack_01", "sword_combo_2", "sword_combo_3"];
+    this.swordFinishers = ["sword_charged"];
+    this.swordFinisherIdx = 0;
+
     // Índices independentes — avançam somente no tipo correto
     this.punchIdx = 0;
     this.kickIdx  = 0;
+    this.swordIdx = 0;
 
     // FILA de inputs durante a animação. Antes era um slot único, então
     // clicar RÁPIDO (mashing) colapsava vários cliques em UM só → combo
@@ -33,9 +41,10 @@ export class ComboSystem {
   // ── Registra input durante animação (entra na fila) ──────────────
   registerPunch() { if (this._queue.length < this.QUEUE_MAX) this._queue.push('punch'); }
   registerKick()  { if (this._queue.length < this.QUEUE_MAX) this._queue.push('kick');  }
+  registerSword() { if (this._queue.length < this.QUEUE_MAX) this._queue.push('sword'); }
 
   consumeBuffer() {
-    return this._queue.shift() || null; // 'punch' | 'kick' | null
+    return this._queue.shift() || null; // 'punch' | 'kick' | 'sword' | null
   }
 
   // ── Retorna próxima animação de soco ─────────────────────────────
@@ -63,10 +72,25 @@ export class ComboSystem {
     return anim;
   }
 
+  // ── Próxima anim de espada (chain → finisher → reset) ───────────
+  getNextSword() {
+    let anim;
+    if (this.swordIdx < this.swordChain.length) {
+      anim = this.swordChain[this.swordIdx++];
+    } else {
+      anim = this.swordFinishers[this.swordFinisherIdx++ % this.swordFinishers.length];
+      this.swordIdx = 0;
+    }
+    this._history.push('sword');
+    if (this._history.length > 6) this._history.shift();
+    return anim;
+  }
+
   // Reseta tudo ao fim do combo ou ao tomar dano
   reset() {
     this.punchIdx  = 0;
     this.kickIdx   = 0;
+    this.swordIdx  = 0;
     this._queue    = [];
     this._history  = [];
   }
