@@ -442,6 +442,14 @@ export class WeaponSystem {
         hit.pickedMesh._enemyRef.takeDamage(dmg, dir);
         // Número de dano flutuante no ponto do tiro
         window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, { color: '#ffffff' });
+        // SANGUE no ponto do tiro
+        if (window._bloodFX) {
+          window._bloodFX.spawn(
+            hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(),
+            dir,
+            { multiplier: dmg >= 60 ? 1.4 : 0.85, sourceNode: hit.pickedMesh }
+          );
+        }
       }
 
       // ── Objeto dinâmico (_gameObject = GameObject) ───────────────

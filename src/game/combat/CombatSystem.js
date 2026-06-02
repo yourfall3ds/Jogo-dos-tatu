@@ -412,6 +412,21 @@ export class CombatSystem {
             if (isKick) this.impactSystem.spawnKickImpact(impactPos, true);
             else        this.impactSystem.spawnPunchImpact(impactPos, true);
           }
+          // SANGUE: espada/crítico = jato pesado; soco normal = leve
+          if (window._bloodFX) {
+            const enemyPos = m.getAbsolutePosition();
+            const bloodPos = new BABYLON.Vector3(
+              (impactPos.x + enemyPos.x) / 2,
+              (impactPos.y + enemyPos.y) / 2 + 0.3,
+              (impactPos.z + enemyPos.z) / 2,
+            );
+            const isSword = hitDef.melee === 'sword';
+            window._bloodFX.spawn(bloodPos, moveDir, {
+              multiplier: isSword ? 2.0 : (critLevel >= 2 ? 1.6 : critLevel === 1 ? 1.2 : 1.0),
+              sourceNode: m,
+              isHeavy: isSword || critLevel >= 2,
+            });
+          }
           // Número de dano flutuante (crit = vermelho)
           window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
           // Hit-stop escalado: micro no normal · forte no crit · mais no super.
@@ -469,6 +484,36 @@ export class CombatSystem {
             this.impactSystem.spawnKickImpact(hit.pickedPoint, true);
           } else {
             this.impactSystem.spawnPunchImpact(hit.pickedPoint, true);
+          }
+        }
+
+        // ── WALL KICK com espada (estilo The Duel) ──
+        //  Espada acertando parede estática → empurrão curto pra CIMA +
+        //  leve recuo. NÃO afasta longe (preserva proximidade pra dash).
+        //  Recarrega o ar-dash também (skill de "subir parede picando").
+        if (hitDef.melee === 'sword') {
+          const m = hit.pickedMesh;
+          const isWall = m && (
+            m._isWall ||
+            /^(wall|alley|spdAlley|wj_zig|dash_arch|sus_|ramp_|bump_)/.test(m.name || '')
+          );
+          if (isWall) {
+            const pl = this.playerMesh?._playerRef;
+            if (pl) {
+              // KB curto: empurra player levemente PRA TRÁS + impulso vertical
+              const backDir = moveDir.clone().scale(-1);
+              const verticalKick = pl.isGrounded ? 7 : 10;
+              pl.velY = Math.max(pl.velY, verticalKick);
+              pl._vx += backDir.x * 4;     // recuo leve (preserva dash de volta)
+              pl._vz += backDir.z * 4;
+              // Recarrega 1 air-dash (skill cap pra "escalar" com espada)
+              if (pl._airDashesLeft != null && pl._airDashesLeft < pl.AIR_DASH_MAX) {
+                pl._airDashesLeft = Math.min(pl.AIR_DASH_MAX, pl._airDashesLeft + 1);
+              }
+              // som de impacto metálico/parede (reusa swing como base)
+              pl.sounds?.playNow?.('swing_3', 0.5);
+              window._hitStop?.hit(0.06, { zoom: 0.05 });
+            }
           }
         }
       }

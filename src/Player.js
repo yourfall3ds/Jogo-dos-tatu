@@ -82,10 +82,15 @@ export class Player {
     this._breathT      = 0;     // timer da animação de recuperar o fôlego
 
     // ── Dash (double-tap W) ─────────────────────────────────────────
+    //  Permite ENCADEAR dashes no ar pra "plainar" estilo The Duel.
+    //  airCharges recarrega ao tocar chão. Cooldown curto = fluidez.
     this._dashT       = 0;   // timer ativo do dash (>0 = dashing)
     this._dashCdT     = 0;   // cooldown entre dashes
-    this.DASH_DUR     = 0.28;
-    this.DASH_FORCE   = 42;  // bem mais forte que a corrida (SPEED=11)
+    this.DASH_DUR     = 0.26;
+    this.DASH_FORCE   = 44;  // um toque mais forte
+    this.DASH_AIR_LIFT = 2.6;   // empurrão pra cima no dash aéreo (sustenta planagem)
+    this.AIR_DASH_MAX = 2;     // 2 dashes aéreos consecutivos sem tocar chão
+    this._airDashesLeft = 2;
 
     // ── Mira (ADS — Aim Down Sights) ────────────────────────────────
     this._aiming      = false;
@@ -438,18 +443,34 @@ export class Player {
       });
     }
 
-    // ── 5.2 Dash (double-tap W) ─────────────────────────────────────
+    // ── 5.2 Dash (double-tap W) — fluido, encadeável no ar ──────────
+    //  Chão: dash livre (cd curto).
+    //  Ar: consome airCharge (2 disponíveis, recarrega no chão).
+    //  Cada dash aéreo dá leve "lift" pra sustentar planagem — controla
+    //  altura usando sequência de dashes (skill ceiling alto).
     if (this.input.consumeDoubleTapW() && canMove && this._dashT <= 0 && this._dodgeT <= 0 && this._dashCdT <= 0) {
-      this._dashT = this.DASH_DUR;
-      this._dashCdT = 0.45;   // cooldown curto: evita spam mesmo com toques válidos
-      // Dash vai pra FRENTE (direção da câmera) — ou direção do movimento se houver
-      const dashDir = moveDir.length() > 0.01 ? moveDir : fwd;
-      this._vx = dashDir.x * this.DASH_FORCE;
-      this._vz = dashDir.z * this.DASH_FORCE;
-      if (this.isGrounded) this.velY = 4;   // pequeno hop
-      this._dashFovT = 0.18;                 // FOV punch (sensação de velocidade)
-      this._spawnDashFX(dashDir);            // efeito visual de rastro
-      this.sounds?.playNow?.('dash');
+      const canDash = this.isGrounded || this._airDashesLeft > 0;
+      if (canDash) {
+        this._dashT = this.DASH_DUR;
+        this._dashCdT = 0.22;   // cooldown bem curto = combos fluidos
+        const dashDir = moveDir.length() > 0.01 ? moveDir : fwd;
+        this._vx = dashDir.x * this.DASH_FORCE;
+        this._vz = dashDir.z * this.DASH_FORCE;
+        if (this.isGrounded) {
+          this.velY = 4;   // hop pequeno no chão (como antes)
+        } else {
+          // Aéreo: empurrão suave pra cima — sustenta planagem com sequência
+          this.velY = Math.max(this.velY, 0) + this.DASH_AIR_LIFT;
+          this._airDashesLeft = Math.max(0, this._airDashesLeft - 1);
+        }
+        this._dashFovT = 0.18;
+        this._spawnDashFX(dashDir);
+        this.sounds?.playNow?.('dash');
+      }
+    }
+    // Recarrega charges ao tocar chão
+    if (this.isGrounded && this._airDashesLeft < this.AIR_DASH_MAX) {
+      this._airDashesLeft = this.AIR_DASH_MAX;
     }
     if (this._dashT   > 0) this._dashT   -= dt;
     if (this._dashCdT > 0) this._dashCdT -= dt;

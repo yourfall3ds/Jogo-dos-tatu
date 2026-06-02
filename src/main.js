@@ -51,6 +51,10 @@ import { GraphicsDebugPanel }   from './game/scene/GraphicsDebugPanel.js';
 import { TestArena }            from './game/scene/TestArena.js';
 import { ChibataMapLoader }    from './game/scene/ChibataMapLoader.js';
 import { MapSelectUI }         from './game/ui/MapSelectUI.js';
+import { BloodFX }             from './game/combat/BloodFX.js';
+import { WaterSystem }         from './game/scene/WaterSystem.js';
+import { SkillMapExtras }      from './game/scene/SkillMapExtras.js';
+import { SettingsUI }          from './game/ui/SettingsUI.js';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -310,6 +314,21 @@ async function init() {
   window._chibataMaps = chibataMaps;
   window._mapSelectUI = mapSelectUI;
 
+  // ── Blood FX + Water + Skill Map Extras + Settings (tecla O) ──────
+  const bloodFX = new BloodFX(scene);
+  window._bloodFX = bloodFX;
+
+  const waterSystem = new WaterSystem(scene, level);
+  window._waterSystem = waterSystem;
+  waterSystem.build();
+
+  const skillExtras = new SkillMapExtras(scene, level);
+  skillExtras.build();
+  window._skillExtras = skillExtras;
+
+  const settingsUI = new SettingsUI(bloodFX);
+  window._settingsUI = settingsUI;
+
   // ── Diretor de combate: povoa a fase com inimigos (tecla H) ───────
   const combatDirector = new CombatDirector(enemyManager, player, scene, level);
   window._combatDirector = combatDirector;
@@ -472,6 +491,9 @@ async function init() {
     moveListUI.update(dt);
     catalogUI.update();
     mapSelectUI.update(input);
+    bloodFX.update(dt);
+    waterSystem.update(dt, player);
+    settingsUI.update(input);
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
     navMesh.update(dt);
     dropSystem.update(dt, player.mesh?.position);

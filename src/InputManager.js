@@ -49,9 +49,10 @@ export class InputManager {
       // solta antes (wasDown=false) E gameActive. Segurar W não dispara.
       if (e.code === 'KeyW' && this.gameActive && !wasDown) {
         const now = performance.now();
-        if (now - this._lastWPressTime < 280) {
+        // Janela mais permissiva (320ms) — feel The Duel, dá pra encadear.
+        if (now - this._lastWPressTime < 320) {
           this._wDoubleTap = true;
-          this._lastWPressTime = 0;   // zera p/ exigir nova sequência (1 dash por par)
+          this._lastWPressTime = 0;
         } else {
           this._lastWPressTime = now;
         }
