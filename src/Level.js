@@ -437,12 +437,16 @@ export class Level {
   }
 
   /** Espalha pickups flutuantes pelo mapa */
-  spawnPickups(type, meshes) {
+  async spawnPickups(type, meshes) {
     if (!meshes?.length) return;
     this._floatingItems = this._floatingItems || [];
+    this._mapObstacles = this._mapObstacles || [];
 
     const glbRoot = meshes[0];
-    const scale = type === 'medkit' ? 0.008 : 0.01;
+    const baseScale = type === 'medkit' ? 0.008 : 0.01;
+    let mult = 1;
+    try { const ds = await AssetGroups.getDefaultScale(type); if (ds != null) mult = ds; } catch (_) {}
+    const scale = baseScale * mult;
 
     const spots = [
       [0, 1.5, 0], [-10, 1.5, -5], [10, 1.5, -5],
@@ -455,6 +459,8 @@ export class Level {
       clone.position.set(x, y, z);
       clone.scaling.setAll(scale);
       clone.setEnabled(true);
+      clone._assetId = type; clone._baseScale = baseScale;
+      this._mapObstacles.push({ clone, col: null, assetId: type, baseScale });
       this.shadowGen?.addShadowCaster(clone, true);
       
       // Agora pickups também são GameObjects (coletáveis com persistência)
@@ -473,7 +479,7 @@ export class Level {
   }
 
   /** Coloca decoração/props estáticos pelo mapa */
-  placeDecor(type, meshes) {
+  async placeDecor(type, meshes) {
     if (!meshes?.length) return;
     const glbRoot = meshes[0];
 
@@ -504,18 +510,24 @@ export class Level {
     const sz = bb.max.subtract(bb.min);
     console.log(`🏗️ decor [${type}]: bounds=(${sz.x.toFixed(1)},${sz.y.toFixed(1)},${sz.z.toFixed(1)}) scale=${cfg.scale} → altura≈${(sz.y * cfg.scale).toFixed(2)}u`);
 
+    // Escala padrão da biblioteca (multiplicador sobre a base do GLB).
+    //  type é o assetId em decor (neonSign, obelisk, crystals, ...).
+    let mult = 1;
+    try { const ds = await AssetGroups.getDefaultScale(type); if (ds != null) mult = ds; } catch (_) {}
+    this._mapObstacles = this._mapObstacles || [];
+
     for (let i = 0; i < cfg.spots.length; i++) {
       const [x, y, z] = cfg.spots[i];
       const clone = glbRoot.clone(`${type}_decor_${i}`, null, false);
       if (!clone) continue;
       clone.position.set(x, y, z);
-      clone.scaling.setAll(cfg.scale);
+      clone.scaling.setAll(cfg.scale * mult);
       clone.rotation.y = cfg.ry ? cfg.ry[i % cfg.ry.length] : Math.random() * Math.PI * 2;
       clone.setEnabled(true);
+      clone._assetId = type; clone._baseScale = cfg.scale;
       this.shadowGen?.addShadowCaster(clone, true);
-
-      // Decorações podem ser quebraveis se o usuário quiser, por padrão apenas decoração.
-      // Aqui poderíamos adicionar lógica de persistência se fossem quebráveis.
+      // Registra p/ a escala unificada do Editor de Asset pegar (sem col física)
+      this._mapObstacles.push({ clone, col: null, assetId: type, baseScale: cfg.scale });
     }
     glbRoot.setEnabled(false);
   }
