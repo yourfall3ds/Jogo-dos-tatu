@@ -201,12 +201,18 @@ async function init() {
   sun.shadowMinZ = -150; sun.shadowMaxZ = 250;
 
   const shadowGen = new BABYLON.ShadowGenerator(2048, sun);
-  shadowGen.usePercentageCloserFiltering = true;   // bordas suaves (PCF)
-  shadowGen.filteringQuality = BABYLON.ShadowGenerator.QUALITY_HIGH;
-  // bias BAIXO — bias alto fazia a sombra "fugir" do objeto e sumir.
-  shadowGen.normalBias = 0.012;
-  shadowGen.bias = 0.00005;
-  shadowGen.darkness = 0.25;
+  //  Contact Hardening: sombra suave realista (oficial Babylon). PCF de
+  //  fallback se a GPU não suportar.
+  shadowGen.bias = 0.001;
+  shadowGen.normalBias = 0.02;
+  try {
+    shadowGen.useContactHardeningShadow = true;
+    shadowGen.contactHardeningLightSizeUVRatio = 0.04;
+  } catch (_) {
+    shadowGen.usePercentageCloserFiltering = true;
+    shadowGen.filteringQuality = BABYLON.ShadowGenerator.QUALITY_HIGH;
+  }
+  shadowGen.setDarkness(0.5);   // sombra bem visível (igual exemplo oficial)
   window._shadowGen = shadowGen;
 
   // Helper de teste (rode window.testShadow() no console do jogo): cria um

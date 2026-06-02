@@ -67,8 +67,16 @@ export class DayNightCycle {
       this._hasSkyMat = false;
     }
     // esconde o sky antigo do Level (se existir) pra não brigar
+    this._hideOldSky();
+  }
+
+  // O skyBox antigo (StandardMaterial do Level) pode ser criado DEPOIS do
+  //  DayNightCycle no boot → dois céus sobrepostos = estourado. Garante que
+  //  ele fique escondido (chamado no boot e periodicamente no início).
+  _hideOldSky() {
     const old = this.scene.getMeshByName('skyBox');
-    if (old) old.setEnabled(false);
+    if (old && old.isEnabled()) { old.setEnabled(false); return true; }
+    return false;
   }
 
   _buildCelestials() {

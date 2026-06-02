@@ -130,17 +130,11 @@ export class Level {
     this._mats.accent.emissiveColor = new BABYLON.Color3(.04, .12, .18);
   }
 
-  // ── Sky dome simples ──────────────────────────────────────────────
-  _createSky() {
-    const sky = BABYLON.MeshBuilder.CreateBox('skyBox', { size: 900 }, this.scene);
-    const m   = new BABYLON.StandardMaterial('skyMat', this.scene);
-    m.backFaceCulling = false;
-    m.disableLighting = true;
-    m.emissiveColor   = new BABYLON.Color3(.55, .68, .92);
-    sky.material      = m;
-    sky.infiniteDistance = true;
-    sky.isPickable    = false;
-  }
+  // ── Sky dome ──────────────────────────────────────────────────────
+  //  DESATIVADO: o DayNightCycle agora fornece o céu HD (SkyMaterial). Este
+  //  skyBox emissivo simples sobrepunha o novo e estourava o céu. Mantido
+  //  o método vazio pra compatibilidade (chamado no construtor).
+  _createSky() { /* céu agora vem do DayNightCycle */ }
 
   // ── Helper: caixa estática com colisão ────────────────────────────
   _box(name, w, h, d, x, y, z, mat, ry = 0) {
