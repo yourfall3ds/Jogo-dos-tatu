@@ -31,7 +31,7 @@ async function _loadConfig() {
     SUPABASE_URL: 'https://myylkpoisqijfnptlnyk.supabase.co',
     SUPABASE_ANON_KEY:
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15eWxrcG9pc3FpamZucHRsbnlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY0MzQxNTIsImV4cCI6MjA3MjAxMDE1Mn0.me7aXILmeIHvjbkYWUVczOZt7gxrz8Rddv515Xa9ZTU',
-    TRANSFPS_MP_WS_URL: 'wss://overpixel.online/transfps-mp',
+    TRANSFPS_MP_WS_URL: 'wss://app.overpixel.online/transfps-mp',
   };
   return _config;
 }

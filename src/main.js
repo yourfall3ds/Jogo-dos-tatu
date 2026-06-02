@@ -473,7 +473,7 @@ async function init() {
     }
     // Conecta ao relay
     const cfg = await getConfig();
-    const wsUrl = cfg.TRANSFPS_MP_WS_URL || 'wss://overpixel.online/transfps-mp';
+    const wsUrl = cfg.TRANSFPS_MP_WS_URL || 'wss://app.overpixel.online/transfps-mp';
     const session = await auth.getSupabase().auth.getSession();
     const avatarUrl = auth.profile?.avatar_url || auth.user?.user_metadata?.avatar_url || null;
     try {
