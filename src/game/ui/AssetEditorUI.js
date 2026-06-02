@@ -75,14 +75,22 @@ export class AssetEditorUI {
             <div id="ae-g-status" style="font-size:10px;color:#5fc;min-height:13px;margin-top:3px"></div>
 
             <!-- ESCALA PADRÃO (aplica a todas as cópias no mapa) -->
-            <div class="ae-sec" style="margin-top:14px">📐 Escala padrão</div>
-            <div style="font-size:10px;color:#668;margin-bottom:6px">Tamanho de todas as cópias deste asset no mapa.</div>
+            <div class="ae-sec" style="margin-top:14px">📐 Tamanho (todas as cópias)</div>
+            <div style="font-size:10px;color:#668;margin-bottom:6px">Multiplicador do tamanho. 1 = original · 2 = dobro · 4 = 4×.</div>
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-              <input id="ae-scale-range" type="range" min="0.1" max="8" step="0.05" value="1" style="flex:1">
-              <input id="ae-scale-num" type="number" min="0.1" max="20" step="0.05" value="1" style="width:58px;background:#0c1020;border:1px solid #345;color:#fff;border-radius:5px;padding:3px;text-align:center;font-size:11px">
+              <input id="ae-scale-range" type="range" min="0.25" max="12" step="0.25" value="1" style="flex:1">
+              <input id="ae-scale-num" type="number" min="0.1" max="30" step="0.25" value="1" style="width:58px;background:#0c1020;border:1px solid #345;color:#fff;border-radius:5px;padding:3px;text-align:center;font-size:11px">
+              <span style="color:#9af;font-size:12px">×</span>
             </div>
-            <button id="ae-scale-apply" class="ae-btn" style="width:100%;background:#1a2a4a;border-color:#46a;color:#bdf">
-              📐 Aplicar a todas as cópias
+            <div style="display:flex;gap:4px;margin-bottom:6px">
+              <button class="ae-scale-preset" data-s="1" style="flex:1;background:#222a44;border:1px solid #345;color:#bcd;border-radius:5px;padding:4px;cursor:pointer;font-size:11px">1×</button>
+              <button class="ae-scale-preset" data-s="2" style="flex:1;background:#222a44;border:1px solid #345;color:#bcd;border-radius:5px;padding:4px;cursor:pointer;font-size:11px">2×</button>
+              <button class="ae-scale-preset" data-s="4" style="flex:1;background:#222a44;border:1px solid #345;color:#bcd;border-radius:5px;padding:4px;cursor:pointer;font-size:11px">4×</button>
+              <button class="ae-scale-preset" data-s="6" style="flex:1;background:#222a44;border:1px solid #345;color:#bcd;border-radius:5px;padding:4px;cursor:pointer;font-size:11px">6×</button>
+              <button class="ae-scale-preset" data-s="8" style="flex:1;background:#222a44;border:1px solid #345;color:#bcd;border-radius:5px;padding:4px;cursor:pointer;font-size:11px">8×</button>
+            </div>
+            <button id="ae-scale-apply" class="ae-btn" style="width:100%;background:#1a3a5a;border-color:#3a8;color:#9fe;font-weight:600">
+              ✅ Aplicar tamanho a todas as cópias
             </button>
             <div id="ae-scale-status" style="font-size:10px;color:#5fc;min-height:13px;margin-top:3px"></div>
 
@@ -147,6 +155,10 @@ export class AssetEditorUI {
     sRange.addEventListener('input', () => { sNum.value = sRange.value; });
     sNum.addEventListener('input',   () => { sRange.value = sNum.value; });
     el.querySelector('#ae-scale-apply').onclick = () => this._applyScale();
+    // presets: clicar já preenche E aplica
+    el.querySelectorAll('.ae-scale-preset').forEach(btn => {
+      btn.onclick = () => { sNum.value = btn.dataset.s; sRange.value = btn.dataset.s; this._applyScale(); };
+    });
   }
 
   async _loadProps() {
