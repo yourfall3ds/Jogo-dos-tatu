@@ -67,6 +67,7 @@ import { RemoteDrop }          from './game/multiplayer/RemoteDrop.js';
 import { RemoteProp }          from './game/multiplayer/RemoteProp.js';
 import { RemoteFx }            from './game/multiplayer/RemoteFx.js';
 import { ChatHud, Scoreboard, PingDisplay, DeathTimer } from './game/ui/IngameHud.js';
+import { attachTransfpsSocial } from './game/ui/TransfpsSocial.js';
 import { BloodTrail }          from './game/combat/BloodTrail.js';
 import { DeathCam }            from './game/multiplayer/DeathCam.js';
 import { PvpToggle }           from './game/ui/PvpToggle.js';
@@ -648,6 +649,30 @@ async function init() {
   window._bloodTrail = bloodTrail;
   window._deathCam = deathCam;
 
+  // ── Frentes A-J: Social/Progression/Match/Boss/Quests/Friends/Party/Tutorial ──
+  window._authUserId = auth.getUserId();
+  const social = attachTransfpsSocial({
+    cs,
+    scene,
+    auth,
+    supa: window._supabase || window.supabase || null,
+  });
+  window._social = social;
+  // Tutorial check ao receber profile
+  cs.on('profile_loaded', (p) => {
+    try { social.tutorial.maybeStart(p); } catch (_) {}
+  });
+  // Update loop em 5Hz pra HUDs que leem state
+  let _socialT = 0;
+  function _socialTick(dt) {
+    _socialT -= dt;
+    if (_socialT <= 0) {
+      try { social.update(auth.getUserId()); } catch (_) {}
+      _socialT = 0.2;
+    }
+  }
+  window._socialTick = _socialTick;
+
   // DeathCam ativado quando server reporta player.dead=true
   let _lastDeadState = false;
   let _lastKillerId = null;
@@ -891,6 +916,7 @@ async function init() {
     if (cs.connected) {
       cs.sendInput(player);
       _pingTick(dt);
+      _socialTick(dt);
       for (const rp of _remotePlayers.values()) rp.update(dt, player.camera);
       for (const m of _remoteMobs.values()) m.update(dt, player.camera);
       // Drops: anima + auto-pickup quando player chega perto

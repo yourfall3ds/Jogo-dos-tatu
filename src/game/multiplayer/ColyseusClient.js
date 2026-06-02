@@ -39,6 +39,17 @@ export class ColyseusClient {
       'prop_hit': new Set(), 'prop_broken': new Set(),
       'fx_add': new Set(), 'fx_remove': new Set(),
       'pong': new Set(),
+      // Frente B/C
+      'match_countdown': new Set(), 'match_finished': new Set(), 'lobby_reset': new Set(),
+      'wave_up': new Set(),
+      'boss_appeared': new Set(), 'boss_killed': new Set(), 'boss_phase': new Set(),
+      'boss_attack': new Set(),
+      // Frente A
+      'profile_loaded': new Set(),
+      // Frente D
+      'quest_claimed': new Set(),
+      // Frente H
+      'party_invite': new Set(), 'party_joined': new Set(), 'party_left': new Set(),
     };
     this.ping = 0;
     this._lastInputSent = 0;
@@ -149,6 +160,23 @@ export class ColyseusClient {
     this.room.onMessage('level_up', (m) => this._notify('level_up', m));
     this.room.onMessage('prop_hit', (m) => this._notify('prop_hit', m));
     this.room.onMessage('prop_broken', (m) => this._notify('prop_broken', m));
+    // Frentes B/C
+    this.room.onMessage('match_countdown', (m) => this._notify('match_countdown', m));
+    this.room.onMessage('match_finished', (m) => this._notify('match_finished', m));
+    this.room.onMessage('lobby_reset', (m) => this._notify('lobby_reset', m));
+    this.room.onMessage('wave_up', (m) => this._notify('wave_up', m));
+    this.room.onMessage('boss_appeared', (m) => this._notify('boss_appeared', m));
+    this.room.onMessage('boss_killed', (m) => this._notify('boss_killed', m));
+    this.room.onMessage('boss_phase', (m) => this._notify('boss_phase', m));
+    this.room.onMessage('boss_attack', (m) => this._notify('boss_attack', m));
+    // Frente A
+    this.room.onMessage('profile_loaded', (m) => this._notify('profile_loaded', m));
+    // Frente D
+    this.room.onMessage('quest_claimed', (m) => this._notify('quest_claimed', m));
+    // Frente H
+    this.room.onMessage('party_invite', (m) => this._notify('party_invite', m));
+    this.room.onMessage('party_joined', (m) => this._notify('party_joined', m));
+    this.room.onMessage('party_left', (m) => this._notify('party_left', m));
     this.room.onMessage('pong', (m) => {
       const now = performance.now();
       const rtt = Math.max(0, now - (m.t || now));
@@ -328,6 +356,14 @@ export class ColyseusClient {
   /** Joga item no chão (spawna drop pra outros pegarem). */
   sendDropItem(itemId) {
     this.room?.send('drop_item', { item: itemId });
+  }
+  /** Envia mensagem genérica (claim_quest, party_invite/accept/leave, etc). */
+  sendMessage(type, payload) {
+    this.room?.send(type, payload || {});
+  }
+  /** Sai da sala (volta pro lobby). */
+  leave() {
+    try { this.room?.leave?.(); } catch (_) {}
   }
 
   /** Snapshot da sala (state read-only). */

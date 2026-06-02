@@ -151,6 +151,26 @@ export class RemotePlayer {
     this.nickname = name;
     if (this._nameTextEl) this._nameTextEl.textContent = name;
   }
+  /** FRENTE H: marca quando esse player tá na minha party. */
+  setInMyParty(yes) {
+    if (this._inMyParty === !!yes) return;
+    this._inMyParty = !!yes;
+    if (!this._nameTextEl) return;
+    if (yes) {
+      this._nameTextEl.style.color = '#9a7eff';
+      this._nameTextEl.style.textShadow = '0 0 6px #9a7eff';
+      if (!this._partyMark) {
+        this._partyMark = document.createElement('span');
+        this._partyMark.textContent = '★ ';
+        this._partyMark.style.color = '#9a7eff';
+        this._nameTextEl.parentElement?.insertBefore(this._partyMark, this._nameTextEl);
+      }
+    } else {
+      this._nameTextEl.style.color = '';
+      this._nameTextEl.style.textShadow = '';
+      if (this._partyMark) { try { this._partyMark.remove(); } catch (_) {} this._partyMark = null; }
+    }
+  }
 
   _setAvatar(url) {
     if (!this._avatarEl || !url) return;

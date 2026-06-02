@@ -175,28 +175,41 @@ export class Scoreboard {
     roomLabel.textContent = `${meta.name || 'Arena'} · ${meta.map || ''}`;
 
     const myId = this.auth.getUserId();
+    const me = this.cs.state.players.get(myId);
+    const myParty = me?.party_id || null;
+    const friends = window._friendIds || new Set();
     const rows = [];
     this.cs.state.players.forEach((p, id) => {
-      rows.push({ id, p });
+      let bucket = 3; // 0=me, 1=party, 2=friends, 3=others
+      if (id === myId) bucket = 0;
+      else if (myParty && p.party_id === myParty) bucket = 1;
+      else if (friends.has(id)) bucket = 2;
+      rows.push({ id, p, bucket });
     });
-    // Ordena por kills desc, depois level desc
-    rows.sort((a, b) => (b.p.kills || 0) - (a.p.kills || 0) || (b.p.level || 1) - (a.p.level || 1));
+    // Ordena: bucket asc, depois kills desc, depois level desc
+    rows.sort((a, b) =>
+      (a.bucket - b.bucket)
+      || ((b.p.kills || 0) - (a.p.kills || 0))
+      || ((b.p.level || 1) - (a.p.level || 1))
+    );
 
     tbody.innerHTML = '';
-    rows.forEach(({ id, p }, idx) => {
+    rows.forEach(({ id, p, bucket }, idx) => {
       const isMe = id === myId;
       const row = document.createElement('tr');
       row.style.cssText = `
         border-bottom: 1px solid rgba(255,255,255,0.04);
-        ${isMe ? 'background: rgba(126,250,154,0.08);' : ''}
+        ${isMe ? 'background: rgba(126,250,154,0.08);' : bucket === 1 ? 'background: rgba(154,126,255,0.07);' : bucket === 2 ? 'background: rgba(58,168,255,0.05);' : ''}
         color: ${isMe ? '#7efa9a' : '#cdd'};
       `;
       const pingColor = p.ping < 80 ? '#7efa9a' : p.ping < 200 ? '#ffcc44' : '#ff7a8a';
       const dead = p.dead ? ' <span style="color:#ff5050;">💀</span>' : '';
       const host = p.is_host ? ' <span style="color:#ffcc00; font-size:0.85em;">👑</span>' : '';
       const pvp = p.pvp_on ? ' <span style="color:#ff5050; font-size:0.85em;">⚔</span>' : '';
+      const partyIcon = bucket === 1 ? ' <span style="color:#9a7eff; font-size:0.85em;">★</span>' : '';
+      const friendIcon = bucket === 2 ? ' <span style="color:#3aa8ff; font-size:0.85em;">♦</span>' : '';
       row.innerHTML = `
-        <td style="padding:6px 8px;">${idx + 1}. ${_esc(p.nickname || 'player')}${host}${pvp}${dead}${isMe ? ' <span style="color:#7efa9a; font-size:0.85em;">(você)</span>' : ''}</td>
+        <td style="padding:6px 8px;">${idx + 1}. ${_esc(p.nickname || 'player')}${host}${pvp}${partyIcon}${friendIcon}${dead}${isMe ? ' <span style="color:#7efa9a; font-size:0.85em;">(você)</span>' : ''}</td>
         <td style="text-align:right; padding:6px 8px; color:#5cf;">${p.level || 1}</td>
         <td style="text-align:right; padding:6px 8px; color:#fff; font-weight:700;">${p.kills || 0}</td>
         <td style="text-align:right; padding:6px 8px; color:#999;">${p.deaths || 0}</td>
