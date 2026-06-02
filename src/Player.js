@@ -1002,14 +1002,22 @@ export class Player {
     } else {
       // FPS: o nó-pai (weaponRoot, preso à câmera) foi desabilitado ao
       // entrar em TPS — precisa SEMPRE ser reabilitado, senão a arma some.
-      if (this.weapon._root) this.weapon._root.setEnabled(true);
-
+      // ROBUSTEZ: re-prende à câmera e REAPLICA pos/rot/escala toda vez. Se
+      // por timing de boot ou troca a arma ficou solta/deitada no mundo,
+      // isto a conserta (era o bug "arma no chão").
       const fpsM = this.weapon._weaponMeshes[curW.id];
+      if (this.weapon._root) {
+        if (this.weapon._root.parent !== this.camera) this.weapon._root.parent = this.camera;
+        this.weapon._root.setEnabled(true);
+      }
       if (fpsM) {
+        if (fpsM.parent !== this.weapon._root) fpsM.parent = this.weapon._root;
+        fpsM.rotationQuaternion = null;          // senão .rotation é ignorada
+        curW.applyToMesh?.(fpsM, false, this._aiming ? 1 : 0);   // recoloca na frente da câmera
         fpsM.setEnabled(true);
         fpsM.getChildMeshes().forEach(m => { m.setEnabled(true); m.isVisible = true; });
       }
-      // Garante que o GLB root da arma atual também esteja ativo
+      this.weapon._glbRoot = fpsM || this.weapon._glbRoot;
       if (this.weapon._glbRoot) this.weapon._glbRoot.setEnabled(true);
     }
   }
