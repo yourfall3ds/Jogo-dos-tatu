@@ -60,9 +60,14 @@ import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
 import { AuthSystem }          from './game/auth/AuthSystem.js';
 import { LoginScreen }         from './game/ui/LoginScreen.js';
 import { LobbyUI }             from './game/ui/LobbyUI.js';
-import { MultiplayerClient }   from './game/multiplayer/MultiplayerClient.js';
+import { ColyseusClient }      from './game/multiplayer/ColyseusClient.js';
 import { RemotePlayer }        from './game/multiplayer/RemotePlayer.js';
+import { RemoteMob }           from './game/multiplayer/RemoteMob.js';
+import { PvpToggle }           from './game/ui/PvpToggle.js';
+import { LocalAura }           from './game/combat/LocalAura.js';
 import { getConfig }           from './game/auth/SupabaseClient.js';
+
+const TRANSFPS_CS_URL = 'wss://app.overpixel.online/transfps-cs';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -348,84 +353,85 @@ async function init() {
   try { await auth.init(); } catch (e) { console.warn('[Auth] init falhou:', e.message); }
   window._auth = auth;
 
-  const mpClient = new MultiplayerClient();
-  window._mpClient = mpClient;
+  // ── ColyseusClient (state-authoritative MP) ───────────────────────
+  const cs = new ColyseusClient();
+  cs.connect(TRANSFPS_CS_URL);
+  window._cs = cs;
+  cs.setPlayerId(auth.getUserId());
+
   const _remotePlayers = new Map();  // playerId → RemotePlayer
+  const _remoteMobs = new Map();     // mobId → RemoteMob
+  window._remotePlayers = _remotePlayers;
+  window._remoteMobs = _remoteMobs;
 
-  mpClient.on('join', (p) => {
-    if (_remotePlayers.has(p.player_id)) return;
-    const rp = new RemotePlayer(scene, p);
-    _remotePlayers.set(p.player_id, rp);
-    console.log(`[MP] +${p.nickname}`);
+  // LocalAura (player local quando pvp_on)
+  let _localAura = null;
+
+  // ── State listeners ──
+  cs.on('player_add', ({ id, state }) => {
+    if (id === auth.getUserId()) return; // sou eu mesmo
+    if (_remotePlayers.has(id)) return;
+    const rp = new RemotePlayer(scene, state);
+    _remotePlayers.set(id, rp);
+    console.log(`[CS] +remote ${state.nickname}`);
   });
-  mpClient.on('leave', (p) => {
-    const rp = _remotePlayers.get(p.player_id);
-    if (rp) { rp.dispose(); _remotePlayers.delete(p.player_id); }
+  cs.on('player_remove', ({ id }) => {
+    const rp = _remotePlayers.get(id);
+    if (rp) { rp.dispose(); _remotePlayers.delete(id); }
   });
-  mpClient.on('snapshot', (s) => {
-    const rp = _remotePlayers.get(s.player_id);
-    if (rp) rp.applySnapshot(s);
+  cs.on('player_change', ({ id, field, value, state }) => {
+    // Player local mudou pvp_on → ativa LocalAura
+    if (id === auth.getUserId() && field === 'pvp_on') {
+      if (!_localAura) _localAura = new LocalAura(scene, player);
+      _localAura.setActive(!!value);
+    }
+    // RemotePlayer aplica mudança visual
+    const rp = _remotePlayers.get(id);
+    if (rp) rp.onSchemaChange?.(field);
   });
 
-  // ── HIT recebido: aplica dano LOCAL e dispara sendHp ──
-  mpClient.on('hit', (h) => {
-    if (h.to !== auth.getUserId()) return;
-    if (player._dead) return;
-    // Sangue + dano + flinch
-    const isMelee = !h.weapon?.includes('pistol') && !h.weapon?.includes('rifle');
-    player.takeDamage?.(h.dmg, isMelee ? 'melee' : 'bullet', null, isMelee ? 3 : 1);
-    // Anuncia HP atualizado para os outros
-    mpClient.sendHp(player.hp, player.maxHp);
-    // Se morri, anuncia
-    if (player.hp <= 0 && !player._dead_announced) {
-      player._dead_announced = true;
-      mpClient.sendDied(h.from);
+  cs.on('mob_add', ({ id, state }) => {
+    if (_remoteMobs.has(id)) return;
+    const mob = new RemoteMob(scene, state);
+    _remoteMobs.set(id, mob);
+  });
+  cs.on('mob_remove', ({ id }) => {
+    const m = _remoteMobs.get(id);
+    if (m) { m.dispose(); _remoteMobs.delete(id); }
+  });
+  cs.on('mob_change', ({ id, field }) => {
+    const m = _remoteMobs.get(id);
+    if (m) m.onSchemaChange?.(field);
+  });
+
+  // ── Mob attack hit no player local ──
+  cs.on('mob_attack', (m) => {
+    if (m.target_id === auth.getUserId() && !player._dead) {
+      player.takeDamage?.(m.dmg, 'bite', null, 1);
     }
   });
 
-  // ── HP de outro player atualizou ──
-  mpClient.on('hp', (h) => {
-    const rp = _remotePlayers.get(h.player_id);
-    if (rp) rp.setHp(h.hp, h.maxHp);
-  });
-
-  // ── Player remoto morreu — flash de kill feed ──
-  mpClient.on('died', (d) => {
-    const rp = _remotePlayers.get(d.player_id);
-    if (rp) {
-      // Faz o ragdoll cair: rotaciona body e desce
-      try {
-        rp.body.rotation.x = -Math.PI / 2;
-        rp.body.position.y = 0.4;
-      } catch (_) {}
-    }
-    // Kill feed
-    const killerNick = d.killer === auth.getUserId() ? 'VOCÊ'
-      : (_remotePlayers.get(d.killer)?.nickname || 'alguém');
-    const victimNick = rp?.nickname || 'player';
+  // ── Died (kill feed) ──
+  cs.on('died', (d) => {
+    const myId = auth.getUserId();
+    const killerNick = d.killer === myId ? 'VOCÊ'
+      : (_remotePlayers.get(d.killer)?.nickname || cs.state?.players?.get(d.killer)?.nickname || 'alguém');
+    const victimNick = d.player_id === myId ? 'VOCÊ'
+      : (_remotePlayers.get(d.player_id)?.nickname || cs.state?.players?.get(d.player_id)?.nickname || 'player');
     _showKillFeed(`${killerNick} ☠ ${victimNick}`);
   });
 
-  mpClient.on('respawn', (r) => {
-    const rp = _remotePlayers.get(r.player_id);
-    if (rp) {
-      try {
-        rp.body.rotation.x = 0;
-        rp.body.position.y = 0.9;
-      } catch (_) {}
-      rp.setHp(100, 100);
-    }
-  });
+  cs.on('respawn', () => { /* state update vem via player.dead → false */ });
 
-  // Hook no respawn LOCAL pra anunciar
+  // PvP toggle UI
+  const pvpToggle = new PvpToggle(cs, auth);
+  window._pvpToggle = pvpToggle;
+
+  // Hook respawn local → notifica servidor
   const _origRespawn = player.onRespawn;
   player.onRespawn = () => {
     if (_origRespawn) _origRespawn();
-    player._dead_announced = false;
-    if (mpClient.connected) {
-      mpClient.sendRespawn();
-      mpClient.sendHp(player.maxHp, player.maxHp);
-    }
+    if (cs.connected) cs.sendRespawn();
   };
 
   // ── Kill feed (canto superior direito) ──
@@ -452,44 +458,24 @@ async function init() {
     setTimeout(() => { item.style.opacity = '0'; }, 3000);
     setTimeout(() => { try { f.removeChild(item); } catch (_) {} }, 3700);
   }
-  window._remotePlayers = _remotePlayers;
 
   const loginScreen = new LoginScreen(auth);
   window._loginScreen = loginScreen;
-  const lobbyUI = new LobbyUI(auth, mpClient);
+  const lobbyUI = new LobbyUI(auth, cs);
   window._lobbyUI = lobbyUI;
 
   loginScreen.onContinue(() => {
-    // Modo single — só fecha login e mostra start-screen padrão
     $('start-screen').style.display = 'flex';
   });
   loginScreen.onOpenLobby(() => {
     lobbyUI.show();
   });
   lobbyUI.onEnterGame(async (room) => {
-    // Carrega o mapa da sala
-    if (room.map && room.map !== 'default') {
-      try { await chibataMaps.load(room.map); } catch (_) {}
+    // Carrega o mapa da sala (vem do state)
+    const mapId = cs.state?.map_id || 'default';
+    if (mapId && mapId !== 'default') {
+      try { await chibataMaps.load(mapId); } catch (_) {}
     }
-    // Conecta ao relay
-    const cfg = await getConfig();
-    const wsUrl = cfg.TRANSFPS_MP_WS_URL || 'wss://app.overpixel.online/transfps-mp';
-    const session = await auth.getSupabase().auth.getSession();
-    const avatarUrl = auth.profile?.avatar_url || auth.user?.user_metadata?.avatar_url || null;
-    try {
-      await mpClient.connect(wsUrl, {
-        roomId: room.id,
-        playerId: auth.getUserId(),
-        nickname: auth.getNickname(),
-        jwt: session.data?.session?.access_token,
-        avatarUrl,
-      });
-      console.log(`[MP] conectado em sala ${room.name}`);
-    } catch (e) {
-      console.warn('[MP] conexão falhou:', e.message);
-      alert('Falha ao conectar no servidor multiplayer:\n' + e.message + '\n\nO mapa carregou mas você está jogando offline.');
-    }
-    // Entra no jogo
     $('start-screen').style.display = 'none';
     window._gameInput?.activate();
     setFocusUI(true);
@@ -662,11 +648,14 @@ async function init() {
     waterSystem.update(dt, player);
     settingsUI.update(input);
     musicMuteBtn.update(input);
-    // ── MP: envia snapshot + atualiza players remotos ──
-    if (mpClient.connected) {
-      mpClient.sendSnapshot(player);
+    // ── MP Colyseus: envia input + atualiza players/mobs remotos ──
+    if (cs.connected) {
+      cs.sendInput(player);
       for (const rp of _remotePlayers.values()) rp.update(dt, player.camera);
+      for (const m of _remoteMobs.values()) m.update(dt, player.camera);
     }
+    if (_localAura) _localAura.update(dt);
+    pvpToggle.update(input);
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
     navMesh.update(dt);
     dropSystem.update(dt, player.mesh?.position);

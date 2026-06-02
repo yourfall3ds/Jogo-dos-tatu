@@ -413,6 +413,35 @@ export class CombatSystem {
     scene.meshes.forEach(m => {
       if (!m.isEnabled()) return;
 
+      // ── REMOTE MOB (server-authoritative) ───────────────────────────
+      //  Hit em mob remoto → manda mob_id + dmg pro Colyseus.
+      //  Servidor valida e broadcasta hp update.
+      if (m._isRemoteMob && m._mobRef && !hitEnemies.has(m._mobRef)) {
+        if (activeHitbox.intersectsMesh(m, false) || _inFront(m.getAbsolutePosition())) {
+          hitSomething = true;
+          hitEnemies.add(m._mobRef);
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
+          window._cs?.sendHitMob?.(m._mobRef.id, hitDef.damage, animName);
+          window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
+          if (this.impactSystem) {
+            const ip = activeHitbox.getAbsolutePosition().clone();
+            if (isKick) this.impactSystem.spawnKickImpact(ip, true);
+            else        this.impactSystem.spawnPunchImpact(ip, true);
+          }
+          if (window._bloodFX) {
+            const bp = m.getAbsolutePosition().add(new BABYLON.Vector3(0, 0.8, 0));
+            window._bloodFX.spawn(bp, moveDir, {
+              multiplier: hitDef.melee === 'sword' ? 1.8 : 1.0,
+              sourceNode: m,
+              isHeavy: hitDef.melee === 'sword',
+            });
+          }
+          if (critLevel >= 1) window._hitStop?.hit(0.10, { zoom: 0.08, flash: 0.25 });
+          else window._hitStop?.hit(0.035);
+        }
+        return;
+      }
+
       // ── REMOTE PLAYER (PvP) ─────────────────────────────────────────
       //  Se for capsule de outro player → manda hit pelo MP relay.
       //  Cliente local NÃO aplica dano direto: relay propaga pro alvo
@@ -423,7 +452,7 @@ export class CombatSystem {
           hitEnemies.add(m._remoteRef);
           if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
           // Envia hit via MP — o cliente-alvo recebe e aplica dano local
-          window._mpClient?.sendHit?.(m._remoteRef.playerId, hitDef.damage, animName);
+          window._cs?.sendHitPlayer?.(m._remoteRef.playerId, hitDef.damage, animName);
           // Damage number visual no cliente que atacou (feedback imediato)
           window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
           if (this.impactSystem) {
