@@ -90,6 +90,33 @@ export class GraphicsDebugPanel {
     }));
     el.append(this._toggle('Auto frustum', this.sun.autoUpdateExtends, v => this.sun.autoUpdateExtends = v));
 
+    // — ISOLAR (liga/desliga sistemas pra achar o que mata a sombra) —
+    el.append(this._sec('🔬 Isolar (debug sombra)'));
+    const cam = () => this.scene.activeCamera;
+    const mgr = this.scene.postProcessRenderPipelineManager;
+    el.append(this._toggle('☀️ SOL (luz direcional)', this.sun.intensity > 0, v => {
+      if (v) { this.sun.setEnabled(true); if (this.sun.intensity === 0) this.sun.intensity = 1.5; }
+      else this.sun.setEnabled(false);
+    }));
+    el.append(this._toggle('🌌 SkyBox (céu HD)', this.dayNight.skyDome?.isEnabled(), v => this.dayNight.skyDome?.setEnabled(v)));
+    el.append(this._toggle('🎬 Pós-proc (pipeline)', !this._ppOff, v => {
+      this._ppOff = !v;
+      try { mgr[v ? 'attachCamerasToRenderPipeline' : 'detachCamerasFromRenderPipeline']('mainPipeline', cam()); } catch (_) {}
+    }));
+    el.append(this._toggle('🌑 SSAO', !this._ssaoOff, v => {
+      this._ssaoOff = !v;
+      try { mgr[v ? 'attachCamerasToRenderPipeline' : 'detachCamerasFromRenderPipeline']('ssao', cam()); } catch (_) {}
+    }));
+    el.append(this._toggle('🖼️ Image processing', this.scene.imageProcessingConfiguration.isEnabled, v => this.scene.imageProcessingConfiguration.isEnabled = v));
+    el.append(this._toggle('✨ Glow layer', !!(this.gfx.glow?.isEnabled ?? true), v => { if (this.gfx.glow) this.gfx.glow.isEnabled = v; }));
+    el.append(this._toggle('🌫️ Névoa', this.scene.fogMode !== 0, v => this.scene.fogMode = v ? BABYLON.Scene.FOGMODE_EXP2 : 0));
+    // botão: cria pilar de teste de sombra
+    const tb = document.createElement('button');
+    tb.textContent = '🧱 Criar pilar de teste';
+    tb.style.cssText = 'width:100%;margin:4px 0;background:#3a2a1a;border:1px solid #a73;color:#fda;border-radius:6px;padding:6px;cursor:pointer';
+    tb.onclick = () => window.testShadow?.();
+    el.append(tb);
+
     // — Sol / hora —
     el.append(this._sec('🌅 Hora do dia'));
     el.append(this._row('Hora (0-1)', 0, 1, 0.005, this.dayNight.t, v => { this.dayNight.pause(true); this.dayNight.setTime(v); }));
