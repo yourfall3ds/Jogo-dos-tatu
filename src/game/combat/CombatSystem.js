@@ -300,9 +300,17 @@ export class CombatSystem {
 
   // Som de SWING (golpe cortando o ar) — toca ao iniciar o golpe. Rotaciona
   // ataque 1/2/3 pra não ficar repetitivo no combo.
+  // CHIBATA: não toca swing (o som de chibatada é tocado no impacto e já
+  // dá o feedback. Tocar 'ataque 1.wav' antes faria som de soco/espada).
   _playSwingSound(animName) {
     const snd = this.playerMesh?._playerRef?.sounds;
     if (!snd) return;
+    const pl = this.playerMesh?._playerRef;
+    const curW = pl?.weapon?.getCurrentWeapon?.();
+    if (curW?.id === 'chibata' && curW.isMelee) {
+      // Chibata: silencia o swing (só toca chibatada no impacto)
+      return;
+    }
     this._swingIdx = ((this._swingIdx || 0) % 3) + 1;
     snd.playNow('swing_' + this._swingIdx, 0.5);
   }

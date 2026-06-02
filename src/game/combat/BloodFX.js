@@ -56,7 +56,8 @@ export class BloodFX {
       const v = localStorage.getItem(STORAGE_KEY);
       if (BLOOD_LEVELS.includes(v)) return v;
     } catch (_) {}
-    return 'normal';
+    // Default: EXTREMO (Lucas: usuario reduz/aumenta/desliga depois nas configs)
+    return 'extremo';
   }
 
   setLevel(lvl) {

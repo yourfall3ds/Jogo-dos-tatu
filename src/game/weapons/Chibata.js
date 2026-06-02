@@ -74,16 +74,18 @@ export class Chibata {
     handleMat.specularPower = 18;
     handle.material = handleMat;
 
-    // ── Pommel (esfera dourada no fim do cabo) ──
-    const pommel = BABYLON.MeshBuilder.CreateSphere('chibata_pommel', {
-      diameter: 0.05, segments: 10,
+    // ── Pommel (anel metalico discreto no fim do cabo) ──
+    // Reduzido de esfera 0.05 dourada -> anel 0.035 prata-fosco pra nao
+    // dominar visualmente o chicote inteiro.
+    const pommel = BABYLON.MeshBuilder.CreateTorus('chibata_pommel', {
+      diameter: 0.035, thickness: 0.010, tessellation: 14,
     }, scene);
     pommel.parent = root;
-    pommel.position.y = -0.23;
+    pommel.position.y = -0.225;
+    pommel.rotation.x = Math.PI / 2;
     const pommelMat = new BABYLON.StandardMaterial('chibataPommelMat', scene);
-    pommelMat.diffuseColor = new BABYLON.Color3(0.85, 0.65, 0.20);
-    pommelMat.specularColor = new BABYLON.Color3(1.0, 0.85, 0.40);
-    pommelMat.emissiveColor = new BABYLON.Color3(0.20, 0.14, 0.05);
+    pommelMat.diffuseColor = new BABYLON.Color3(0.55, 0.50, 0.45);
+    pommelMat.specularColor = new BABYLON.Color3(0.85, 0.80, 0.75);
     pommelMat.specularPower = 64;
     pommel.material = pommelMat;
 
@@ -107,8 +109,8 @@ export class Chibata {
     }
     const lash = BABYLON.MeshBuilder.CreateTube('chibata_lash', {
       path: pts0,
-      radius: 0.016,
-      tessellation: 6,
+      radius: 0.028,            // engrossado de 0.016 -> 0.028 (chicote visivel)
+      tessellation: 8,
       updatable: true,
       cap: BABYLON.Mesh.CAP_ALL,
     }, scene);
@@ -116,10 +118,11 @@ export class Chibata {
     lash.material = lashMat;
     lash._chibataPath = pts0;
     lash._chibataN = N;
+    lash._chibataRadius = 0.028;
 
     // Tip metálico (ponta cortante)
     const tip = BABYLON.MeshBuilder.CreateSphere('chibata_tip', {
-      diameter: 0.045, segments: 8,
+      diameter: 0.055, segments: 10,
     }, scene);
     tip.parent = root;
     tip.position.copyFrom(pts0[N - 1]);
@@ -209,7 +212,7 @@ export class Chibata {
     try {
       BABYLON.MeshBuilder.CreateTube('chibata_lash', {
         path: pts,
-        radius: 0.016,
+        radius: lash._chibataRadius || 0.028,
         instance: lash,
       }, this.scene || lash.getScene());
     } catch (_) {}
