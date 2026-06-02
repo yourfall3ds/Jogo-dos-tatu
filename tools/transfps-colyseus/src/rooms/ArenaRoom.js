@@ -9,7 +9,7 @@
 //     start_match, spawn_mob, chat
 // ─────────────────────────────────────────────────────────────────
 import { Room } from '@colyseus/core';
-import { ArenaState, PlayerState, MobState, DropState, PropState, FxState, InventoryState, InvSlot, BossState } from '../schema/ArenaState.js';
+import { ArenaState, PlayerState, MobState, DropState, PropState, FxState, InventoryState, InvSlot, BossState, ZoneState } from '../schema/ArenaState.js';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { validateHit, getWeapon } from './WeaponTable.js';
 import { validateSkillCast, getSkill } from './SkillTable.js';
@@ -187,6 +187,12 @@ export class ArenaRoom extends Room {
     this.state.match_timer = 0;
     this.state.wave = 0;
     this.state.mobs_killed = 0;
+    // Battle Royale
+    this.state.mode = String(options.mode || 'CLASSIC').toUpperCase();
+    this.state.br_phase = 'LOBBY';
+    this.state.br_alive_count = 0;
+    this.state.br_takeoff_at = 0;
+    this.state.br_skydive_at = 0;
     this._lastTick = Date.now();
     this._cooldowns = new Map(); // mobId → { cdT, lastAttack }
     this._atkCooldowns = new Map(); // `${playerId}:${weaponId}` → lastUseAt
@@ -197,10 +203,11 @@ export class ArenaRoom extends Room {
     this.MSG_RATE_MAX = 30;    // 30 msgs/s por player
     this.MSG_RATE_WINDOW = 1000;
 
-    // metadata pra LobbyRoom listar com player_count + name + map
+    // metadata pra LobbyRoom listar com player_count + name + map + mode
     this.setMetadata({
       name: String(options.name || 'Sala'),
       map: this.state.map_id,
+      mode: this.state.mode,
       has_password: !!options.password,
       host_nickname: options.host_nickname || '',
     });
@@ -243,6 +250,11 @@ export class ArenaRoom extends Room {
     this.onMessage('party_invite', (client, payload) => this._onPartyInvite(client, payload));
     this.onMessage('party_accept', (client, payload) => this._onPartyAccept(client, payload));
     this.onMessage('party_leave', (client) => this._onPartyLeave(client));
+    // Battle Royale handlers
+    this.onMessage('br_skydive_start', (client, payload) => this._onBrSkydiveStart(client, payload));
+    this.onMessage('br_skydive_input', (client, payload) => this._onBrSkydiveInput(client, payload));
+    this.onMessage('br_landed', (client, payload) => this._onBrLanded(client, payload));
+    this.onMessage('br_class_select', (client, payload) => this._onBrClassSelect(client, payload));
     this._skillCooldowns = new Map();
 
     // ── IDLE TIMEOUT: se sala fica vazia por 60s, descarta. ──
@@ -1105,6 +1117,12 @@ export class ArenaRoom extends Room {
     const ms = this.state.match_state;
     if (ms === 'COUNTDOWN') {
       if (now >= this.state.match_timer) {
+        // BATTLE ROYALE branch: countdown termina → decolagem
+        if (this.state.mode === 'BATTLE_ROYALE') {
+          this._startBattleRoyale();
+          this.broadcast('match_started', {});
+          return;
+        }
         this.state.match_state = 'RUNNING';
         this.state.started = true;
         this.state.started_at = now;
@@ -1283,6 +1301,237 @@ export class ArenaRoom extends Room {
     console.log(`[ArenaRoom] FINISHED victory=${victory} winners=${winners.length}`);
   }
 
+  // ───────────────────────────── BATTLE ROYALE ─────────────────────────────
+
+  _onBrClassSelect(client, payload) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p) return;
+    const cid = parseInt(payload?.class_id);
+    if (!Number.isFinite(cid) || cid < 0 || cid > 99) return;
+    p.class_id = cid;
+  }
+
+  _onBrSkydiveStart(client, payload) {
+    if (this.state.mode !== 'BATTLE_ROYALE') return;
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p) return;
+    if (this.state.br_phase !== 'SKYDIVE') return;
+    p.br_state = 'SKYDIVE';
+    p.altitude = parseFloat(payload?.y) || 200;
+  }
+
+  _onBrSkydiveInput(client, payload) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p || p.br_state !== 'SKYDIVE') return;
+    // Server confia no cliente pro pitch/yaw (visual), mas valida bounds
+    p.skydive_pitch = Math.max(0, Math.min(75, parseFloat(payload?.pitch) || 0));
+    p.skydive_yaw = parseFloat(payload?.yaw) || 0;
+    p.altitude = Math.max(0, parseFloat(payload?.altitude) || 0);
+    // Posição: aceita do cliente nesse modo (vai validar no landed)
+    if (Number.isFinite(payload?.x)) p.x = payload.x;
+    if (Number.isFinite(payload?.y)) p.y = payload.y;
+    if (Number.isFinite(payload?.z)) p.z = payload.z;
+  }
+
+  _onBrLanded(client, payload) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p) return;
+    if (p.br_state !== 'SKYDIVE' && p.br_state !== 'LANDING') return;
+    p.br_state = 'ALIVE';
+    p.skydive_pitch = 0;
+    p.altitude = 0;
+    if (Number.isFinite(payload?.x)) p.x = payload.x;
+    if (Number.isFinite(payload?.y)) p.y = payload.y;
+    if (Number.isFinite(payload?.z)) p.z = payload.z;
+    this.broadcast('br_landed', { player_id: p.id, x: p.x, y: p.y, z: p.z });
+  }
+
+  _startBattleRoyale() {
+    if (this.state.mode !== 'BATTLE_ROYALE') return;
+    console.log('[BR] Starting battle royale match');
+    this.state.br_phase = 'TAKEOFF';
+    this.state.br_takeoff_at = Date.now() + 3_000;  // 3s decolagem
+    this.state.br_skydive_at = Date.now() + 6_000;  // 3s depois entra skydive
+    // Inicia zone
+    this._initBrZone();
+    // Marca todos os players com estado TAKEOFF
+    this.state.players.forEach((p) => {
+      p.br_state = 'TAKEOFF';
+      p.dead = false;
+      p.hp = p.maxHp;
+      p.kills = 0;
+      p.deaths = 0;
+      p.place = 0;
+    });
+    this.state.br_alive_count = this.state.players.size;
+    this.broadcast('br_takeoff', { skydive_at: this.state.br_skydive_at });
+  }
+
+  _initBrZone() {
+    const Z = new ZoneState();
+    Z.cx = 0;
+    Z.cz = 0;
+    Z.radius_current = 500;
+    Z.radius_target = 500;
+    Z.shrink_starts_at = Date.now() + 90_000;  // 1m30 pra começar a fechar
+    Z.shrink_ends_at = Date.now() + 90_000 + 60_000; // shrink em 60s
+    Z.damage_per_sec = 0;
+    Z.wave = 0;
+    Z.phase = 'IDLE';
+    this.state.zone = Z;
+  }
+
+  _brZoneTick(dt) {
+    if (this.state.mode !== 'BATTLE_ROYALE') return;
+    const z = this.state.zone;
+    if (!z) return;
+    const now = Date.now();
+
+    // Avança fase da zona
+    if (z.phase === 'IDLE' && now >= z.shrink_starts_at - 10_000) {
+      z.phase = 'WARNING';
+      this.broadcast('br_zone_warning', { wave: z.wave + 1, starts_at: z.shrink_starts_at });
+    }
+    if (z.phase === 'WARNING' && now >= z.shrink_starts_at) {
+      z.phase = 'SHRINKING';
+      z.wave++;
+      // Nova target radius
+      const targets = [500, 200, 80, 25, 10];
+      const dmgs = [0, 1, 3, 7, 15];
+      const idx = Math.min(targets.length - 1, z.wave);
+      z.radius_target = targets[idx];
+      z.damage_per_sec = dmgs[idx];
+      this.broadcast('br_zone_shrinking', { wave: z.wave, radius_target: z.radius_target });
+    }
+    if (z.phase === 'SHRINKING') {
+      const totalShrink = z.shrink_ends_at - z.shrink_starts_at;
+      const elapsed = now - z.shrink_starts_at;
+      const k = Math.max(0, Math.min(1, elapsed / totalShrink));
+      const startR = z.radius_current === z.radius_target ? z.radius_current : (z.wave === 1 ? 500 : z.radius_current);
+      // Use store de radius inicial
+      if (!z._startR) z._startR = z.radius_current;
+      z.radius_current = z._startR + (z.radius_target - z._startR) * k;
+      if (k >= 1) {
+        z.phase = 'IDLE';
+        z._startR = z.radius_current;
+        // Próxima wave em 30-60s
+        z.shrink_starts_at = now + (40_000 - z.wave * 5_000);
+        z.shrink_ends_at = z.shrink_starts_at + Math.max(20_000, 60_000 - z.wave * 10_000);
+        this.broadcast('br_zone_idle', { wave: z.wave, next_at: z.shrink_starts_at });
+      }
+    }
+
+    // Aplica dano em quem tá fora da zona
+    if (z.damage_per_sec > 0) {
+      this.state.players.forEach((p) => {
+        if (p.dead || p.br_state !== 'ALIVE') return;
+        const dx = p.x - z.cx;
+        const dz = p.z - z.cz;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > z.radius_current) {
+          const dmg = z.damage_per_sec * dt;
+          p.hp = Math.max(0, p.hp - dmg);
+          if (p.hp <= 0) {
+            this._brOnPlayerDeath(p, null, 'STORM');
+          }
+        }
+      });
+    }
+  }
+
+  _brOnPlayerDeath(player, killer, cause) {
+    if (player.br_state === 'DEAD' || player.br_state === 'SPECTATING') return;
+    player.dead = true;
+    player.deaths++;
+    // Define o "place" (ranking reverso)
+    const alive = this._brCountAlive();
+    player.place = alive + 1; // se 5 vivos e ele morreu, ele é o 6º colocado
+    player.br_state = 'SPECTATING';
+    this.broadcast('br_player_died', {
+      player_id: player.id,
+      killer: killer?.id || null,
+      cause: cause || 'COMBAT',
+      place: player.place,
+    });
+    if (killer) {
+      killer.kills++;
+      this._awardPvpKill?.(killer);
+    }
+    // Verifica se tem vencedor
+    this._brCheckWinCondition();
+  }
+
+  _brCountAlive() {
+    let n = 0;
+    this.state.players.forEach((p) => {
+      if (!p.dead && (p.br_state === 'ALIVE' || p.br_state === 'SKYDIVE' || p.br_state === 'TAKEOFF' || p.br_state === 'LANDING')) n++;
+    });
+    this.state.br_alive_count = n;
+    return n;
+  }
+
+  _brCheckWinCondition() {
+    const alive = this._brCountAlive();
+    if (alive <= 1) {
+      // Encontra o vencedor
+      let winner = null;
+      this.state.players.forEach((p) => {
+        if (!p.dead) { winner = p; }
+      });
+      if (winner) {
+        winner.place = 1;
+        this._awardVictory?.(winner);
+      }
+      this.state.br_phase = 'FINISHED';
+      this.state.match_state = 'FINISHED';
+      this.state.match_timer = Date.now() + 30_000;
+      this.broadcast('br_finished', {
+        winner_id: winner?.id || null,
+        winner_nick: winner?.nickname || null,
+      });
+      console.log(`[BR] FINISHED winner=${winner?.nickname || 'none'}`);
+    }
+  }
+
+  _brTick(dt) {
+    if (this.state.mode !== 'BATTLE_ROYALE') return;
+    const now = Date.now();
+
+    // Transição TAKEOFF → SKYDIVE
+    if (this.state.br_phase === 'TAKEOFF' && now >= this.state.br_skydive_at) {
+      this.state.br_phase = 'SKYDIVE';
+      this.state.players.forEach((p) => {
+        p.br_state = 'SKYDIVE';
+        p.altitude = 200;
+      });
+      this.broadcast('br_skydive_phase', {});
+    }
+
+    // Transição SKYDIVE → RUNNING (quando todos pousaram OU 30s passou)
+    if (this.state.br_phase === 'SKYDIVE') {
+      let allLanded = true;
+      this.state.players.forEach((p) => {
+        if (p.br_state === 'SKYDIVE') allLanded = false;
+      });
+      if (allLanded || (now - this.state.br_skydive_at) > 60_000) {
+        this.state.br_phase = 'RUNNING';
+        this.state.match_state = 'RUNNING';
+        this.state.started = true;
+        this.state.started_at = now;
+        this.broadcast('br_running', {});
+      }
+    }
+
+    // Tick da zona (só durante RUNNING)
+    if (this.state.br_phase === 'RUNNING') {
+      this._brZoneTick(dt);
+    }
+  }
+
   _resetToLobby() {
     this.state.match_state = 'WAITING';
     this.state.started = false;
@@ -1290,6 +1539,21 @@ export class ArenaRoom extends Room {
     this.state.wave = 0;
     this.state.mobs_killed = 0;
     this.state.match_timer = 0;
+    // BR reset
+    if (this.state.mode === 'BATTLE_ROYALE') {
+      this.state.br_phase = 'LOBBY';
+      this.state.br_alive_count = 0;
+      this.state.br_takeoff_at = 0;
+      this.state.br_skydive_at = 0;
+      this.state.zone = undefined;
+      this.state.players.forEach((p) => {
+        p.br_state = 'LOBBY';
+        p.altitude = 0;
+        p.skydive_pitch = 0;
+        p.skydive_yaw = 0;
+        p.place = 0;
+      });
+    }
     // Limpa mundo
     this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
     this.state.drops.forEach((_, id) => this.state.drops.delete(id));
@@ -1350,6 +1614,8 @@ export class ArenaRoom extends Room {
   _tick(dt) {
     // MatchDirector roda SEMPRE (não só durante started)
     this._matchDirectorTick();
+    // BR tick (zone shrink + fase transitions)
+    this._brTick(dt);
 
     // IA do boss (quando existe)
     if (this.state.boss && this.state.boss.hp > 0) {

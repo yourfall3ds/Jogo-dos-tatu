@@ -50,6 +50,25 @@ type('number')(PlayerState.prototype, 'ping');
 type(InventoryState)(PlayerState.prototype, 'inv');
 // FRENTE H: Party
 type('string')(PlayerState.prototype, 'party_id');
+// BATTLE ROYALE: estado por player
+type('string')(PlayerState.prototype, 'br_state'); // LOBBY|TAKEOFF|SKYDIVE|LANDING|ALIVE|DEAD|SPECTATING
+type('number')(PlayerState.prototype, 'class_id');
+type('number')(PlayerState.prototype, 'skydive_pitch'); // 0=horizontal, 75=picada
+type('number')(PlayerState.prototype, 'skydive_yaw');
+type('number')(PlayerState.prototype, 'altitude');
+type('number')(PlayerState.prototype, 'place'); // ranking final (1=winner)
+
+// ── 2.5) Battle Royale state ──
+export class ZoneState extends Schema {}
+type('number')(ZoneState.prototype, 'cx');
+type('number')(ZoneState.prototype, 'cz');
+type('number')(ZoneState.prototype, 'radius_current');
+type('number')(ZoneState.prototype, 'radius_target');
+type('number')(ZoneState.prototype, 'shrink_starts_at');
+type('number')(ZoneState.prototype, 'shrink_ends_at');
+type('number')(ZoneState.prototype, 'damage_per_sec');
+type('number')(ZoneState.prototype, 'wave');
+type('string')(ZoneState.prototype, 'phase'); // IDLE|WARNING|SHRINKING|CLOSED
 
 // ── 3) Boss ──
 export class BossState extends Schema {}
@@ -135,3 +154,10 @@ type('number')(ArenaState.prototype, 'wave');
 type('number')(ArenaState.prototype, 'mobs_killed');
 // FRENTE C: Boss
 type(BossState)(ArenaState.prototype, 'boss');
+// BATTLE ROYALE
+type('string')(ArenaState.prototype, 'mode'); // CLASSIC|BATTLE_ROYALE
+type('string')(ArenaState.prototype, 'br_phase'); // LOBBY|TAKEOFF|SKYDIVE|RUNNING|FINISHED
+type('number')(ArenaState.prototype, 'br_alive_count');
+type('number')(ArenaState.prototype, 'br_takeoff_at');
+type('number')(ArenaState.prototype, 'br_skydive_at');
+type(ZoneState)(ArenaState.prototype, 'zone');
