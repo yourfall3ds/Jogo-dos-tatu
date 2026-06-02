@@ -52,7 +52,7 @@ export class AuthSystem {
     if (!this.user) return;
     const { data, error } = await this._supabase
       .from('transfps_profiles')
-      .select('*')
+      .select('id, nickname, avatar_url, total_kills, total_deaths, xp, level, coins, last_match_at, created_at')
       .eq('id', this.user.id)
       .maybeSingle();
     if (error) {
@@ -61,10 +61,32 @@ export class AuthSystem {
     }
     if (data) {
       this.profile = data;
+      // Expõe pro HUD/jogo
+      if (typeof window !== 'undefined' && window._gamePlayer) {
+        const p = window._gamePlayer;
+        p._profileXp = data.xp || 0;
+        p._profileLevel = data.level || 1;
+        p._profileKills = data.total_kills || 0;
+        p._profileDeaths = data.total_deaths || 0;
+        p._profileCoins = data.coins || 0;
+        // Hidrata PlayerStats local se existir
+        if (p.stats?.fromProfile) p.stats.fromProfile(data);
+      }
+      console.log(`[Auth] profile carregado: lv${data.level} ${data.xp}xp k${data.total_kills}/d${data.total_deaths} ${data.coins}🪙`);
     } else {
-      // Trigger pode levar 1-2s; tenta de novo
       setTimeout(() => this._loadProfile(), 1500);
     }
+  }
+
+  /** Retorna stats persistidos pro HUD mostrar. */
+  getProfileStats() {
+    return {
+      xp: this.profile?.xp || 0,
+      level: this.profile?.level || 1,
+      kills: this.profile?.total_kills || 0,
+      deaths: this.profile?.total_deaths || 0,
+      coins: this.profile?.coins || 0,
+    };
   }
 
   /** Inicia OAuth Google. Após callback, onAuthStateChange dispara. */

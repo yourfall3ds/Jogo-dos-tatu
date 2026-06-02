@@ -413,6 +413,22 @@ export class CombatSystem {
     scene.meshes.forEach(m => {
       if (!m.isEnabled()) return;
 
+      // ── REMOTE PROP (server-authoritative — barril/caixa) ──────────
+      if (m._isRemoteProp && m._propRef && !m._propRef.broken && !hitEnemies.has(m._propRef)) {
+        if (activeHitbox.intersectsMesh(m, false) || _inFront(m.getAbsolutePosition())) {
+          hitSomething = true;
+          hitEnemies.add(m._propRef);
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
+          window._cs?.sendHitProp?.(m._propRef.id, animName);
+          if (this.impactSystem) {
+            const ip = activeHitbox.getAbsolutePosition().clone();
+            this.impactSystem.spawnPunchImpact(ip, true);
+          }
+          window._hitStop?.hit(0.04);
+        }
+        return;
+      }
+
       // ── REMOTE MOB (server-authoritative) ───────────────────────────
       //  Hit em mob remoto → manda mob_id + dmg pro Colyseus.
       //  Servidor valida e broadcasta hp update.

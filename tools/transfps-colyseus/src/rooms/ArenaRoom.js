@@ -9,7 +9,7 @@
 //     start_match, spawn_mob, chat
 // ─────────────────────────────────────────────────────────────────
 import { Room } from '@colyseus/core';
-import { ArenaState, PlayerState, MobState, DropState } from '../schema/ArenaState.js';
+import { ArenaState, PlayerState, MobState, DropState, PropState, FxState } from '../schema/ArenaState.js';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { validateHit, getWeapon } from './WeaponTable.js';
 import { validateSkillCast, getSkill } from './SkillTable.js';
@@ -70,6 +70,38 @@ const MOB_KINDS = [
 
 let _mobUid = 0;
 let _dropUid = 0;
+let _propUid = 0;
+let _fxUid = 0;
+
+// ── Spawn points por mapa ──
+// Cada mapa tem 8 pontos espalhados em círculo de raio 15u em volta do centro
+// para evitar 8 jogadores sobrepostos em 0,0,0.
+function _ring(cx, cy, cz, radius, count = 8) {
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    out.push({ x: cx + Math.cos(a) * radius, y: cy, z: cz + Math.sin(a) * radius });
+  }
+  return out;
+}
+const SPAWN_POINTS = {
+  default:         _ring(0, 1, 0, 8),
+  forest:          _ring(0, 1, 0, 10),
+  lowpolyCity:     _ring(0, 1, 0, 12),
+  westernTown:     _ring(0, 1, 0, 10),
+  snowScene:       _ring(0, 1, 0, 11),
+  cemetery:        _ring(0, 1, 0, 9),
+  pirateFort:      _ring(0, 1, 0, 10),
+  valleyVillage:   _ring(0, 1, 0, 11),
+  calcata:         _ring(0, 1, 0, 14),
+  hellArena:       _ring(0, 1, 0, 8),
+  dungeonWarkarma: _ring(0, 1, 0, 7),
+  castleInterior:  _ring(0, 1, 0, 8),
+  nightCity:       _ring(0, 1, 0, 10),
+  virtualCity:     _ring(0, 1, 0, 9),
+  spaceStation:    _ring(0, 1, 0, 8),
+  collisionWorld:  _ring(0, 1, 0, 6),
+};
 
 export class ArenaRoom extends Room {
   // metadata visivel no lobby
@@ -87,6 +119,10 @@ export class ArenaRoom extends Room {
     this._atkCooldowns = new Map(); // `${playerId}:${weaponId}` → lastUseAt
     this._kills = new Map(); // playerId → kill count na partida atual
     this._lastInputAt = new Map(); // playerId → ts (anti-flood)
+    // Rate limit global (msg/s por player)
+    this._msgRate = new Map(); // playerId → { count, windowStart }
+    this.MSG_RATE_MAX = 30;    // 30 msgs/s por player
+    this.MSG_RATE_WINDOW = 1000;
 
     // metadata pra LobbyRoom listar com player_count + name + map
     this.setMetadata({
@@ -117,9 +153,52 @@ export class ArenaRoom extends Room {
     this.onMessage('chat', (client, payload) => this._onChat(client, payload));
     this.onMessage('pickup_drop', (client, payload) => this._onPickupDrop(client, payload));
     this.onMessage('cast_skill', (client, payload) => this._onCastSkill(client, payload));
+    this.onMessage('ping', (client, payload) => {
+      // Echo pra cliente calcular RTT
+      const p = this.state.players.get(client.userData?.playerId);
+      if (p && typeof payload?.ping === 'number') {
+        p.ping = Math.max(0, Math.min(2000, payload.ping | 0));
+      }
+      client.send('pong', { t: payload?.t || 0, server_t: Date.now() });
+    });
+    this.onMessage('hit_prop', (client, payload) => this._onHitProp(client, payload));
+    this.onMessage('spawn_fx', (client, payload) => this._onSpawnFx(client, payload));
     this._skillCooldowns = new Map();
 
+    // ── IDLE TIMEOUT: se sala fica vazia por 60s, descarta. ──
+    this.autoDispose = true; // Colyseus já dispara onDispose quando lastClient sai
+
+    // ── IDLE TIMEOUT pra sala SEM matches começados (lobby fica aberto eterno) ──
+    this._idleCheckT = setInterval(() => {
+      if (this.state.players.size === 0) {
+        console.log(`[ArenaRoom] idle vazia, descartando ${this.roomId}`);
+        this.disconnect();
+      } else if (!this.state.started) {
+        // Lobby aberto há mais de 30 min sem iniciar = também encerra
+        const ageMs = Date.now() - (this._createdAt || 0);
+        if (ageMs > 30 * 60_000) {
+          console.log(`[ArenaRoom] lobby velho (>30min), descartando ${this.roomId}`);
+          this.disconnect();
+        }
+      }
+    }, 60_000);
+    this._createdAt = Date.now();
+
     console.log(`[ArenaRoom] criada id=${this.roomId} map=${this.state.map_id} max=${this.maxClients}`);
+  }
+
+  // ── Spawn points por mapa (server-authoritative) ──
+  _pickSpawnPoint() {
+    const sp = SPAWN_POINTS[this.state.map_id] || SPAWN_POINTS.default;
+    // Round-robin pra não sobrepor
+    this._spawnIdx = ((this._spawnIdx || 0) + 1) % sp.length;
+    const point = sp[this._spawnIdx];
+    // Jitter pra evitar overlap exato em respawn
+    return {
+      x: point.x + (Math.random() - 0.5) * 1.5,
+      y: point.y,
+      z: point.z + (Math.random() - 0.5) * 1.5,
+    };
   }
 
   // ── AUTH: valida JWT do Supabase ANTES do join ───────────────
@@ -156,12 +235,23 @@ export class ArenaRoom extends Room {
   }
 
   onJoin(client, options, auth) {
-    if (auth?.sub && this.state.players.has(auth.sub)) {
-      // Já conectado em outra session — remove sessão velha
-      const old = this.state.players.get(auth.sub);
-      console.log(`[ArenaRoom] reconnect: kickando session antiga de ${auth.sub.slice(0,8)}`);
-    }
     const playerId = auth.sub;
+    // ── RECONEXÃO: se player já existia, atualiza sessionId e mantém state ──
+    if (playerId && this.state.players.has(playerId)) {
+      const existing = this.state.players.get(playerId);
+      console.log(`[ArenaRoom] 🔄 reconectou ${existing.nickname} (${playerId.slice(0,8)})`);
+      client.userData = { playerId };
+      // Se estava dead, mantém — cliente decide se respawnar
+      // Limpa flag de "saindo" (caso ainda esteja no grace)
+      this._pendingLeaves = this._pendingLeaves || new Map();
+      const pending = this._pendingLeaves.get(playerId);
+      if (pending) {
+        clearTimeout(pending);
+        this._pendingLeaves.delete(playerId);
+      }
+      return; // não cria novo PlayerState
+    }
+
     const p = new PlayerState();
     p.id = playerId;
     p.nickname = auth.nickname || 'Player';
@@ -171,7 +261,9 @@ export class ArenaRoom extends Room {
     p.pvp_on = false;
     p.hp = 100;
     p.maxHp = 100;
-    p.x = 0; p.y = 1; p.z = 0;
+    // Spawn point real ao invés de 0,0,0
+    const sp = this._pickSpawnPoint();
+    p.x = sp.x; p.y = sp.y; p.z = sp.z;
     p.ry = 0; p.vy = 0;
     p.anim_state = 'idle';
     p.weapon = 'unarmed';
@@ -193,6 +285,19 @@ export class ArenaRoom extends Room {
     if (!pid) return;
     const player = this.state.players.get(pid);
     if (!player) return;
+
+    // ── RECONEXÃO: se queda foi acidental, dá 15s pra voltar ──
+    if (!consented) {
+      console.log(`[ArenaRoom] ⏳ ${player.nickname} desconectou — aguardando 15s pra reconectar`);
+      try {
+        await this.allowReconnection(client, 15);
+        console.log(`[ArenaRoom] ✅ ${player.nickname} reconectou em ${15}s`);
+        return; // reconectou, state preservado
+      } catch (e) {
+        console.log(`[ArenaRoom] ❌ ${player.nickname} não voltou em 15s — finalizando`);
+      }
+    }
+
     console.log(`[ArenaRoom] -${player.nickname}`);
 
     // Persiste stats no Supabase (fire-and-forget)
@@ -268,7 +373,11 @@ export class ArenaRoom extends Room {
 
     if (target.hp <= 0) {
       target.dead = true;
+      target.deaths = (target.deaths || 0) + 1;
+      target.respawn_at = Date.now() + 3000;
       this._kills.set(attacker.id, (this._kills.get(attacker.id) || 0) + 1);
+      attacker.kills = (attacker.kills || 0) + 1;
+      attacker.xp = (attacker.xp || 0) + 50;
       this.broadcast('died', { player_id: target.id, killer: attacker.id });
     }
   }
@@ -461,6 +570,120 @@ export class ArenaRoom extends Room {
     }
   }
 
+  /** Hit em prop destruível (barril/caixa/etc). Server valida e gera FX. */
+  _onHitProp(client, payload) {
+    const pid = client.userData?.playerId;
+    const attacker = this.state.players.get(pid);
+    if (!attacker || attacker.dead) return;
+    const prop = this.state.props.get(String(payload.prop_id || ''));
+    if (!prop || prop.broken) return;
+    const weaponId = String(payload.weapon || attacker.weapon || 'unarmed').slice(0, 32);
+    const w = getWeapon(weaponId);
+
+    // Range check
+    const dx = (attacker.x ?? 0) - prop.x;
+    const dz = (attacker.z ?? 0) - prop.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist > w.range + 1.0) return;
+
+    // Cooldown via mesma tabela
+    const key = `${attacker.id}:${weaponId}`;
+    const lastAt = this._atkCooldowns.get(key) || 0;
+    const now = Date.now();
+    if (now - lastAt < w.cdMs) return;
+    this._atkCooldowns.set(key, now);
+
+    prop.hp = Math.max(0, prop.hp - w.dmg);
+    this.broadcast('prop_hit', {
+      prop_id: prop.id, from: attacker.id,
+      weapon: weaponId, dmg: w.dmg, hp: prop.hp,
+    });
+
+    if (prop.hp <= 0) {
+      prop.broken = true;
+      this.broadcast('prop_broken', { prop_id: prop.id, by: attacker.id });
+      // Spawn FX de quebra (todos veem)
+      this._spawnFx({ kind: 'prop_break_' + prop.kind, x: prop.x, y: prop.y, z: prop.z, ttl: 1500 });
+      // Chance de drop (40% num barril)
+      if (Math.random() < 0.40) {
+        this._spawnDrop({
+          kind: 'coin',
+          value: 5 + Math.floor(Math.random() * 10),
+          x: prop.x, z: prop.z, scatter: 0.5,
+        });
+      }
+      // Despawn em 5s
+      setTimeout(() => {
+        if (this.state.props.has(prop.id)) this.state.props.delete(prop.id);
+      }, 5000);
+    }
+  }
+
+  /**
+   * Cliente PEDE FX (ex: spray paint, splash). Server valida e adiciona no
+   * state.fx — outros clientes vêem por TTL.
+   *
+   * Anti-spam: kinds whitelist + rate limit.
+   */
+  _onSpawnFx(client, payload) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p || p.dead) return;
+    const kind = String(payload?.kind || '').slice(0, 32);
+    // Whitelist (cosméticos não-trivial)
+    const ALLOWED = ['spray', 'footprint_blood', 'explosion', 'splash', 'sparks'];
+    if (!ALLOWED.includes(kind)) return;
+    // Rate limit por player
+    const rate = this._msgRate.get(pid) || { count: 0, windowStart: Date.now() };
+    if (Date.now() - rate.windowStart > 1000) { rate.count = 0; rate.windowStart = Date.now(); }
+    if (rate.count > 5) return; // max 5 FX/s
+    rate.count++;
+    this._msgRate.set(pid, rate);
+    this._spawnFx({
+      kind,
+      x: +payload.x || p.x,
+      y: +payload.y || 0,
+      z: +payload.z || p.z,
+      ttl: 6000,
+    });
+  }
+
+  _spawnFx({ kind, x, y, z, ttl }) {
+    if (this.state.fx.size >= 50) {
+      // Limpa o mais velho
+      const oldest = Array.from(this.state.fx.values())[0];
+      if (oldest) this.state.fx.delete(oldest.id);
+    }
+    const id = `fx_${++_fxUid}`;
+    const fx = new FxState();
+    fx.id = id;
+    fx.kind = kind;
+    fx.x = x; fx.y = y; fx.z = z;
+    fx.expires_at = Date.now() + (ttl || 4000);
+    this.state.fx.set(id, fx);
+  }
+
+  /** Spawna props (barris/caixas) ao iniciar match. */
+  _spawnInitialProps() {
+    const count = 6 + Math.floor(Math.random() * 6);
+    for (let i = 0; i < count; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 8 + Math.random() * 18;
+      const kind = Math.random() < 0.6 ? 'barrel' : 'crate';
+      const hp = kind === 'barrel' ? 35 : 60;
+      const id = `prop_${++_propUid}`;
+      const prop = new PropState();
+      prop.id = id;
+      prop.kind = kind;
+      prop.hp = hp; prop.maxHp = hp;
+      prop.x = Math.cos(ang) * r;
+      prop.y = 0;
+      prop.z = Math.sin(ang) * r;
+      prop.broken = false;
+      this.state.props.set(id, prop);
+    }
+  }
+
   _onPickupDrop(client, payload) {
     const pid = client.userData?.playerId;
     const player = this.state.players.get(pid);
@@ -523,9 +746,11 @@ export class ArenaRoom extends Room {
     this.state.started = true;
     this.state.started_at = Date.now();
     this.broadcast('match_started', {});
-    // Spawn inicial
+    // Spawn inicial de mobs
     const initial = 4 + Math.floor(Math.random() * 3);
     for (let i = 0; i < initial; i++) this._spawnMob();
+    // Spawn de props destrutíveis (barris/caixas)
+    this._spawnInitialProps();
     console.log(`[ArenaRoom] partida iniciada em ${this.roomId}`);
   }
 
@@ -550,9 +775,13 @@ export class ArenaRoom extends Room {
   _onRespawn(client) {
     const p = this.state.players.get(client.userData?.playerId);
     if (!p) return;
+    // Só permite respawn se respawn_at já passou
+    if (p.dead && p.respawn_at > Date.now()) return;
     p.hp = p.maxHp;
     p.dead = false;
-    p.x = 0; p.y = 1; p.z = 0;
+    p.respawn_at = 0;
+    const sp = this._pickSpawnPoint();
+    p.x = sp.x; p.y = sp.y; p.z = sp.z;
     this.broadcast('respawn', { player_id: p.id });
   }
 
@@ -573,6 +802,13 @@ export class ArenaRoom extends Room {
       const toDel = [];
       this.state.drops.forEach((d, id) => { if (d.expires_at && now > d.expires_at) toDel.push(id); });
       toDel.forEach((id) => this.state.drops.delete(id));
+    }
+    // Expira FX antigos
+    if (this.state.fx.size > 0) {
+      const now = Date.now();
+      const toDel = [];
+      this.state.fx.forEach((f, id) => { if (f.expires_at && now > f.expires_at) toDel.push(id); });
+      toDel.forEach((id) => this.state.fx.delete(id));
     }
 
     if (this.state.mobs.size === 0) return;
@@ -657,6 +893,7 @@ export class ArenaRoom extends Room {
   }
 
   onDispose() {
+    if (this._idleCheckT) clearInterval(this._idleCheckT);
     console.log(`[ArenaRoom] descartada ${this.roomId}`);
   }
 }

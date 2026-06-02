@@ -35,7 +35,12 @@ export class ColyseusClient {
       'state_change': new Set(), 'error': new Set(),
       'hit_confirmed': new Set(), 'pickup': new Set(),
       'skill_cast': new Set(), 'xp_gain': new Set(), 'level_up': new Set(),
+      'prop_add': new Set(), 'prop_remove': new Set(), 'prop_change': new Set(),
+      'prop_hit': new Set(), 'prop_broken': new Set(),
+      'fx_add': new Set(), 'fx_remove': new Set(),
+      'pong': new Set(),
     };
+    this.ping = 0;
     this._lastInputSent = 0;
     this.INPUT_RATE_MS = 50; // 20Hz
   }
@@ -142,6 +147,14 @@ export class ColyseusClient {
     this.room.onMessage('skill_cast', (m) => this._notify('skill_cast', m));
     this.room.onMessage('xp_gain', (m) => this._notify('xp_gain', m));
     this.room.onMessage('level_up', (m) => this._notify('level_up', m));
+    this.room.onMessage('prop_hit', (m) => this._notify('prop_hit', m));
+    this.room.onMessage('prop_broken', (m) => this._notify('prop_broken', m));
+    this.room.onMessage('pong', (m) => {
+      const now = performance.now();
+      const rtt = Math.max(0, now - (m.t || now));
+      this.ping = rtt | 0;
+      this._notify('pong', { rtt: this.ping, server_t: m.server_t });
+    });
 
     this.room.onLeave((code) => {
       console.log('[Colyseus] left room, code=', code);
@@ -201,6 +214,24 @@ export class ColyseusClient {
     });
     $(this.room.state).drops.onRemove((drop, key) => {
       this._notify('drop_remove', { id: key, state: drop });
+    });
+
+    // Props destrutiveis
+    $(this.room.state).props.onAdd((prop, key) => {
+      this._notify('prop_add', { id: key, state: prop });
+      $(prop).listen('hp', (v) => this._notify('prop_change', { id: key, field: 'hp', value: v, state: prop }));
+      $(prop).listen('broken', (v) => this._notify('prop_change', { id: key, field: 'broken', value: v, state: prop }));
+    });
+    $(this.room.state).props.onRemove((prop, key) => {
+      this._notify('prop_remove', { id: key, state: prop });
+    });
+
+    // FX (eventos visuais compartilhados)
+    $(this.room.state).fx.onAdd((fx, key) => {
+      this._notify('fx_add', { id: key, state: fx });
+    });
+    $(this.room.state).fx.onRemove((fx, key) => {
+      this._notify('fx_remove', { id: key, state: fx });
     });
 
     // Root listeners
@@ -272,6 +303,20 @@ export class ColyseusClient {
   sendCastSkill(skillId, { dirX = null, dirZ = null } = {}) {
     this.room?.send('cast_skill', { skill_id: skillId, dir_x: dirX, dir_z: dirZ });
   }
+  /** Hit em prop destrutivel (barril/caixa). Servidor calcula dmg. */
+  sendHitProp(propId, weapon) {
+    this.room?.send('hit_prop', { prop_id: propId, weapon });
+  }
+  /** Pede FX visual compartilhado (whitelist: spray, explosion, splash...). */
+  sendSpawnFx(kind, { x, y, z } = {}) {
+    this.room?.send('spawn_fx', { kind, x, y, z });
+  }
+  /** Ping: client envia performance.now(), server ecoa em pong. */
+  sendPing() {
+    if (!this.room) return;
+    this.room.send('ping', { t: performance.now(), ping: this.ping });
+  }
+  getPing() { return this.ping; }
 
   /** Snapshot da sala (state read-only). */
   get state() { return this.room?.state || null; }

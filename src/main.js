@@ -64,6 +64,9 @@ import { ColyseusClient }      from './game/multiplayer/ColyseusClient.js';
 import { RemotePlayer }        from './game/multiplayer/RemotePlayer.js';
 import { RemoteMob }           from './game/multiplayer/RemoteMob.js';
 import { RemoteDrop }          from './game/multiplayer/RemoteDrop.js';
+import { RemoteProp }          from './game/multiplayer/RemoteProp.js';
+import { RemoteFx }            from './game/multiplayer/RemoteFx.js';
+import { ChatHud, Scoreboard, PingDisplay, DeathTimer } from './game/ui/IngameHud.js';
 import { PvpToggle }           from './game/ui/PvpToggle.js';
 import { LocalAura }           from './game/combat/LocalAura.js';
 import { getConfig }           from './game/auth/SupabaseClient.js';
@@ -363,9 +366,13 @@ async function init() {
   const _remotePlayers = new Map();  // playerId → RemotePlayer
   const _remoteMobs = new Map();     // mobId → RemoteMob
   const _remoteDrops = new Map();    // dropId → RemoteDrop
+  const _remoteProps = new Map();    // propId → RemoteProp
+  const _remoteFx = new Map();       // fxId → RemoteFx
   window._remotePlayers = _remotePlayers;
   window._remoteMobs = _remoteMobs;
   window._remoteDrops = _remoteDrops;
+  window._remoteProps = _remoteProps;
+  window._remoteFx = _remoteFx;
 
   // LocalAura (player local quando pvp_on)
   let _localAura = null;
@@ -416,6 +423,43 @@ async function init() {
   cs.on('drop_remove', ({ id }) => {
     const d = _remoteDrops.get(id);
     if (d) { d.dispose(); _remoteDrops.delete(id); }
+  });
+
+  // ── PROPS destrutíveis ──
+  cs.on('prop_add', ({ id, state }) => {
+    if (_remoteProps.has(id)) return;
+    _remoteProps.set(id, new RemoteProp(scene, state));
+  });
+  cs.on('prop_remove', ({ id }) => {
+    const p = _remoteProps.get(id);
+    if (p) { p.dispose(); _remoteProps.delete(id); }
+  });
+  cs.on('prop_change', ({ id, field }) => {
+    const p = _remoteProps.get(id);
+    if (p) p.onSchemaChange?.(field);
+  });
+  cs.on('prop_hit', (m) => {
+    // VFX local de hit no prop
+    const p = _remoteProps.get(m.prop_id);
+    if (p?.root) {
+      window._dmgNumbers?.spawn(p.root.position, m.dmg, { color: '#ffaa44' });
+    }
+  });
+  cs.on('prop_broken', (m) => {
+    const p = _remoteProps.get(m.prop_id);
+    if (!p) return;
+    // FX adicional já vai vir do server (fx_add)
+  });
+
+  // ── FX visuais compartilhados ──
+  cs.on('fx_add', ({ id, state }) => {
+    if (_remoteFx.has(id)) return;
+    const fx = new RemoteFx(scene, state);
+    _remoteFx.set(id, fx);
+  });
+  cs.on('fx_remove', ({ id }) => {
+    const fx = _remoteFx.get(id);
+    if (fx) { fx.dispose(); _remoteFx.delete(id); }
   });
 
   // ── PICKUP confirmado pelo servidor (aplica efeito local) ──
@@ -587,6 +631,27 @@ async function init() {
   // PvP toggle UI
   const pvpToggle = new PvpToggle(cs, auth);
   window._pvpToggle = pvpToggle;
+
+  // ── HUD multiplayer (chat T / scoreboard TAB / ping / death timer) ──
+  const chatHud = new ChatHud(cs, auth);
+  const scoreboard = new Scoreboard(cs, auth);
+  const pingDisplay = new PingDisplay(cs);
+  const deathTimer = new DeathTimer(cs, auth);
+  window._chatHud = chatHud;
+  window._scoreboard = scoreboard;
+  window._pingDisplay = pingDisplay;
+  window._deathTimer = deathTimer;
+
+  // Ping tick (2Hz)
+  let _pingT = 0;
+  function _pingTick(dt) {
+    _pingT -= dt;
+    if (_pingT <= 0 && cs.connected) {
+      cs.sendPing();
+      _pingT = 0.5;
+    }
+  }
+  window._pingTick = _pingTick;
 
   // Hook respawn local → notifica servidor
   const _origRespawn = player.onRespawn;
@@ -809,9 +874,10 @@ async function init() {
     waterSystem.update(dt, player);
     settingsUI.update(input);
     musicMuteBtn.update(input);
-    // ── MP Colyseus: envia input + atualiza players/mobs/drops remotos ──
+    // ── MP Colyseus: envia input + atualiza players/mobs/drops/props remotos ──
     if (cs.connected) {
       cs.sendInput(player);
+      _pingTick(dt);
       for (const rp of _remotePlayers.values()) rp.update(dt, player.camera);
       for (const m of _remoteMobs.values()) m.update(dt, player.camera);
       // Drops: anima + auto-pickup quando player chega perto
@@ -824,6 +890,9 @@ async function init() {
         }
       }
     }
+    // HUD multiplayer: atualiza sempre (tick mesmo offline pra esconder UI)
+    pingDisplay.update();
+    deathTimer.update();
     if (_localAura) _localAura.update(dt);
     pvpToggle.update(input);
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
