@@ -9,12 +9,50 @@
 //     start_match, spawn_mob, chat
 // ─────────────────────────────────────────────────────────────────
 import { Room } from '@colyseus/core';
-import { ArenaState, PlayerState, MobState } from '../schema/ArenaState.js';
+import { ArenaState, PlayerState, MobState, DropState } from '../schema/ArenaState.js';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
+import { validateHit, getWeapon } from './WeaponTable.js';
+import { validateSkillCast, getSkill } from './SkillTable.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://myylkpoisqijfnptlnyk.supabase.co';
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || ''; // HS256 secret (preferencial)
+const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const JWT_REQUIRED = process.env.JWT_REQUIRED !== '0';
+
+/**
+ * Persiste stats do player em transfps.profiles ao sair.
+ * Usa RPC dedicada transfps_apply_match_result (criada na migration).
+ * Service role bypassa RLS — só o servidor MP pode chamar.
+ */
+async function persistStats(player) {
+  if (!SUPABASE_SERVICE_ROLE) return;
+  if (!player.id || player.id.length < 10) return;
+  try {
+    const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/transfps_apply_match_result', {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        p_player_id: player.id,
+        p_kills_delta: player.kills | 0,
+        p_deaths_delta: player.deaths | 0,
+        p_xp_gained: player.xp | 0,
+        p_coins_gained: player.coins | 0,
+        p_final_level: player.level | 0,
+      }),
+    });
+    if (r.status >= 400) {
+      console.warn(`[persistStats] HTTP ${r.status} ${await r.text().catch(() => '')}`);
+    } else {
+      console.log(`[persistStats] ${player.nickname} kills=${player.kills} xp=${player.xp} level=${player.level} coins=${player.coins}`);
+    }
+  } catch (e) {
+    console.warn('[persistStats] erro:', e.message);
+  }
+}
 
 // JWKS para RS256 (fallback se não tiver shared secret)
 const JWKS = createRemoteJWKSet(new URL(SUPABASE_URL + '/auth/v1/.well-known/jwks.json'));
@@ -31,6 +69,7 @@ const MOB_KINDS = [
 ];
 
 let _mobUid = 0;
+let _dropUid = 0;
 
 export class ArenaRoom extends Room {
   // metadata visivel no lobby
@@ -45,6 +84,9 @@ export class ArenaRoom extends Room {
     this.state.started_at = 0;
     this._lastTick = Date.now();
     this._cooldowns = new Map(); // mobId → { cdT, lastAttack }
+    this._atkCooldowns = new Map(); // `${playerId}:${weaponId}` → lastUseAt
+    this._kills = new Map(); // playerId → kill count na partida atual
+    this._lastInputAt = new Map(); // playerId → ts (anti-flood)
 
     // metadata pra LobbyRoom listar com player_count + name + map
     this.setMetadata({
@@ -73,6 +115,9 @@ export class ArenaRoom extends Room {
     this.onMessage('clear_mobs', (client) => this._onClearMobs(client));
     this.onMessage('respawn', (client) => this._onRespawn(client));
     this.onMessage('chat', (client, payload) => this._onChat(client, payload));
+    this.onMessage('pickup_drop', (client, payload) => this._onPickupDrop(client, payload));
+    this.onMessage('cast_skill', (client, payload) => this._onCastSkill(client, payload));
+    this._skillCooldowns = new Map();
 
     console.log(`[ArenaRoom] criada id=${this.roomId} map=${this.state.map_id} max=${this.maxClients}`);
   }
@@ -131,6 +176,11 @@ export class ArenaRoom extends Room {
     p.anim_state = 'idle';
     p.weapon = 'unarmed';
     p.dead = false;
+    p.xp = 0;
+    p.level = 1;
+    p.kills = 0;
+    p.deaths = 0;
+    p.coins = 0;
 
     this.state.players.set(playerId, p);
     if (p.is_host) this.state.host_id = playerId;
@@ -138,12 +188,15 @@ export class ArenaRoom extends Room {
     console.log(`[ArenaRoom] +${p.nickname} ${p.is_host ? '[HOST]' : ''} (${this.state.players.size} players)`);
   }
 
-  onLeave(client, consented) {
+  async onLeave(client, consented) {
     const pid = client.userData?.playerId;
     if (!pid) return;
     const player = this.state.players.get(pid);
     if (!player) return;
     console.log(`[ArenaRoom] -${player.nickname}`);
+
+    // Persiste stats no Supabase (fire-and-forget)
+    persistStats(player).catch(() => {});
 
     // Se host saiu, transfere
     const wasHost = (pid === this.state.host_id);
@@ -188,29 +241,262 @@ export class ArenaRoom extends Room {
     const pid = client.userData?.playerId;
     const attacker = this.state.players.get(pid);
     const target = this.state.players.get(String(payload.to || ''));
-    if (!attacker || !target || target.dead) return;
-    if (!attacker.pvp_on || !target.pvp_on) return; // PvP gate
-    const dmg = Math.max(0, Math.min(500, +payload.dmg || 0));
-    target.hp = Math.max(0, target.hp - dmg);
+    if (!attacker || !target) return;
+
+    // ⚠️ SERVIDOR é dono do dano. Cliente envia só weapon+target.
+    const weaponId = String(payload.weapon || attacker.weapon || 'unarmed').slice(0, 32);
+    const v = validateHit({
+      attacker, target, weaponId,
+      now: Date.now(),
+      cooldowns: this._atkCooldowns,
+      pvpRequired: true,
+    });
+    if (!v.ok) {
+      // Log de tentativa rejeitada (anti-cheat trace)
+      if (v.reason !== 'cooldown') {
+        console.log(`[hit_player rejected] ${attacker.nickname} → ${target.nickname} weapon=${weaponId} reason=${v.reason}`);
+      }
+      return;
+    }
+
+    target.hp = Math.max(0, target.hp - v.dmg);
+    // Broadcast pra clientes mostrarem dmg number/sangue
+    this.broadcast('hit_confirmed', {
+      from: attacker.id, to: target.id,
+      weapon: weaponId, dmg: v.dmg,
+    });
+
     if (target.hp <= 0) {
       target.dead = true;
+      this._kills.set(attacker.id, (this._kills.get(attacker.id) || 0) + 1);
       this.broadcast('died', { player_id: target.id, killer: attacker.id });
     }
   }
 
   _onHitMob(client, payload) {
+    const pid = client.userData?.playerId;
+    const attacker = this.state.players.get(pid);
     const mob = this.state.mobs.get(String(payload.mob_id || ''));
-    if (!mob || mob.hp <= 0) return;
-    const dmg = Math.max(0, Math.min(500, +payload.dmg || 0));
-    mob.hp = Math.max(0, mob.hp - dmg);
+    if (!attacker || !mob) return;
+
+    const weaponId = String(payload.weapon || attacker.weapon || 'unarmed').slice(0, 32);
+    const v = validateHit({
+      attacker, target: mob, weaponId,
+      now: Date.now(),
+      cooldowns: this._atkCooldowns,
+      pvpRequired: false, // mobs sempre podem ser atacados
+    });
+    if (!v.ok) {
+      if (v.reason !== 'cooldown') {
+        console.log(`[hit_mob rejected] ${attacker.nickname} → ${mob.id} weapon=${weaponId} reason=${v.reason}`);
+      }
+      return;
+    }
+
+    mob.hp = Math.max(0, mob.hp - v.dmg);
+    this.broadcast('hit_confirmed', {
+      from: attacker.id, to: mob.id, mob: true,
+      weapon: weaponId, dmg: v.dmg,
+    });
+
     if (mob.hp <= 0) {
       mob.state = 'dead';
-      this.broadcast('mob_killed', { mob_id: mob.id, by: client.userData?.playerId });
-      // Despawn em 2s
+      this._kills.set(attacker.id, (this._kills.get(attacker.id) || 0) + 1);
+      // ETAPA 4: XP/kills/level server-authoritative
+      this._awardKill(attacker, mob);
+      this.broadcast('mob_killed', { mob_id: mob.id, by: attacker.id });
+      // Drops server-authoritative
+      this._spawnDropsFromMob(mob);
       setTimeout(() => {
         if (this.state.mobs.has(mob.id)) this.state.mobs.delete(mob.id);
       }, 2000);
     }
+  }
+
+  /** Soma XP/kills no PlayerState e processa level-up. */
+  _awardKill(player, mob) {
+    const tierXp = { rookie: 20, champion: 45, ultimate: 90, mega: 180, boss: 400, chibata: 25 };
+    const gain = tierXp[mob.tier || 'rookie'] || 20;
+    player.xp = (player.xp || 0) + gain;
+    player.kills = (player.kills || 0) + 1;
+    // Level up: cada nível custa 100 * level XP
+    while (player.xp >= player.level * 100) {
+      player.xp -= player.level * 100;
+      player.level = player.level + 1;
+      player.maxHp = 100 + (player.level - 1) * 12;
+      player.hp = player.maxHp; // cura no level up
+      this.broadcast('level_up', { player_id: player.id, level: player.level });
+    }
+    this.broadcast('xp_gain', { player_id: player.id, gain, total: player.xp, level: player.level });
+  }
+
+  /** RNG de loot do servidor. Tier do mob define quantidade e raridade. */
+  _spawnDropsFromMob(mob) {
+    const tier = mob.tier || 'rookie';
+    const tierBonus = { rookie: 1, champion: 1.6, ultimate: 2.4, mega: 3.5, boss: 5, chibata: 1.4 }[tier] || 1;
+
+    // Sempre 1-3 moedas
+    const coinCount = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < coinCount; i++) {
+      this._spawnDrop({
+        kind: 'coin',
+        value: Math.ceil((3 + Math.random() * 6) * tierBonus),
+        x: mob.x, z: mob.z, scatter: 1.5,
+      });
+    }
+
+    // Chance de poção de HP (35% base)
+    if (Math.random() < 0.35) {
+      this._spawnDrop({
+        kind: 'hp_potion',
+        value: 30 + Math.floor(Math.random() * 20),
+        x: mob.x, z: mob.z, scatter: 1.0,
+      });
+    }
+    // Chance de poção de MP (15%)
+    if (Math.random() < 0.15) {
+      this._spawnDrop({
+        kind: 'mp_potion',
+        value: 25 + Math.floor(Math.random() * 15),
+        x: mob.x, z: mob.z, scatter: 1.0,
+      });
+    }
+    // Chance de gem raro (8% base, multiplicado pelo tier)
+    if (Math.random() < 0.08 * tierBonus) {
+      this._spawnDrop({
+        kind: 'gem',
+        value: Math.ceil(20 * tierBonus),
+        x: mob.x, z: mob.z, scatter: 0.8,
+      });
+    }
+  }
+
+  _spawnDrop({ kind, value, x, z, scatter = 1.0 }) {
+    if (this.state.drops.size >= 80) return; // cap defensivo
+    const id = `drop_${++_dropUid}`;
+    const ang = Math.random() * Math.PI * 2;
+    const r = Math.random() * scatter;
+    const d = new DropState();
+    d.id = id;
+    d.kind = kind;
+    d.value = value;
+    d.x = x + Math.cos(ang) * r;
+    d.y = 0.3;
+    d.z = z + Math.sin(ang) * r;
+    d.expires_at = Date.now() + 120000; // 2 min
+    this.state.drops.set(id, d);
+  }
+
+  /**
+   * Skill cast — server valida cd e broadcasta. Cliente renderiza VFX local.
+   * Para skills com dano em AOE/ray, também aplica dano em alvos no raio.
+   */
+  _onCastSkill(client, payload) {
+    const pid = client.userData?.playerId;
+    const caster = this.state.players.get(pid);
+    if (!caster) return;
+    const skillId = String(payload.skill_id || '').slice(0, 32);
+    const v = validateSkillCast({
+      caster, skillId, now: Date.now(), cooldowns: this._skillCooldowns,
+    });
+    if (!v.ok) {
+      if (v.reason !== 'cooldown') {
+        console.log(`[cast_skill rejected] ${caster.nickname} skill=${skillId} reason=${v.reason}`);
+      }
+      return;
+    }
+    const s = v.skill;
+
+    // Broadcast pra todos clientes renderizarem VFX
+    this.broadcast('skill_cast', {
+      caster_id: caster.id,
+      skill_id: skillId,
+      x: caster.x, y: caster.y, z: caster.z,
+      ry: caster.ry,
+      // Direção fornecida pelo cliente (alvo do mouse) — apenas pra VFX direcional
+      dir_x: typeof payload.dir_x === 'number' ? payload.dir_x : null,
+      dir_z: typeof payload.dir_z === 'number' ? payload.dir_z : null,
+    });
+
+    // Aplica dano AOE em alvos dentro do raio (mobs + outros players com pvp_on)
+    if ((s.dmg || 0) > 0 && (s.radius || 0) > 0) {
+      const r2 = (s.radius + 0.5) ** 2;
+      // Mobs
+      this.state.mobs.forEach((mob) => {
+        if (mob.hp <= 0) return;
+        const dx = mob.x - caster.x, dz = mob.z - caster.z;
+        if (dx * dx + dz * dz > r2) return;
+        mob.hp = Math.max(0, mob.hp - s.dmg);
+        this.broadcast('hit_confirmed', {
+          from: caster.id, to: mob.id, mob: true,
+          weapon: 'skill:' + skillId, dmg: s.dmg,
+        });
+        if (mob.hp <= 0) {
+          mob.state = 'dead';
+          this._kills.set(caster.id, (this._kills.get(caster.id) || 0) + 1);
+          this._awardKill(caster, mob);
+          this.broadcast('mob_killed', { mob_id: mob.id, by: caster.id });
+          this._spawnDropsFromMob(mob);
+          setTimeout(() => { if (this.state.mobs.has(mob.id)) this.state.mobs.delete(mob.id); }, 2000);
+        }
+      });
+      // Players com PvP ON (exclui caster)
+      this.state.players.forEach((target, tid) => {
+        if (tid === caster.id) return;
+        if (target.dead) return;
+        if (!caster.pvp_on || !target.pvp_on) return;
+        const dx = target.x - caster.x, dz = target.z - caster.z;
+        if (dx * dx + dz * dz > r2) return;
+        target.hp = Math.max(0, target.hp - s.dmg);
+        this.broadcast('hit_confirmed', {
+          from: caster.id, to: target.id,
+          weapon: 'skill:' + skillId, dmg: s.dmg,
+        });
+        if (target.hp <= 0) {
+          target.dead = true;
+          target.deaths = (target.deaths || 0) + 1;
+          this.broadcast('died', { player_id: target.id, killer: caster.id });
+        }
+      });
+    }
+  }
+
+  _onPickupDrop(client, payload) {
+    const pid = client.userData?.playerId;
+    const player = this.state.players.get(pid);
+    if (!player || player.dead) return;
+    const drop = this.state.drops.get(String(payload.drop_id || ''));
+    if (!drop) return;
+
+    // Range check (server decide)
+    const dx = (player.x ?? 0) - drop.x;
+    const dz = (player.z ?? 0) - drop.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist > 2.5) {
+      console.log(`[pickup rejected] ${player.nickname} too far (${dist.toFixed(1)}u)`);
+      return;
+    }
+
+    // Aplica efeito server-side
+    switch (drop.kind) {
+      case 'coin':
+        player.coins = (player.coins || 0) + drop.value;
+        this.broadcast('pickup', { player_id: pid, drop_id: drop.id, kind: drop.kind, value: drop.value });
+        break;
+      case 'gem':
+        player.coins = (player.coins || 0) + drop.value * 3; // gem = 3x coin
+        this.broadcast('pickup', { player_id: pid, drop_id: drop.id, kind: drop.kind, value: drop.value });
+        break;
+      case 'hp_potion':
+        player.hp = Math.min(player.maxHp, player.hp + drop.value);
+        this.broadcast('pickup', { player_id: pid, drop_id: drop.id, kind: drop.kind, value: drop.value });
+        break;
+      case 'mp_potion':
+        this.broadcast('pickup', { player_id: pid, drop_id: drop.id, kind: drop.kind, value: drop.value });
+        break;
+    }
+
+    this.state.drops.delete(drop.id);
   }
 
   _onReady(client, payload) {
@@ -277,9 +563,19 @@ export class ArenaRoom extends Room {
     this.broadcast('chat', { from: p.id, nick: p.nickname, msg });
   }
 
-  // ── Tick autoritativo (IA mobs) ──────────────────────────────
+  // ── Tick autoritativo (IA mobs + expiração de drops) ──────────
   _tick(dt) {
-    if (!this.state.started || this.state.mobs.size === 0) return;
+    if (!this.state.started) return;
+
+    // Expira drops antigos (auto-despawn 2 min)
+    if (this.state.drops.size > 0) {
+      const now = Date.now();
+      const toDel = [];
+      this.state.drops.forEach((d, id) => { if (d.expires_at && now > d.expires_at) toDel.push(id); });
+      toDel.forEach((id) => this.state.drops.delete(id));
+    }
+
+    if (this.state.mobs.size === 0) return;
     const players = [];
     this.state.players.forEach((p) => { if (!p.dead) players.push(p); });
     if (!players.length) return;

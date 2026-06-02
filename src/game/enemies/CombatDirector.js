@@ -68,6 +68,17 @@ export class CombatDirector {
 
   // ── Loop ──────────────────────────────────────────────────────────
   update(dt, input, gameActive) {
+    // ⚠️ MpGuard: em sala MP, mobs vêm do ArenaRoom (servidor).
+    // CombatDirector DESLIGADO automaticamente.
+    if (window._mpGuard?.isInMpRoom?.()) {
+      if (this.active) {
+        this.active = false;
+        console.log('[CombatDirector] desligado automaticamente (sala MP)');
+      }
+      this._syncHUD();
+      return;
+    }
+
     // Toggle por tecla H (borda de subida)
     const k = !!input?.isDown?.('KeyH');
     if (k && !this._wasToggle) this.toggle();

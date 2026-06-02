@@ -52,6 +52,11 @@ export class EnemyManager {
   }
 
   async spawn(id, position) {
+    // ⚠️ MpGuard: dentro de sala MP, mobs vêm SÓ do servidor (state.mobs).
+    if (window._mpGuard?.isInMpRoom?.()) {
+      console.log(`[EnemyManager] spawn local BLOQUEADO (sala MP): ${id}`);
+      return null;
+    }
     const def = getEnemyDef(id);
     if (!def) return null;
     const container = await this._loadContainer(id);

@@ -63,6 +63,7 @@ import { LobbyUI }             from './game/ui/LobbyUI.js';
 import { ColyseusClient }      from './game/multiplayer/ColyseusClient.js';
 import { RemotePlayer }        from './game/multiplayer/RemotePlayer.js';
 import { RemoteMob }           from './game/multiplayer/RemoteMob.js';
+import { RemoteDrop }          from './game/multiplayer/RemoteDrop.js';
 import { PvpToggle }           from './game/ui/PvpToggle.js';
 import { LocalAura }           from './game/combat/LocalAura.js';
 import { getConfig }           from './game/auth/SupabaseClient.js';
@@ -361,8 +362,10 @@ async function init() {
 
   const _remotePlayers = new Map();  // playerId → RemotePlayer
   const _remoteMobs = new Map();     // mobId → RemoteMob
+  const _remoteDrops = new Map();    // dropId → RemoteDrop
   window._remotePlayers = _remotePlayers;
   window._remoteMobs = _remoteMobs;
+  window._remoteDrops = _remoteDrops;
 
   // LocalAura (player local quando pvp_on)
   let _localAura = null;
@@ -404,6 +407,77 @@ async function init() {
     if (m) m.onSchemaChange?.(field);
   });
 
+  // ── DROPS server-authoritative ──
+  cs.on('drop_add', ({ id, state }) => {
+    if (_remoteDrops.has(id)) return;
+    const drop = new RemoteDrop(scene, state);
+    _remoteDrops.set(id, drop);
+  });
+  cs.on('drop_remove', ({ id }) => {
+    const d = _remoteDrops.get(id);
+    if (d) { d.dispose(); _remoteDrops.delete(id); }
+  });
+
+  // ── PICKUP confirmado pelo servidor (aplica efeito local) ──
+  cs.on('pickup', (m) => {
+    const isMine = m.player_id === auth.getUserId();
+    // VFX onde estava o drop (já foi removido pelo drop_remove)
+    if (isMine) {
+      // Som de pickup
+      player.sounds?.playNow?.('pickup_item', 0.8);
+      // Atualiza inventário local conforme o tipo (servidor já validou)
+      switch (m.kind) {
+        case 'hp_potion':
+          // HP já foi aplicado server-side; feedback visual local
+          window._dmgNumbers?.spawn(player.mesh.position, '+' + m.value, { color: '#22dd44' });
+          break;
+        case 'mp_potion':
+          if (player.mp != null) player.mp = Math.min(player.maxMp || 100, player.mp + m.value);
+          window._dmgNumbers?.spawn(player.mesh.position, '+MP' + m.value, { color: '#5599ff' });
+          break;
+        case 'coin':
+          // Acumula localmente (futuro: server-side em PlayerState.coins)
+          player._coins = (player._coins || 0) + m.value;
+          window._dmgNumbers?.spawn(player.mesh.position, '+' + m.value + '🪙', { color: '#ffcc22' });
+          break;
+        case 'gem':
+          player._gems = (player._gems || 0) + m.value;
+          window._dmgNumbers?.spawn(player.mesh.position, '+💎' + m.value, { color: '#5cf' });
+          break;
+      }
+    }
+  });
+
+  // ── HIT CONFIRMADO pelo servidor (dmg autoritativo) ──
+  cs.on('hit_confirmed', (m) => {
+    const myId = auth.getUserId();
+    let targetPos = null;
+    let targetMesh = null;
+    if (m.mob) {
+      const rm = _remoteMobs.get(m.to);
+      if (rm) { targetPos = rm.root?.getAbsolutePosition?.(); targetMesh = rm.placeholder; }
+    } else if (m.to === myId) {
+      targetPos = player.mesh?.position;
+      targetMesh = player.mesh;
+    } else {
+      const rp = _remotePlayers.get(m.to);
+      if (rp) { targetPos = rp.root?.getAbsolutePosition?.(); targetMesh = rp.body; }
+    }
+    if (targetPos) {
+      const crit = m.dmg >= 80;
+      const color = m.from === myId ? (crit ? '#ff5050' : '#ffffff') : '#ffaa44';
+      window._dmgNumbers?.spawn(targetPos, m.dmg, { crit, color });
+    }
+    if (targetPos && window._bloodFX) {
+      const isSword = String(m.weapon || '').startsWith('sword');
+      window._bloodFX.spawn(
+        targetPos.add(new BABYLON.Vector3(0, 0.8, 0)),
+        BABYLON.Vector3.Forward(),
+        { multiplier: isSword ? 1.8 : 1.0, sourceNode: targetMesh, isHeavy: isSword || m.dmg >= 80 }
+      );
+    }
+  });
+
   // ── Mob attack hit no player local ──
   cs.on('mob_attack', (m) => {
     if (m.target_id === auth.getUserId() && !player._dead) {
@@ -422,6 +496,93 @@ async function init() {
   });
 
   cs.on('respawn', () => { /* state update vem via player.dead → false */ });
+
+  // ── SKILL CAST: server validou e broadcastou. Renderiza VFX. ──
+  cs.on('skill_cast', (m) => {
+    const isMe = m.caster_id === auth.getUserId();
+    // Posição do caster: meu próprio player ou um RemotePlayer
+    const casterPos = isMe
+      ? player.mesh?.position
+      : _remotePlayers.get(m.caster_id)?.root?.position;
+    if (!casterPos) return;
+    // VFX local (todos renderizam)
+    _showSkillVFX(scene, m.skill_id, casterPos, { dirX: m.dir_x, dirZ: m.dir_z });
+    // Som
+    const skillSounds = {
+      kamehameha: 'kamehameha', aura_ssj: 'aura_ssj',
+      dash_explosivo: 'swing_3', rajada_socos: 'punch_supercrit',
+      slam_descendente: 'ground_hit', ultimate: 'kick_crit',
+      defesa_perfeita: 'swing_1',
+    };
+    const sid = skillSounds[m.skill_id];
+    if (sid) player.sounds?.playNow?.(sid, 0.85);
+  });
+
+  // ── XP/LEVEL UP (server-authoritative) ──
+  cs.on('xp_gain', (m) => {
+    if (m.player_id === auth.getUserId() && player.mesh) {
+      window._dmgNumbers?.spawn(player.mesh.position, `+${m.gain} XP`, { color: '#5cf' });
+    }
+  });
+  cs.on('level_up', (m) => {
+    if (m.player_id === auth.getUserId()) {
+      _showKillFeed(`🆙 LEVEL ${m.level}!`);
+      // Restaura HP total visualmente (server já curou)
+      player.hp = player.maxHp;
+    } else {
+      const rp = _remotePlayers.get(m.player_id);
+      _showKillFeed(`${rp?.nickname || 'player'} → LV ${m.level}`);
+    }
+  });
+
+  // ── VFX simples de skill (procedural, sem GLB) ──
+  function _showSkillVFX(scene, skillId, pos, { dirX, dirZ } = {}) {
+    const ps = new BABYLON.ParticleSystem(`skillvfx_${skillId}_${Date.now()}`, 200, scene);
+    if (!_showSkillVFX._tex) {
+      const tex = new BABYLON.DynamicTexture('skillVfxTex', { width: 32, height: 32 }, scene, false);
+      const ctx = tex.getContext();
+      const grd = ctx.createRadialGradient(16, 16, 1, 16, 16, 16);
+      grd.addColorStop(0, 'rgba(255,255,255,1)');
+      grd.addColorStop(0.5, 'rgba(160,220,255,0.7)');
+      grd.addColorStop(1, 'rgba(40,80,140,0)');
+      ctx.fillStyle = grd; ctx.fillRect(0, 0, 32, 32);
+      tex.update(); tex.hasAlpha = true;
+      _showSkillVFX._tex = tex;
+    }
+    ps.particleTexture = _showSkillVFX._tex;
+    const palette = {
+      kamehameha:       { c1: [0.3,0.7,1.0], c2: [0.6,0.95,1.0], gravity: [0,2,0], size: [0.4,1.0], count: 350 },
+      aura_ssj:         { c1: [1.0,0.85,0.2], c2: [1.0,0.55,0.05], gravity: [0,3,0], size: [0.3,0.8], count: 250 },
+      dash_explosivo:   { c1: [0.95,0.45,0.05], c2: [1.0,0.85,0.2], gravity: [0,0,0], size: [0.2,0.6], count: 180 },
+      rajada_socos:     { c1: [1.0,1.0,1.0], c2: [0.85,0.85,0.85], gravity: [0,0.5,0], size: [0.15,0.5], count: 220 },
+      slam_descendente: { c1: [0.6,0.4,0.2], c2: [0.45,0.30,0.15], gravity: [0,-2,0], size: [0.4,0.9], count: 250 },
+      ultimate:         { c1: [1.0,0.20,0.05], c2: [1.0,0.65,0.10], gravity: [0,1.5,0], size: [0.5,1.2], count: 400 },
+      defesa_perfeita:  { c1: [0.4,0.85,1.0], c2: [0.85,0.95,1.0], gravity: [0,0.5,0], size: [0.2,0.5], count: 120 },
+    };
+    const p = palette[skillId] || palette.dash_explosivo;
+    ps.emitter = pos.clone();
+    ps.minEmitBox = new BABYLON.Vector3(-0.6, 0.0, -0.6);
+    ps.maxEmitBox = new BABYLON.Vector3( 0.6, 1.8,  0.6);
+    ps.color1 = new BABYLON.Color4(p.c1[0], p.c1[1], p.c1[2], 1);
+    ps.color2 = new BABYLON.Color4(p.c2[0], p.c2[1], p.c2[2], 1);
+    ps.colorDead = new BABYLON.Color4(0, 0, 0, 0);
+    ps.minSize = p.size[0]; ps.maxSize = p.size[1];
+    ps.minLifeTime = 0.4; ps.maxLifeTime = 1.0;
+    ps.gravity = new BABYLON.Vector3(...p.gravity);
+    if (dirX != null && dirZ != null) {
+      const nx = dirX, nz = dirZ;
+      ps.direction1 = new BABYLON.Vector3(nx * 4 - 1, 0.5, nz * 4 - 1);
+      ps.direction2 = new BABYLON.Vector3(nx * 8 + 1, 2.5, nz * 8 + 1);
+    } else {
+      ps.direction1 = new BABYLON.Vector3(-3, 1, -3);
+      ps.direction2 = new BABYLON.Vector3(3, 4, 3);
+    }
+    ps.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
+    ps.manualEmitCount = p.count;
+    ps.start();
+    setTimeout(() => { try { ps.stop(); } catch (_) {} }, 80);
+    setTimeout(() => { try { ps.dispose(); } catch (_) {} }, 1500);
+  }
 
   // PvP toggle UI
   const pvpToggle = new PvpToggle(cs, auth);
@@ -648,11 +809,20 @@ async function init() {
     waterSystem.update(dt, player);
     settingsUI.update(input);
     musicMuteBtn.update(input);
-    // ── MP Colyseus: envia input + atualiza players/mobs remotos ──
+    // ── MP Colyseus: envia input + atualiza players/mobs/drops remotos ──
     if (cs.connected) {
       cs.sendInput(player);
       for (const rp of _remotePlayers.values()) rp.update(dt, player.camera);
       for (const m of _remoteMobs.values()) m.update(dt, player.camera);
+      // Drops: anima + auto-pickup quando player chega perto
+      const playerPos = player.mesh?.position;
+      for (const d of _remoteDrops.values()) {
+        d.update(dt);
+        if (!d._requested && playerPos && d.distanceTo(playerPos) < 1.6) {
+          d._requested = true; // evita spam de requests
+          cs.sendPickup(d.id);
+        }
+      }
     }
     if (_localAura) _localAura.update(dt);
     pvpToggle.update(input);

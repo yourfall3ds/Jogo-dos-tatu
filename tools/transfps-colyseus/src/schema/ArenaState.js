@@ -21,6 +21,21 @@ type('number')(PlayerState.prototype, 'vy');
 type('string')(PlayerState.prototype, 'anim_state');
 type('string')(PlayerState.prototype, 'weapon');
 type('boolean')(PlayerState.prototype, 'dead');
+// Progressão server-authoritative
+type('number')(PlayerState.prototype, 'xp');
+type('number')(PlayerState.prototype, 'level');
+type('number')(PlayerState.prototype, 'kills');
+type('number')(PlayerState.prototype, 'deaths');
+type('number')(PlayerState.prototype, 'coins');
+
+export class DropState extends Schema {}
+type('string')(DropState.prototype, 'id');
+type('string')(DropState.prototype, 'kind');       // coin | gem | hp_potion | mp_potion | material
+type('number')(DropState.prototype, 'value');      // quantidade (moedas) ou cura
+type('number')(DropState.prototype, 'x');
+type('number')(DropState.prototype, 'y');
+type('number')(DropState.prototype, 'z');
+type('number')(DropState.prototype, 'expires_at'); // ts em ms — auto-despawn
 
 export class MobState extends Schema {}
 type('string')(MobState.prototype, 'id');
@@ -40,10 +55,12 @@ export class ArenaState extends Schema {
     super();
     this.players = new MapSchema();
     this.mobs = new MapSchema();
+    this.drops = new MapSchema();
   }
 }
 type({ map: PlayerState })(ArenaState.prototype, 'players');
 type({ map: MobState })(ArenaState.prototype, 'mobs');
+type({ map: DropState })(ArenaState.prototype, 'drops');
 type('string')(ArenaState.prototype, 'host_id');
 type('boolean')(ArenaState.prototype, 'started');
 type('string')(ArenaState.prototype, 'map_id');

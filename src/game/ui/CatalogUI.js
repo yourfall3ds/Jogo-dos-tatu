@@ -104,11 +104,40 @@ export class CatalogUI {
     await this.mgr.spawnWave(ids.slice(0, 4), 1);
   }
 
+  /** Detecta se estamos em sala MP. Spawn local fica BLOQUEADO. */
+  _isMpLocked() { return !!window._mpGuard?.isInMpRoom?.(); }
+
   show() {
+    if (this._isMpLocked()) {
+      // Em sala MP: catálogo de spawn local é proibido
+      this._showMpBlockToast();
+      return;
+    }
     this._visible = true;
     this._el.style.display = 'flex';
     window._gameInput?.deactivate?.();
     document.body.classList.remove('game-active');
+  }
+
+  _showMpBlockToast() {
+    let t = document.getElementById('cat-mp-block');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'cat-mp-block';
+      t.style.cssText = `
+        position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%);
+        background: rgba(20,5,5,0.92); color: #ff8888;
+        border: 1px solid #aa3030; border-radius: 10px;
+        padding: 14px 22px; font: 700 13px 'Segoe UI', monospace;
+        z-index: 9500; box-shadow: 0 6px 24px rgba(0,0,0,0.6);
+        pointer-events: none; opacity: 0; transition: opacity 0.2s;
+        text-align: center;`;
+      document.body.appendChild(t);
+    }
+    t.innerHTML = `🌐 <b>SALA MULTIPLAYER</b><br><span style="color:#cdd; font-weight:500;">spawn local de inimigos bloqueado</span><br><span style="color:#789; font-size:11px;">mobs vêm do servidor</span>`;
+    t.style.opacity = '1';
+    clearTimeout(this._mpToastT);
+    this._mpToastT = setTimeout(() => { t.style.opacity = '0'; }, 2200);
   }
   hide() {
     this._visible = false;

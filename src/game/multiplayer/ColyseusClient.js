@@ -13,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────
 
 import * as Colyseus from 'https://esm.sh/colyseus.js@0.16.6';
+import { MpGuard } from './MpGuard.js';
 
 const { Client, getStateCallbacks } = Colyseus;
 
@@ -28,9 +29,12 @@ export class ColyseusClient {
       open: new Set(), close: new Set(),
       'player_add': new Set(), 'player_remove': new Set(), 'player_change': new Set(),
       'mob_add': new Set(), 'mob_remove': new Set(), 'mob_change': new Set(),
+      'drop_add': new Set(), 'drop_remove': new Set(),
       'match_started': new Set(), 'died': new Set(), 'respawn': new Set(),
       'mob_attack': new Set(), 'mob_killed': new Set(), 'chat': new Set(),
       'state_change': new Set(), 'error': new Set(),
+      'hit_confirmed': new Set(), 'pickup': new Set(),
+      'skill_cast': new Set(), 'xp_gain': new Set(), 'level_up': new Set(),
     };
     this._lastInputSent = 0;
     this.INPUT_RATE_MS = 50; // 20Hz
@@ -120,6 +124,8 @@ export class ColyseusClient {
   _bindRoom() {
     if (!this.room) return;
     this.sessionId = this.room.sessionId;
+    // ⚠️ MpGuard ATIVO — bloqueia spawns locais a partir de AGORA.
+    MpGuard.enterRoom(this.room.roomId);
     // Aguarda primeiro state sync antes de attachar listeners
     this.room.onStateChange.once(() => this._attachStateListeners());
 
@@ -131,9 +137,15 @@ export class ColyseusClient {
     this.room.onMessage('mob_killed', (m) => this._notify('mob_killed', m));
     this.room.onMessage('chat', (m) => this._notify('chat', m));
     this.room.onMessage('error', (m) => this._notify('error', m));
+    this.room.onMessage('hit_confirmed', (m) => this._notify('hit_confirmed', m));
+    this.room.onMessage('pickup', (m) => this._notify('pickup', m));
+    this.room.onMessage('skill_cast', (m) => this._notify('skill_cast', m));
+    this.room.onMessage('xp_gain', (m) => this._notify('xp_gain', m));
+    this.room.onMessage('level_up', (m) => this._notify('level_up', m));
 
     this.room.onLeave((code) => {
       console.log('[Colyseus] left room, code=', code);
+      MpGuard.exitRoom(); // libera spawns locais de novo
       this._notify('close', { code });
       this.room = null;
     });
@@ -183,6 +195,14 @@ export class ColyseusClient {
       this._notify('mob_remove', { id: key, state: mob });
     });
 
+    // Drops (loot server-authoritative)
+    $(this.room.state).drops.onAdd((drop, key) => {
+      this._notify('drop_add', { id: key, state: drop });
+    });
+    $(this.room.state).drops.onRemove((drop, key) => {
+      this._notify('drop_remove', { id: key, state: drop });
+    });
+
     // Root listeners
     $(this.room.state).listen('started', (v) => {
       if (v === true) this._notify('match_started');
@@ -215,11 +235,13 @@ export class ColyseusClient {
     });
   }
 
-  sendHitPlayer(targetId, dmg, weapon) {
-    this.room?.send('hit_player', { to: targetId, dmg, weapon });
+  /** ⚠️ dmg NÃO é enviado — servidor calcula via WeaponTable. */
+  sendHitPlayer(targetId, _dmgIgnored, weapon) {
+    this.room?.send('hit_player', { to: targetId, weapon });
   }
-  sendHitMob(mobId, dmg, weapon) {
-    this.room?.send('hit_mob', { mob_id: mobId, dmg, weapon });
+  /** ⚠️ dmg NÃO é enviado — servidor calcula via WeaponTable. */
+  sendHitMob(mobId, _dmgIgnored, weapon) {
+    this.room?.send('hit_mob', { mob_id: mobId, weapon });
   }
   sendReady(isReady) {
     this.room?.send('ready', { is_ready: !!isReady });
@@ -241,6 +263,14 @@ export class ColyseusClient {
   }
   sendChat(msg) {
     this.room?.send('chat', { msg });
+  }
+  /** Pickup de drop server-validated. Server valida range, deleta state, broadcasta. */
+  sendPickup(dropId) {
+    this.room?.send('pickup_drop', { drop_id: dropId });
+  }
+  /** Cast de skill — server valida cooldown e broadcasta pra todos renderizarem. */
+  sendCastSkill(skillId, { dirX = null, dirZ = null } = {}) {
+    this.room?.send('cast_skill', { skill_id: skillId, dir_x: dirX, dir_z: dirZ });
   }
 
   /** Snapshot da sala (state read-only). */
