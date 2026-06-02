@@ -552,7 +552,7 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     const item = queue[i];
     setLoadingUI(Math.round((i / queue.length) * 100), item.label);
     const meshes = await loader.load(item.key);
-    if (meshes) item.done(meshes);
+    if (meshes) await item.done(meshes);
   }
   // Restaura máquinas salvas
   await _restoreMachines(scene);

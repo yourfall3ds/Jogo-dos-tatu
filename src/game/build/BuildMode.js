@@ -694,12 +694,18 @@ export class BuildMode {
       } catch (_) {}
       n++;
     }
+    // Também aplica nas caixas/barris FIXOS do mapa (sistema do Level) que
+    //  compartilham o mesmo assetId → unifica os dois sistemas.
+    let mFixed = 0;
+    try { mFixed = this.level?.applyObstacleScale?.(assetId, scale) || 0; } catch (_) {}
+    n += mFixed;
+
     // persiste a escala padrão + os records atualizados
     try { await AssetGroups.setDefaultScale(assetId, scale); } catch (_) {}
     this._save();
     // mundo mudou → regenera navmesh
     window._navMesh?.markDirty?.();
-    console.log(`[BuildMode] escala ${scale} aplicada a ${n} "${assetId}"`);
+    console.log(`[BuildMode] escala ${scale} aplicada a ${n} "${assetId}" (${mFixed} fixos)`);
     return n;
   }
 

@@ -7,6 +7,7 @@
 import { MonsterPlant } from './Enemy.js';
 import { GameObject }   from './game/scene/GameObject.js';
 import { LocalDB }      from './game/data/LocalDB.js';
+import { AssetGroups }  from './game/data/AssetGroups.js';
 
 // Codifica espaços e acentos em caminhos de textura
 function enc(p) {
@@ -356,8 +357,11 @@ export class Level {
   //  Métodos chamados pelo AssetLoader quando GLBs ficam prontos
   // ════════════════════════════════════════════════════════════════
 
-  /** Substitui os DynamicObjects de caixote/ammoBox pelo GLB correspondente */
-  replaceObstacles(type, meshes) {
+  /** Substitui os DynamicObjects de caixote/ammoBox pelo GLB correspondente.
+   *  UNIFICADO com o sistema de assets: cada caixa/barril ganha um assetId
+   *  (crate→crateWood, ammoBox→barrel) e usa a ESCALA PADRÃO da biblioteca.
+   *  Assim o Editor de Asset (📐 Escala) controla TODAS as cópias do mapa. */
+  async replaceObstacles(type, meshes) {
     if (!meshes?.length) return;
     const glbRoot = meshes[0];
 
@@ -365,7 +369,15 @@ export class Level {
       ? [[-6,.6,-3],[6,.6,-5],[0,.6,-9],[-9,.6,-14],[9,.6,-14],[-3,.6,-20],[14,.6,-5],[-14,.6,-5]]
       : [[-4,1,-4],[4,1,-6],[-7,1,-10],[7,1,-10],[0,1,-16],[-12,1,-7],[12,1,-7]];
 
-    const scale = type === 'crate' ? 0.012 : 0.010;
+    // Asset correspondente na biblioteca + escala base do GLB
+    const assetId  = type === 'crate' ? 'crateWood' : 'barrel';
+    const baseScale = type === 'crate' ? 0.012 : 0.010;
+    // Escala padrão definida no Editor (multiplica a base do GLB)
+    let mult = 1;
+    try { const ds = await AssetGroups.getDefaultScale(assetId); if (ds != null) mult = ds; } catch (_) {}
+    const scale = baseScale * mult;
+
+    this._mapObstacles = this._mapObstacles || [];
 
     for (const [x, y, z] of positions) {
       const clone = glbRoot.clone(`${type}_glb_${x}_${z}`, null, false);
@@ -374,20 +386,21 @@ export class Level {
       clone.rotation.y = Math.random() * Math.PI * 2;
       clone.scaling.setAll(scale);
       clone.setEnabled(true);
-      // Filhos do GLB não são pickable individualmente
+      clone._assetId = assetId; clone._baseScale = baseScale;   // p/ escala unificada
       clone.getChildMeshes().forEach(m => { m.isPickable = false; });
 
-      // ── Corpo físico invisível (pickable → tiros o acertam) ────
       const col = BABYLON.MeshBuilder.CreateBox(`${type}_col_${x}_${z}`,
         { size: 1.2 }, this.scene);
-      col.position.set(x, y, z);   // mesma posição do GLB (sem offset)
+      col.position.set(x, y, z);
       col.isVisible       = false;
       col.checkCollisions = true;
-      col.isPickable      = true;   // ← bala precisa acertar aqui
+      col.isPickable      = true;
+      col.scaling.setAll(mult);   // colisor acompanha a escala
+      col._assetId = assetId;
 
       this.shadowGen?.addShadowCaster(clone, true);
+      this._mapObstacles.push({ clone, col, assetId, baseScale });
 
-      // Remove o objeto primitivo da mesma posição (se existir)
       this.dynamics = this.dynamics.filter(d => {
         const p = d.mesh.position;
         if (Math.abs(p.x - x) < 0.5 && Math.abs(p.z - z) < 0.5) {
@@ -397,7 +410,6 @@ export class Level {
         return true;
       });
 
-      // ── Cria GameObject que controla col E sincroniza GLB ───
       this.addInteractiveObject({
         mesh: col,
         glb: clone,
@@ -407,8 +419,21 @@ export class Level {
         persistenceKey: `${type}_${x.toFixed(0)}_${z.toFixed(0)}`
       });
     }
-    // Oculta o mesh original (template)
     glbRoot.setEnabled(false);
+  }
+
+  /** Reaplica a escala (multiplicador) a todas as caixas/barris fixos de um
+   *  assetId. Chamado pelo BuildMode.applyScaleToAll pra unificar com a
+   *  biblioteca. Retorna quantos foram afetados. */
+  applyObstacleScale(assetId, mult) {
+    let n = 0;
+    for (const o of (this._mapObstacles || [])) {
+      if (o.assetId !== assetId || !o.clone || o.clone.isDisposed?.()) continue;
+      o.clone.scaling.setAll(o.baseScale * mult);
+      if (o.col && !o.col.isDisposed?.()) o.col.scaling.setAll(mult);
+      n++;
+    }
+    return n;
   }
 
   /** Espalha pickups flutuantes pelo mapa */
