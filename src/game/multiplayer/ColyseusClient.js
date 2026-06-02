@@ -50,6 +50,11 @@ export class ColyseusClient {
       'quest_claimed': new Set(),
       // Frente H
       'party_invite': new Set(), 'party_joined': new Set(), 'party_left': new Set(),
+      // Battle Royale
+      'br_takeoff': new Set(), 'br_skydive_phase': new Set(), 'br_landed': new Set(),
+      'br_running': new Set(), 'br_finished': new Set(),
+      'br_zone_warning': new Set(), 'br_zone_shrinking': new Set(), 'br_zone_idle': new Set(),
+      'br_player_died': new Set(),
     };
     this.ping = 0;
     this._lastInputSent = 0;
@@ -102,7 +107,7 @@ export class ColyseusClient {
   }
 
   /** Cria nova sala arena. */
-  async createRoom({ token, nickname, avatar_url, name, map, max_players, password }) {
+  async createRoom({ token, nickname, avatar_url, name, map, max_players, password, mode }) {
     if (!this.client) throw new Error('client not initialized');
     const options = {
       token, nickname, avatar_url,
@@ -111,6 +116,7 @@ export class ColyseusClient {
       maxPlayers: max_players || 8,
       password: password || null,
       host_nickname: nickname || '',
+      mode: mode || 'CLASSIC',
     };
     this.room = await this.client.create('arena', options);
     this._bindRoom();
@@ -177,6 +183,16 @@ export class ColyseusClient {
     this.room.onMessage('party_invite', (m) => this._notify('party_invite', m));
     this.room.onMessage('party_joined', (m) => this._notify('party_joined', m));
     this.room.onMessage('party_left', (m) => this._notify('party_left', m));
+    // Battle Royale
+    this.room.onMessage('br_takeoff', (m) => this._notify('br_takeoff', m));
+    this.room.onMessage('br_skydive_phase', (m) => this._notify('br_skydive_phase', m));
+    this.room.onMessage('br_landed', (m) => this._notify('br_landed', m));
+    this.room.onMessage('br_running', (m) => this._notify('br_running', m));
+    this.room.onMessage('br_finished', (m) => this._notify('br_finished', m));
+    this.room.onMessage('br_zone_warning', (m) => this._notify('br_zone_warning', m));
+    this.room.onMessage('br_zone_shrinking', (m) => this._notify('br_zone_shrinking', m));
+    this.room.onMessage('br_zone_idle', (m) => this._notify('br_zone_idle', m));
+    this.room.onMessage('br_player_died', (m) => this._notify('br_player_died', m));
     this.room.onMessage('pong', (m) => {
       const now = performance.now();
       const rtt = Math.max(0, now - (m.t || now));

@@ -69,6 +69,7 @@ import { RemoteFx }            from './game/multiplayer/RemoteFx.js';
 import { ChatHud, Scoreboard, PingDisplay, DeathTimer } from './game/ui/IngameHud.js';
 import { attachTransfpsSocial } from './game/ui/TransfpsSocial.js';
 import { attachTransfpsFlowGuard } from './game/ui/TransfpsFlowGuard.js';
+import { BattleRoyaleMode } from './game/br/BattleRoyaleMode.js';
 import { BloodTrail }          from './game/combat/BloodTrail.js';
 import { DeathCam }            from './game/multiplayer/DeathCam.js';
 import { PvpToggle }           from './game/ui/PvpToggle.js';
@@ -662,6 +663,13 @@ async function init() {
   // FlowGuard: loading overlay, countdown screen, disconnect, finish rico
   const flowGuard = attachTransfpsFlowGuard({ cs, auth, lobbyUI });
   window._flowGuard = flowGuard;
+
+  // ── BATTLE ROYALE MODE: ativo quando state.mode === 'BATTLE_ROYALE' ──
+  const brMode = new BattleRoyaleMode({
+    scene, cs, auth, player,
+    loadingOverlay: flowGuard.loading,
+  });
+  window._brMode = brMode;
   // Tutorial check ao receber profile
   cs.on('profile_loaded', (p) => {
     try { social.tutorial.maybeStart(p); } catch (_) {}
@@ -936,6 +944,7 @@ async function init() {
       cs.sendInput(player);
       _pingTick(dt);
       _socialTick(dt);
+      try { brMode.update(dt, window._gameInput); } catch (_) {}
       for (const rp of _remotePlayers.values()) rp.update(dt, player.camera);
       for (const m of _remoteMobs.values()) m.update(dt, player.camera);
       // Drops: anima + auto-pickup quando player chega perto
