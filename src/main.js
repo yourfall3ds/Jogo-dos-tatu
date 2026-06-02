@@ -67,6 +67,8 @@ import { RemoteDrop }          from './game/multiplayer/RemoteDrop.js';
 import { RemoteProp }          from './game/multiplayer/RemoteProp.js';
 import { RemoteFx }            from './game/multiplayer/RemoteFx.js';
 import { ChatHud, Scoreboard, PingDisplay, DeathTimer } from './game/ui/IngameHud.js';
+import { BloodTrail }          from './game/combat/BloodTrail.js';
+import { DeathCam }            from './game/multiplayer/DeathCam.js';
 import { PvpToggle }           from './game/ui/PvpToggle.js';
 import { LocalAura }           from './game/combat/LocalAura.js';
 import { getConfig }           from './game/auth/SupabaseClient.js';
@@ -637,10 +639,21 @@ async function init() {
   const scoreboard = new Scoreboard(cs, auth);
   const pingDisplay = new PingDisplay(cs);
   const deathTimer = new DeathTimer(cs, auth);
+  const bloodTrail = new BloodTrail(cs, player);
+  const deathCam = new DeathCam(scene, cs, auth, player);
   window._chatHud = chatHud;
   window._scoreboard = scoreboard;
   window._pingDisplay = pingDisplay;
   window._deathTimer = deathTimer;
+  window._bloodTrail = bloodTrail;
+  window._deathCam = deathCam;
+
+  // DeathCam ativado quando server reporta player.dead=true
+  let _lastDeadState = false;
+  let _lastKillerId = null;
+  cs.on('died', (m) => {
+    if (m.player_id === auth.getUserId()) _lastKillerId = m.killer;
+  });
 
   // Ping tick (2Hz)
   let _pingT = 0;
@@ -890,9 +903,25 @@ async function init() {
         }
       }
     }
-    // HUD multiplayer: atualiza sempre (tick mesmo offline pra esconder UI)
+    // HUD multiplayer: atualiza sempre
     pingDisplay.update();
     deathTimer.update();
+    // Blood trail (auto sangue ao chão quando ferido)
+    bloodTrail.update(dt);
+    // Death cam ring buffer + ativação/desativação
+    deathCam.push(player);
+    if (cs.connected && cs.state) {
+      const me = cs.state.players.get(auth.getUserId());
+      const isDead = !!me?.dead;
+      if (isDead && !_lastDeadState) {
+        deathCam.enter(_lastKillerId);
+      } else if (!isDead && _lastDeadState) {
+        deathCam.exit();
+        _lastKillerId = null;
+      }
+      _lastDeadState = isDead;
+    }
+    deathCam.update(dt);
     if (_localAura) _localAura.update(dt);
     pvpToggle.update(input);
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);

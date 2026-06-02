@@ -317,6 +317,18 @@ export class ColyseusClient {
     this.room.send('ping', { t: performance.now(), ping: this.ping });
   }
   getPing() { return this.ping; }
+  /** Equipa item do bag ou starter. Server valida ownership. */
+  sendEquip(itemId) {
+    this.room?.send('equip', { item: itemId });
+  }
+  /** Usa item consumível do bag. Server valida + aplica efeito. */
+  sendUseItem(itemId) {
+    this.room?.send('use_item', { item: itemId });
+  }
+  /** Joga item no chão (spawna drop pra outros pegarem). */
+  sendDropItem(itemId) {
+    this.room?.send('drop_item', { item: itemId });
+  }
 
   /** Snapshot da sala (state read-only). */
   get state() { return this.room?.state || null; }

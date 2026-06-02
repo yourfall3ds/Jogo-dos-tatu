@@ -2,8 +2,27 @@
 //  ArenaState — schema autoritativo do servidor.
 //  Clientes apenas recebem deltas e renderizam.
 // ─────────────────────────────────────────────────────────────────
-import { Schema, type, MapSchema } from '@colyseus/schema';
+import { Schema, type, MapSchema, ArraySchema } from '@colyseus/schema';
 
+// ── 1) Sub-schemas usados como type() em PlayerState ──
+// Declarados primeiro pra evitar ReferenceError (sem hoisting de class).
+
+export class InvSlot extends Schema {}
+type('string')(InvSlot.prototype, 'item');
+type('number')(InvSlot.prototype, 'qty');
+
+export class InventoryState extends Schema {
+  constructor() {
+    super();
+    this.bag = new ArraySchema();
+  }
+}
+type('string')(InventoryState.prototype, 'equip_primary');
+type('string')(InventoryState.prototype, 'equip_secondary');
+type('string')(InventoryState.prototype, 'equip_skin');
+type([InvSlot])(InventoryState.prototype, 'bag');
+
+// ── 2) PlayerState ──
 export class PlayerState extends Schema {}
 type('string')(PlayerState.prototype, 'id');
 type('string')(PlayerState.prototype, 'nickname');
@@ -21,21 +40,16 @@ type('number')(PlayerState.prototype, 'vy');
 type('string')(PlayerState.prototype, 'anim_state');
 type('string')(PlayerState.prototype, 'weapon');
 type('boolean')(PlayerState.prototype, 'dead');
-// Progressão server-authoritative
 type('number')(PlayerState.prototype, 'xp');
 type('number')(PlayerState.prototype, 'level');
 type('number')(PlayerState.prototype, 'kills');
 type('number')(PlayerState.prototype, 'deaths');
 type('number')(PlayerState.prototype, 'coins');
-// Death/respawn timer
 type('number')(PlayerState.prototype, 'respawn_at');
-// Ping (RTT em ms)
 type('number')(PlayerState.prototype, 'ping');
+type(InventoryState)(PlayerState.prototype, 'inv');
 
-export class InvSlot extends Schema {}
-type('string')(InvSlot.prototype, 'item');
-type('number')(InvSlot.prototype, 'qty');
-
+// ── 3) Outros sub-schemas ──
 export class PropState extends Schema {}
 type('string')(PropState.prototype, 'id');
 type('string')(PropState.prototype, 'kind');
@@ -56,12 +70,12 @@ type('number')(FxState.prototype, 'expires_at');
 
 export class DropState extends Schema {}
 type('string')(DropState.prototype, 'id');
-type('string')(DropState.prototype, 'kind');       // coin | gem | hp_potion | mp_potion | material
-type('number')(DropState.prototype, 'value');      // quantidade (moedas) ou cura
+type('string')(DropState.prototype, 'kind');
+type('number')(DropState.prototype, 'value');
 type('number')(DropState.prototype, 'x');
 type('number')(DropState.prototype, 'y');
 type('number')(DropState.prototype, 'z');
-type('number')(DropState.prototype, 'expires_at'); // ts em ms — auto-despawn
+type('number')(DropState.prototype, 'expires_at');
 
 export class MobState extends Schema {}
 type('string')(MobState.prototype, 'id');
@@ -76,6 +90,7 @@ type('number')(MobState.prototype, 'maxHp');
 type('string')(MobState.prototype, 'state');
 type('string')(MobState.prototype, 'target_id');
 
+// ── 4) Root ──
 export class ArenaState extends Schema {
   constructor() {
     super();

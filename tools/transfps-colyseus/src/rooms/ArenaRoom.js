@@ -9,7 +9,7 @@
 //     start_match, spawn_mob, chat
 // ─────────────────────────────────────────────────────────────────
 import { Room } from '@colyseus/core';
-import { ArenaState, PlayerState, MobState, DropState, PropState, FxState } from '../schema/ArenaState.js';
+import { ArenaState, PlayerState, MobState, DropState, PropState, FxState, InventoryState, InvSlot } from '../schema/ArenaState.js';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { validateHit, getWeapon } from './WeaponTable.js';
 import { validateSkillCast, getSkill } from './SkillTable.js';
@@ -163,6 +163,9 @@ export class ArenaRoom extends Room {
     });
     this.onMessage('hit_prop', (client, payload) => this._onHitProp(client, payload));
     this.onMessage('spawn_fx', (client, payload) => this._onSpawnFx(client, payload));
+    this.onMessage('equip', (client, payload) => this._onEquip(client, payload));
+    this.onMessage('use_item', (client, payload) => this._onUseItem(client, payload));
+    this.onMessage('drop_item', (client, payload) => this._onDropItem(client, payload));
     this._skillCooldowns = new Map();
 
     // ── IDLE TIMEOUT: se sala fica vazia por 60s, descarta. ──
@@ -271,6 +274,13 @@ export class ArenaRoom extends Room {
     p.xp = 0;
     p.level = 1;
     p.kills = 0;
+    p.inv = new InventoryState();
+    p.inv.equip_primary = 'unarmed';
+    p.inv.equip_secondary = '';
+    p.inv.equip_skin = '';
+    // Starter items
+    const s1 = new InvSlot(); s1.item = 'hp_small'; s1.qty = 3; p.inv.bag.push(s1);
+    const s2 = new InvSlot(); s2.item = 'mp_small'; s2.qty = 2; p.inv.bag.push(s2);
     p.deaths = 0;
     p.coins = 0;
 
@@ -663,6 +673,129 @@ export class ArenaRoom extends Room {
     this.state.fx.set(id, fx);
   }
 
+  // ── INVENTORY server-authoritative ──
+  // Catálogo válido — qualquer item fora disso é rejeitado.
+  static ITEM_CATALOG = {
+    // Consumíveis
+    hp_small:        { stackable: true,  use: 'heal',  amount: 30 },
+    hp_big:          { stackable: true,  use: 'heal',  amount: 60 },
+    mp_small:        { stackable: true,  use: 'mana',  amount: 25 },
+    mp_big:          { stackable: true,  use: 'mana',  amount: 50 },
+    // Armas (equipáveis)
+    pistol:           { equipSlot: 'primary' },
+    rifle:            { equipSlot: 'primary' },
+    sword_paladin:    { equipSlot: 'primary' },
+    sword_zweihander: { equipSlot: 'primary' },
+    chibata:          { equipSlot: 'primary' },
+    unarmed:          { equipSlot: 'primary' },
+  };
+
+  _findBagSlot(player, itemId) {
+    if (!player.inv?.bag) return -1;
+    for (let i = 0; i < player.inv.bag.length; i++) {
+      if (player.inv.bag[i].item === itemId) return i;
+    }
+    return -1;
+  }
+
+  _addItemToBag(player, itemId, qty = 1) {
+    const def = ArenaRoom.ITEM_CATALOG[itemId];
+    if (!def) return false;
+    if (def.stackable) {
+      const idx = this._findBagSlot(player, itemId);
+      if (idx >= 0) {
+        player.inv.bag[idx].qty = Math.min(99, player.inv.bag[idx].qty + qty);
+        return true;
+      }
+    }
+    if (player.inv.bag.length >= 20) return false;
+    const slot = new InvSlot();
+    slot.item = itemId;
+    slot.qty = qty;
+    player.inv.bag.push(slot);
+    return true;
+  }
+
+  _removeItemFromBag(player, itemId, qty = 1) {
+    const idx = this._findBagSlot(player, itemId);
+    if (idx < 0) return false;
+    const slot = player.inv.bag[idx];
+    if (slot.qty < qty) return false;
+    slot.qty -= qty;
+    if (slot.qty <= 0) player.inv.bag.splice(idx, 1);
+    return true;
+  }
+
+  _onEquip(client, payload) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p || p.dead) return;
+    const itemId = String(payload?.item || '').slice(0, 32);
+    const def = ArenaRoom.ITEM_CATALOG[itemId];
+    if (!def || !def.equipSlot) return;
+    // Tem que ter no bag OU já estar equipado OU ser arma starter (pistol/rifle/swords/chibata/unarmed disponíveis)
+    const starterWeapons = ['pistol','rifle','sword_paladin','sword_zweihander','chibata','unarmed'];
+    const owned = starterWeapons.includes(itemId) ||
+                  this._findBagSlot(p, itemId) >= 0 ||
+                  p.inv.equip_primary === itemId ||
+                  p.inv.equip_secondary === itemId;
+    if (!owned) {
+      console.log(`[equip rejected] ${p.nickname} → ${itemId} (not owned)`);
+      return;
+    }
+    if (def.equipSlot === 'primary') {
+      p.inv.equip_primary = itemId;
+      p.weapon = itemId; // sincroniza com PlayerState.weapon
+    } else if (def.equipSlot === 'secondary') {
+      p.inv.equip_secondary = itemId;
+    } else if (def.equipSlot === 'skin') {
+      p.inv.equip_skin = itemId;
+    }
+  }
+
+  _onUseItem(client, payload) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p || p.dead) return;
+    const itemId = String(payload?.item || '').slice(0, 32);
+    const def = ArenaRoom.ITEM_CATALOG[itemId];
+    if (!def || !def.use) return;
+    // Rate limit (anti-spam)
+    const now = Date.now();
+    const lastKey = `use:${pid}:${itemId}`;
+    const lastAt = this._atkCooldowns.get(lastKey) || 0;
+    if (now - lastAt < 500) return;
+    this._atkCooldowns.set(lastKey, now);
+    // Precisa ter no bag
+    if (!this._removeItemFromBag(p, itemId, 1)) return;
+    // Aplica efeito
+    if (def.use === 'heal') {
+      p.hp = Math.min(p.maxHp, p.hp + def.amount);
+    } else if (def.use === 'mana') {
+      // mp não está no schema ainda — broadcast pra cliente aplicar
+      this.broadcast('mp_gain', { player_id: pid, amount: def.amount });
+    }
+    this.broadcast('item_used', { player_id: pid, item: itemId, amount: def.amount });
+  }
+
+  _onDropItem(client, payload) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p || p.dead) return;
+    const itemId = String(payload?.item || '').slice(0, 32);
+    const def = ArenaRoom.ITEM_CATALOG[itemId];
+    if (!def) return;
+    if (!this._removeItemFromBag(p, itemId, 1)) return;
+    // Cria drop visível pra todos pegarem
+    this._spawnDrop({
+      kind: itemId.startsWith('hp_') ? 'hp_potion' :
+            itemId.startsWith('mp_') ? 'mp_potion' :
+            'gem',
+      value: def.amount || 1,
+      x: p.x, z: p.z, scatter: 0.5,
+    });
+  }
+
   /** Spawna props (barris/caixas) ao iniciar match. */
   _spawnInitialProps() {
     const count = 6 + Math.floor(Math.random() * 6);
@@ -711,10 +844,12 @@ export class ArenaRoom extends Room {
         this.broadcast('pickup', { player_id: pid, drop_id: drop.id, kind: drop.kind, value: drop.value });
         break;
       case 'hp_potion':
-        player.hp = Math.min(player.maxHp, player.hp + drop.value);
+        // Adiciona ao bag em vez de aplicar imediato — player decide quando usar
+        this._addItemToBag(player, drop.value >= 50 ? 'hp_big' : 'hp_small', 1);
         this.broadcast('pickup', { player_id: pid, drop_id: drop.id, kind: drop.kind, value: drop.value });
         break;
       case 'mp_potion':
+        this._addItemToBag(player, drop.value >= 40 ? 'mp_big' : 'mp_small', 1);
         this.broadcast('pickup', { player_id: pid, drop_id: drop.id, kind: drop.kind, value: drop.value });
         break;
     }
