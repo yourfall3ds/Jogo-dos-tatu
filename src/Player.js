@@ -618,6 +618,8 @@ export class Player {
     } else {
       this._stopMgLoop();
       if (lmbN > 0) {
+        // Diagnóstico (1x por clique) — ajuda a entender por que LMB não atacou
+        if (window._debugSword) console.log('[LMB]', { lmbN, isArmed, isMelee, weapon: curW?.id, state: this.stateMachine?.state, hasCombat: !!this.combatSystem });
         if (isArmed && isMelee && this.combatSystem) {
           // ESPADA: cada clique = swordAttack (encadeia chain do ComboSystem)
           for (let i = 0; i < lmbN; i++) this.combatSystem.swordAttack();
@@ -629,12 +631,20 @@ export class Player {
       }
     }
 
-    // ── RMB — chute (desarmado) ou mira (armado) ─────────────────
+    // ── RMB — chute (desarmado) / mira (arma fogo) / slash forte (espada) ─
     const rmbN = this.input.consumeRightClickCount();
     if (rmbN > 0) {
-      const isArmed = this.stateMachine ? this.stateMachine.isArmedFlag : true;
-      if (!isArmed && this.combatSystem) {
+      const isArmed_r = this.stateMachine ? this.stateMachine.isArmedFlag : true;
+      if (!isArmed_r && this.combatSystem) {
         for (let i = 0; i < rmbN; i++) this.combatSystem.kickAttack();
+      } else if (isArmed_r && isMelee && this.combatSystem) {
+        // Espada + RMB = ataque pesado (charged direto, sem encadear)
+        const data = this.combatSystem.attackData?.['sword_charged'];
+        if (data && !this.stateMachine.isAttacking()) {
+          this.stateMachine.setState('attacking');
+          this.combatSystem._lastAttackType = 'sword';
+          this.combatSystem._executeNextAttack('sword_charged', data, 2.4, false);
+        }
       } else {
         this._toggleAim();
       }
@@ -676,12 +686,19 @@ export class Player {
     const gNow = this.input.isDown('KeyG');
     if (gNow && !this._wasG) {
       if (this.stateMachine) {
-        if (this.stateMachine.state === 'armed') {
+        // G alterna entre Luta livre e Arma equipada (qualquer tipo).
+        if (this.stateMachine.isArmedFlag) {
           this.stateMachine.dropWeapon();
           console.log("🧤 Modo Luta Ativado!");
         } else {
-          this.stateMachine.equipWeapon();
-          console.log("🔫 Modo Arma Ativado!");
+          // Equipa de volta na arma corrente — se é melee, vira 'sword'.
+          if (curW?.isMelee) {
+            this.stateMachine.equipSword();
+            console.log("⚔️ Modo Espada Ativado!");
+          } else {
+            this.stateMachine.equipWeapon();
+            console.log("🔫 Modo Arma Ativado!");
+          }
         }
         this._updateWeaponVisibility();
       }

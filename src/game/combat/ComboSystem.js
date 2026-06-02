@@ -16,10 +16,12 @@ export class ComboSystem {
     this.kickChain  = ["kick_01", "roundhouse", "high_kick", "spartan_kick", "kick_02"];
 
     // ── ESPADA (estilo The Duel / GunZ) ─────────────────────────────
-    // slash básico → combo 2 → combo 3 → carregado (finisher pesado)
-    // ultimate fica para Q (chamada separada via swordUltimate()).
-    this.swordChain     = ["sword_attack_01", "sword_combo_2", "sword_combo_3"];
-    this.swordFinishers = ["sword_charged"];
+    //  Chain principal: slash limpo → left slash → thrust → triple combo
+    //  (slashes encadeados, sensação de Devil May Cry/GunZ).
+    //  Finalizadores rotacionam: charged_slash → judgment → blade_spin.
+    //  ultimate (Q) é separado, vide swordUltimate().
+    this.swordChain     = ["sword_attack_01", "sword_left_slash", "sword_thrust", "sword_triple_combo"];
+    this.swordFinishers = ["sword_charged_slash", "sword_judgment", "sword_blade_spin"];
     this.swordFinisherIdx = 0;
 
     // Índices independentes — avançam somente no tipo correto

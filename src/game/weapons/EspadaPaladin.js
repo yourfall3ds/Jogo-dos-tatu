@@ -30,9 +30,11 @@ export class EspadaPaladin {
     this.muzzleOffset = new BABYLON.Vector3(0, 0, 0);
 
     // ── Render TPS (cola na mão direita) ──
-    this.tpsScale    = 0.55;
-    this.tpsRotation = new BABYLON.Vector3(-Math.PI / 2, Math.PI, 0);
-    this.tpsPosition = new BABYLON.Vector3(0.05, 0, 0.18);
+    //  Cabo no centro da palma da mão (osso RightHand), lâmina apontando
+    //  pra frente do braço. Ajuste fino pelo F4 (Weapon Editor).
+    this.tpsScale    = 1.0;
+    this.tpsRotation = new BABYLON.Vector3(0, 0, Math.PI / 2);
+    this.tpsPosition = new BABYLON.Vector3(0.0, 0.10, 0.0);
 
     // VFX dummy (não usados, mas WeaponSystem espera campos)
     this.tracerColor    = [0.85, 0.95, 1.00];

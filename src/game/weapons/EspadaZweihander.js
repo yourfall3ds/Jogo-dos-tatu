@@ -25,9 +25,9 @@ export class EspadaZweihander {
     this.muzzleOffset = new BABYLON.Vector3(0, 0, 0);
 
     // TPS
-    this.tpsScale    = 0.75;
-    this.tpsRotation = new BABYLON.Vector3(-Math.PI / 2, Math.PI, 0);
-    this.tpsPosition = new BABYLON.Vector3(0.08, 0, 0.22);
+    this.tpsScale    = 1.4;
+    this.tpsRotation = new BABYLON.Vector3(0, 0, Math.PI / 2);
+    this.tpsPosition = new BABYLON.Vector3(0.0, 0.15, 0.0);
 
     this.tracerColor    = [1.0, 0.85, 0.55];
     this.tracerAlpha    = 0.0;

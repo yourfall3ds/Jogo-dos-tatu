@@ -81,20 +81,31 @@ export const MOVESETS = {
   },
 
   com_espada: {
+    // ── Originais ──
     idle:      'assets/animations/com_espada/idle.glb',
     attack_01: 'assets/animations/com_espada/attack_01.glb',
     combo_2:   'assets/animations/com_espada/attack_combo_2.glb',
     combo_3:   'assets/animations/com_espada/attack_combo_3.glb',
     charged:   'assets/animations/com_espada/attack_charged.glb',
     ultimate:  'assets/animations/com_espada/ultimate.glb',
-    // Nomes canônicos usados pelo CombatSystem (chain de espada).
-    // Apontam para os mesmos GLBs — apenas alias com prefixo 'sword_'.
+    // ── Aliases com prefixo sword_ (usados pelo CombatSystem) ──
     sword_attack_01: 'assets/animations/com_espada/attack_01.glb',
     sword_combo_2:   'assets/animations/com_espada/attack_combo_2.glb',
     sword_combo_3:   'assets/animations/com_espada/attack_combo_3.glb',
     sword_charged:   'assets/animations/com_espada/attack_charged.glb',
     sword_ultimate:  'assets/animations/com_espada/ultimate.glb',
     sword_idle:      'assets/animations/com_espada/idle.glb',
+    // ── Novas (vindas da pasta ANALISAR, Meshy biped) ──
+    sword_combat_stance: 'assets/animations/com_espada/combat_stance.glb',
+    sword_charged_slash: 'assets/animations/com_espada/charged_slash.glb',
+    sword_left_slash:    'assets/animations/com_espada/left_slash.glb',
+    sword_thrust:        'assets/animations/com_espada/thrust_slash.glb',
+    sword_heavy_swing:   'assets/animations/com_espada/heavy_swing.glb',
+    sword_judgment:      'assets/animations/com_espada/sword_judgment.glb',
+    sword_blade_spin:    'assets/animations/com_espada/blade_spin.glb',
+    sword_triple_combo:  'assets/animations/com_espada/triple_combo.glb',
+    sword_double_combo:  'assets/animations/com_espada/double_combo.glb',
+    sword_weapon_combo2: 'assets/animations/com_espada/weapon_combo_2.glb',
   },
 
   parkour: {

@@ -61,18 +61,44 @@ export class CombatSystem {
       // ── ESPADA (LMB com sword equipada — feel The Duel / GunZ) ──────
       //  melee: 'sword' → _applyHit usa cone amplo na frente (range 3.0,
       //  arc ~120°) em vez de osso. Damage alto, kb pesado, hitstop maior.
-      sword_attack_01: { hits: [{ hitTime: 0.10, damage: 40, melee: 'sword', kb: 2.5 }], comboWindow: 0.35 }, // slash diagonal
-      sword_combo_2:   { hits: [{ hitTime: 0.12, damage: 50, melee: 'sword', kb: 3.0 }], comboWindow: 0.40 }, // slash horizontal
-      sword_combo_3:   { hits: [
+
+      // ── Chain principal ──
+      sword_attack_01:    { hits: [{ hitTime: 0.10, damage: 40, melee: 'sword', kb: 2.5 }], comboWindow: 0.35 },
+      sword_left_slash:   { hits: [{ hitTime: 0.12, damage: 45, melee: 'sword', kb: 2.8 }], comboWindow: 0.38 },
+      sword_thrust:       { hits: [{ hitTime: 0.14, damage: 55, melee: 'sword', kb: 3.5 }], comboWindow: 0.40 },
+      sword_triple_combo: { hits: [
+        { hitTime: 0.08, damage: 22, melee: 'sword', kb: 1.0 },
+        { hitTime: 0.22, damage: 28, melee: 'sword', kb: 1.5 },
+        { hitTime: 0.40, damage: 40, melee: 'sword', kb: 3.0 }
+      ], comboWindow: 0.55 }, // finalizador da chain
+
+      // ── Finalizadores (rotacionam após chain) ──
+      sword_charged_slash: { hits: [{ hitTime: 0.32, damage: 120, melee: 'sword', kb: 6.5 }], comboWindow: 0.60 },
+      sword_judgment:      { hits: [
+        { hitTime: 0.30, damage: 60, melee: 'sword', kb: 3.0 },
+        { hitTime: 0.55, damage: 90, melee: 'sword', kb: 5.5 }
+      ], comboWindow: 0.65 },
+      sword_blade_spin:    { hits: [
+        { hitTime: 0.20, damage: 35, melee: 'sword', kb: 2.0 },
+        { hitTime: 0.40, damage: 35, melee: 'sword', kb: 2.0 },
+        { hitTime: 0.60, damage: 60, melee: 'sword', kb: 5.0 }
+      ], comboWindow: 0.65 },
+
+      // ── Compatibilidade (chain antigo + RMB charged) ──
+      sword_combo_2:    { hits: [{ hitTime: 0.12, damage: 50, melee: 'sword', kb: 3.0 }], comboWindow: 0.40 },
+      sword_combo_3:    { hits: [
         { hitTime: 0.10, damage: 30, melee: 'sword', kb: 1.5 },
         { hitTime: 0.28, damage: 45, melee: 'sword', kb: 3.5 }
-      ], comboWindow: 0.50 }, // 2 hits encadeados
-      sword_charged:   { hits: [{ hitTime: 0.30, damage: 110, melee: 'sword', kb: 6.0 }], comboWindow: 0.55 }, // finisher pesado
+      ], comboWindow: 0.50 },
+      sword_charged:    { hits: [{ hitTime: 0.30, damage: 110, melee: 'sword', kb: 6.0 }], comboWindow: 0.55 },
+      sword_heavy_swing:{ hits: [{ hitTime: 0.30, damage: 90, melee: 'sword', kb: 5.0 }], comboWindow: 0.55 },
+
+      // ── Ultimate (Q) ──
       sword_ultimate:  { hits: [
         { hitTime: 0.25, damage: 60, melee: 'sword', kb: 4.0 },
         { hitTime: 0.50, damage: 80, melee: 'sword', kb: 5.0 },
         { hitTime: 0.75, damage: 120, melee: 'sword', kb: 7.0 }
-      ], comboWindow: 0.70 }, // Q — 3 hits devastadores
+      ], comboWindow: 0.70 },
     };
 
     // Ataques AÉREOS (pulando): soco voador vs chute voador
