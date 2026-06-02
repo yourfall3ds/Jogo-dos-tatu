@@ -10,6 +10,7 @@ const TIER_INFO = {
   ultimate: { label: '🟣 Ultimate', color: '#bb66ff' },
   mega:     { label: '🟠 Mega',     color: '#ff9944' },
   boss:     { label: '🔴 Boss',     color: '#ff5555' },
+  chibata:  { label: '💀 Chibata',  color: '#d44d2e' },
 };
 
 export class CatalogUI {
@@ -38,6 +39,7 @@ export class CatalogUI {
       <div style="padding:10px 14px;border-bottom:1px solid #1a2a4f;display:flex;gap:6px;flex-wrap:wrap;">
         <button class="cat-act" id="cat-wave-rookie">Wave Rookie</button>
         <button class="cat-act" id="cat-wave-champ">Wave Champion</button>
+        <button class="cat-act" id="cat-wave-chibata" style="background:#5a1f12;border-color:#d44d2e;">Wave Chibata</button>
         <button class="cat-act" id="cat-clear" style="background:#5a1a1a;border-color:#a33;">Limpar Todos</button>
       </div>
       <div id="cat-list" style="flex:1;overflow-y:auto;padding:8px 10px;" class="cat-scroll"></div>
@@ -61,6 +63,7 @@ export class CatalogUI {
     el.querySelector('#cat-clear').onclick = () => this.mgr.clearAll();
     el.querySelector('#cat-wave-rookie').onclick = () => this._spawnTier('rookie');
     el.querySelector('#cat-wave-champ').onclick  = () => this._spawnTier('champion');
+    el.querySelector('#cat-wave-chibata').onclick = () => this._spawnTier('chibata');
 
     this._renderList();
   }
@@ -72,7 +75,7 @@ export class CatalogUI {
     for (const [id, def] of Object.entries(EnemyCatalog)) {
       (byTier[def.tier] = byTier[def.tier] || []).push([id, def]);
     }
-    for (const tier of ['rookie', 'champion', 'ultimate', 'mega', 'boss']) {
+    for (const tier of ['rookie', 'champion', 'ultimate', 'mega', 'boss', 'chibata']) {
       const rows = byTier[tier];
       if (!rows?.length) continue;
       const info = TIER_INFO[tier];

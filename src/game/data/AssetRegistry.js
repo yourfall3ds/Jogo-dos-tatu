@@ -13,6 +13,8 @@ const DIGI = 'assets/digimons/';
 const CREAT = 'assets/itens 3d/Assets baixados novos/glTF-20260528T011429Z-3-001/glTF/';
 const FANTASY = 'assets/itens 3d/Assets baixados novos/Fantasy Props MegaKit[Standard]/Exports/glTF/';
 const NATURE = 'assets/itens 3d/Assets baixados novos/PACK AMBIENTE ASSETS/glTF/';
+const CHIBATA_MOB = 'assets/chibata-mobs/';
+const CHIBATA_MAP = 'assets/chibata-maps/';
 
 export const AssetRegistry = {
   // ── Personagem jogável (biped rig, animado) ─────────────────────
@@ -66,6 +68,90 @@ export const AssetRegistry = {
     pigeon:          CREAT + 'Pigeon.gltf',
     squidle:         CREAT + 'Squidle.gltf',
     tribal:          CREAT + 'Tribal.gltf',
+  },
+
+  // ── Inimigos: Chibata mob pack (dark fantasy/horror) ────────────
+  //  Pasta organizada: raiz + beasts/ + demons/ + flyers/ + undead/ + skeletons/
+  chibataMob: {
+    // ── Raiz (criaturas clássicas, walker/brute) ──
+    bat:          CHIBATA_MOB + 'bat.glb',
+    demon:        CHIBATA_MOB + 'demon.glb',
+    dragon:       CHIBATA_MOB + 'dragon.glb',
+    dragonBig:    CHIBATA_MOB + 'dragon_big.glb',
+    ghost:        CHIBATA_MOB + 'ghost.glb',
+    ghoul:        CHIBATA_MOB + 'ghoul.glb',
+    goblin:       CHIBATA_MOB + 'goblin.glb',
+    mawGooey:     CHIBATA_MOB + 'maw_gooey.glb',
+    necromancer:  CHIBATA_MOB + 'necromancer.glb',
+    orc:          CHIBATA_MOB + 'orc.glb',
+    skeleton:     CHIBATA_MOB + 'skeleton.glb',
+    slime:        CHIBATA_MOB + 'slime.glb',
+    yeti:         CHIBATA_MOB + 'yeti.glb',
+    zombie:       CHIBATA_MOB + 'zombie.glb',
+
+    // ── Beasts ──
+    drugdorGolem:        CHIBATA_MOB + 'beasts/drugdor-golem.glb',
+    herculesBeetle:      CHIBATA_MOB + 'beasts/hercules-beetle.glb',
+    lowPolyOrc:          CHIBATA_MOB + 'beasts/low-poly-orc.glb',
+    monsterWolf:         CHIBATA_MOB + 'beasts/monster-wolf-old-blood.glb',
+    mushroomBoss:        CHIBATA_MOB + 'beasts/mushroom-boss.glb',
+    nightmareCreature1:  CHIBATA_MOB + 'beasts/nightmare-creature-1.glb',
+    nightmareCreature2:  CHIBATA_MOB + 'beasts/nightmare-creature-2.glb',
+    nightmareCreature3:  CHIBATA_MOB + 'beasts/nightmare-creature-3.glb',
+    nightmareCreature4:  CHIBATA_MOB + 'beasts/nightmare-creature-4.glb',
+    theraphosaBlondi:    CHIBATA_MOB + 'beasts/theraphosa-blondi.glb',
+    whulvkWerewolf:      CHIBATA_MOB + 'beasts/whulvk-werewolf-lycan-blockbench.glb',
+
+    // ── Demons ──
+    csoAlienPhobos:    CHIBATA_MOB + 'demons/cso-alien-phobos.glb',
+    cyberMancubus:     CHIBATA_MOB + 'demons/cyber-mancubus-doom-2016.glb',
+    demonicMinion:     CHIBATA_MOB + 'demons/demonic-minion.glb',
+    helldemonReborn:   CHIBATA_MOB + 'demons/helldemon-reborn.glb',
+    impDoom:           CHIBATA_MOB + 'demons/imp-doom-2016.glb',
+    mancubusDoom:      CHIBATA_MOB + 'demons/mancubus-doom-2016.glb',
+    stormKingBoss:     CHIBATA_MOB + 'demons/storm-king-boss.glb',
+
+    // ── Flyers ──
+    drogonDragon:       CHIBATA_MOB + 'flyers/drogon-dragon.glb',
+    frostPredator:      CHIBATA_MOB + 'flyers/four-legged-frost-predator.glb',
+    nightmareFlyer:     CHIBATA_MOB + 'flyers/nightmare.glb',
+    prowlerDragon:      CHIBATA_MOB + 'flyers/prowler-dragon-variant-rig.glb',
+    robowyvern:         CHIBATA_MOB + 'flyers/robowyvern.glb',
+    wyvern:             CHIBATA_MOB + 'flyers/wyvern.glb',
+
+    // ── Undead ──
+    humanityMir4:       CHIBATA_MOB + 'undead/humanity-reconstructed-mir4.glb',
+    ripperZombie:       CHIBATA_MOB + 'undead/ripper-zombie.glb',
+    skelly:             CHIBATA_MOB + 'undead/skelly.glb',
+    theLich:            CHIBATA_MOB + 'undead/the-lich-blockbench.glb',
+    zombieMelee:        CHIBATA_MOB + 'undead/zombie-melee.glb',
+    zombieWarrior:      CHIBATA_MOB + 'undead/zombie-warrior.glb',
+
+    // ── Skeletons (Quaternius) ──
+    skeletonMage:       CHIBATA_MOB + 'skeletons/Skeleton_Mage.glb',
+    skeletonMinion:     CHIBATA_MOB + 'skeletons/Skeleton_Minion.glb',
+    skeletonRogue:      CHIBATA_MOB + 'skeletons/Skeleton_Rogue.glb',
+    skeletonWarrior:    CHIBATA_MOB + 'skeletons/Skeleton_Warrior.glb',
+  },
+
+  // ── Mapas (Chibata) ──────────────────────────────────────────────
+  //  Cenários completos com chão, prédios, textura. Carregados pelo Level.
+  chibataMap: {
+    calcata:           CHIBATA_MAP + 'calcata.glb',
+    cemetery:          CHIBATA_MAP + 'cemetery.glb',
+    collisionWorld:    CHIBATA_MAP + 'collision_world.glb',
+    castleInterior:    CHIBATA_MAP + 'dl_castle_interior.glb',
+    dungeonWarkarma:   CHIBATA_MAP + 'dungeon_warkarma.glb',
+    forest:            CHIBATA_MAP + 'forest.glb',
+    hellArena:         CHIBATA_MAP + 'hell_arena.glb',
+    lowpolyCity:       CHIBATA_MAP + 'lowpoly_city.glb',
+    nightCity:         CHIBATA_MAP + 'night_city.glb',
+    pirateFort:        CHIBATA_MAP + 'pirate_fort.glb',
+    snowScene:         CHIBATA_MAP + 'snow_scene.glb',
+    spaceStation:      CHIBATA_MAP + 'space_station.glb',
+    valleyVillage:     CHIBATA_MAP + 'valley_village.glb',
+    virtualCity:       CHIBATA_MAP + 'virtual_city.glb',
+    westernTown:       CHIBATA_MAP + 'western_town.glb',
   },
 
   // ── Armas ───────────────────────────────────────────────────────
@@ -132,5 +218,5 @@ export const AssetRegistry = {
     const cat = this[category];
     return cat ? Object.keys(cat).filter(k => typeof cat[k] === 'string') : [];
   },
-  categories() { return ['player', 'digimon', 'creature', 'weapon', 'item', 'nature', 'decor']; },
+  categories() { return ['player', 'digimon', 'creature', 'chibataMob', 'chibataMap', 'weapon', 'item', 'nature', 'decor']; },
 };

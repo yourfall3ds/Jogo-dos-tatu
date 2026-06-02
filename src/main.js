@@ -49,6 +49,8 @@ import { DayNightCycle }        from './game/scene/DayNightCycle.js';
 import { GraphicsEnhancer }     from './game/scene/GraphicsEnhancer.js';
 import { GraphicsDebugPanel }   from './game/scene/GraphicsDebugPanel.js';
 import { TestArena }            from './game/scene/TestArena.js';
+import { ChibataMapLoader }    from './game/scene/ChibataMapLoader.js';
+import { MapSelectUI }         from './game/ui/MapSelectUI.js';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -302,6 +304,12 @@ async function init() {
   const catalogUI = new CatalogUI(enemyManager);
   window._catalogUI = catalogUI;
 
+  // ── Chibata Maps: seletor de mapa (tecla N) ───────────────────────
+  const chibataMaps = new ChibataMapLoader(scene, level);
+  const mapSelectUI = new MapSelectUI(chibataMaps);
+  window._chibataMaps = chibataMaps;
+  window._mapSelectUI = mapSelectUI;
+
   // ── Diretor de combate: povoa a fase com inimigos (tecla H) ───────
   const combatDirector = new CombatDirector(enemyManager, player, scene, level);
   window._combatDirector = combatDirector;
@@ -463,6 +471,7 @@ async function init() {
     if (window._assetMachines) window._assetMachines.forEach(m => m.update(dt));
     moveListUI.update(dt);
     catalogUI.update();
+    mapSelectUI.update(input);
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
     navMesh.update(dt);
     dropSystem.update(dt, player.mesh?.position);
