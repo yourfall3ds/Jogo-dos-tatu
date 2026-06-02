@@ -149,8 +149,27 @@ export class LobbyUI {
     el.querySelector('#lb-chat-send').onclick = () => this._sendChat();
     el.querySelector('#lb-chat-input').onkeydown = (e) => { if (e.key === 'Enter') this._sendChat(); };
     el.querySelector('#lb-ready').onclick = () => this._toggleReady();
-    el.querySelector('#lb-start').onclick = () => this.cs.sendStartMatch();
+    el.querySelector('#lb-start').onclick = () => {
+      const btn = el.querySelector('#lb-start');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.dataset._origText = btn.textContent;
+      btn.textContent = '⏳ INICIANDO…';
+      btn.style.opacity = '0.7';
+      this.cs.sendStartMatch();
+      // Fallback caso countdown não chegue em 5s
+      setTimeout(() => {
+        if (btn.disabled && btn.textContent.includes('INICIANDO')) {
+          btn.textContent = btn.dataset._origText || '▶ INICIAR PARTIDA';
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          this._setStatus('servidor não respondeu, tente de novo', '#ffcc66');
+        }
+      }, 5000);
+    };
     el.querySelector('#lb-copy-invite').onclick = () => this._copyInvite();
+    // Quando o COUNTDOWN começa, esconde lobby (CountdownScreen mostra)
+    this.cs.on('match_countdown', () => { this.hide(); });
   }
 
   async _loadRooms() {

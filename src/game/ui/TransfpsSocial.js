@@ -325,7 +325,10 @@ export class QuestPanel {
     this._open = false;
     this._build();
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'q' || e.key === 'Q') {
+      // Frente D: tecla U (lado direito, livre de conflito).
+      // P já era CharacterSelect+PvpToggle, J = MeshyPanel, L = colliders.
+      // Lado esquerdo fica 100% livre p/ skills/abilities WASD.
+      if (e.key === 'u' || e.key === 'U') {
         if (document.activeElement?.tagName === 'INPUT') return;
         this.toggle();
       } else if (e.key === 'Escape' && this._open) this.close();
@@ -675,7 +678,7 @@ export class Tutorial {
     const steps = [
       { t: 'BEM-VINDO AO TRANSFPS', d: 'WASD = andar · Espaço = pular · Shift = correr', dur: 7000 },
       { t: 'COMBATE', d: 'Clique = atacar · E = trocar arma · 1-7 = skills', dur: 7000 },
-      { t: 'PROGRESSÃO', d: 'Matar mobs/jogadores ganha XP · Q = missões diárias', dur: 7000 },
+      { t: 'PROGRESSÃO', d: 'Matar mobs/jogadores ganha XP · U = missões diárias', dur: 7000 },
       { t: 'SOCIAL', d: 'TAB = scoreboard · F1 = leaderboard · F2 = amigos · T = chat', dur: 8000 },
       { t: 'OBJETIVO', d: 'Sobreviver até o BOSS surgir e derrotá-lo!', dur: 8000 },
     ];

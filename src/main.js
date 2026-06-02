@@ -68,6 +68,7 @@ import { RemoteProp }          from './game/multiplayer/RemoteProp.js';
 import { RemoteFx }            from './game/multiplayer/RemoteFx.js';
 import { ChatHud, Scoreboard, PingDisplay, DeathTimer } from './game/ui/IngameHud.js';
 import { attachTransfpsSocial } from './game/ui/TransfpsSocial.js';
+import { attachTransfpsFlowGuard } from './game/ui/TransfpsFlowGuard.js';
 import { BloodTrail }          from './game/combat/BloodTrail.js';
 import { DeathCam }            from './game/multiplayer/DeathCam.js';
 import { PvpToggle }           from './game/ui/PvpToggle.js';
@@ -658,6 +659,9 @@ async function init() {
     supa: window._supabase || window.supabase || null,
   });
   window._social = social;
+  // FlowGuard: loading overlay, countdown screen, disconnect, finish rico
+  const flowGuard = attachTransfpsFlowGuard({ cs, auth, lobbyUI });
+  window._flowGuard = flowGuard;
   // Tutorial check ao receber profile
   cs.on('profile_loaded', (p) => {
     try { social.tutorial.maybeStart(p); } catch (_) {}
@@ -737,8 +741,23 @@ async function init() {
   lobbyUI.onEnterGame(async (room) => {
     // Carrega o mapa da sala (vem do state)
     const mapId = cs.state?.map_id || 'default';
+    const loading = window._loadingOverlay;
     if (mapId && mapId !== 'default') {
-      try { await chibataMaps.load(mapId); } catch (_) {}
+      try {
+        loading?.show('CARREGANDO MAPA', `${mapId} · preparando assets…`, true);
+        loading?.setProgress(10, 'baixando GLBs…');
+        await chibataMaps.load(mapId);
+        loading?.setProgress(80, 'compilando shaders…');
+        await new Promise(r => setTimeout(r, 200));
+        loading?.setProgress(100, 'pronto!');
+        await new Promise(r => setTimeout(r, 150));
+      } catch (e) {
+        console.warn('[map load]', e);
+        loading?.setDetail('erro ao carregar mapa: ' + e.message);
+        await new Promise(r => setTimeout(r, 1500));
+      } finally {
+        loading?.hide();
+      }
     }
     $('start-screen').style.display = 'none';
     window._gameInput?.activate();
