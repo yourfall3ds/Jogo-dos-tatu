@@ -661,7 +661,8 @@ async function init() {
   });
   window._social = social;
   // FlowGuard: loading overlay, countdown screen, disconnect, finish rico
-  const flowGuard = attachTransfpsFlowGuard({ cs, auth, lobbyUI });
+  // lobbyUI é declarado mais abaixo — passamos via getter pra evitar TDZ.
+  const flowGuard = attachTransfpsFlowGuard({ cs, auth, getLobbyUI: () => window._lobbyUI });
   window._flowGuard = flowGuard;
 
   // ── BATTLE ROYALE MODE: ativo quando state.mode === 'BATTLE_ROYALE' ──

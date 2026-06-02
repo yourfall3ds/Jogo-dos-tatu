@@ -210,7 +210,7 @@ export class MatchTracker {
 }
 
 // ── attach ──
-export function attachTransfpsFlowGuard({ cs, auth, lobbyUI }) {
+export function attachTransfpsFlowGuard({ cs, auth, getLobbyUI, lobbyUI }) {
   const loading = new LoadingOverlay();
   const countdown = new CountdownScreen(cs);
   const disconnect = new DisconnectGuard(cs);
@@ -219,13 +219,16 @@ export function attachTransfpsFlowGuard({ cs, auth, lobbyUI }) {
   window._loadingOverlay = loading;
   window._matchTracker = tracker;
 
+  // Resolve lobbyUI lazy (pode ser passado direto ou via getter)
+  const resolveLobby = () => (getLobbyUI ? getLobbyUI() : lobbyUI);
+
   // Quando match_finished, dispara overlay rico
   cs.on('match_finished', (info) => {
     const summary = tracker.getSummary();
     const me = window._authUserId;
     const won = info?.result === 'VICTORY';
     const mvp = info?.mvp_id === me;
-    _showRichFinishScreen({ won, mvp, summary, lobbyUI, cs });
+    _showRichFinishScreen({ won, mvp, summary, lobbyUI: resolveLobby(), cs });
   });
 
   // lobby_reset → fecha finish + mostra lobby
