@@ -291,6 +291,21 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── Config TransFPS (URL + anon key + MP_WS_URL + Google CID) ─────
+  //  Lê do .env. NUNCA expõe service_role nem MESHY_KEY aqui — apenas
+  //  os valores seguros pro front (anon key, URL, MP_WS_URL).
+  if (req.method === 'GET' && req.url === '/transfps-env') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      SUPABASE_URL:        ENV.SUPABASE_URL        || '',
+      SUPABASE_ANON_KEY:   ENV.SUPABASE_ANON_KEY   || '',
+      GOOGLE_CLIENT_ID:    ENV.GOOGLE_CLIENT_ID    || '',
+      TRANSFPS_MP_WS_URL:  ENV.TRANSFPS_MP_WS_URL  || '',
+      SKETCHFAB_KEY:       ENV.SKETCHFAB_KEY       || '',  // pro download in-game
+    }));
+    return;
+  }
+
   // Health check
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

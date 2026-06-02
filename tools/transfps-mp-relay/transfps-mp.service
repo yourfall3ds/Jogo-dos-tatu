@@ -1,0 +1,18 @@
+[Unit]
+Description=TransFPS Multiplayer Relay
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/transfps-mp
+Environment=NODE_ENV=production
+Environment=TRANSFPS_MP_PORT=8091
+ExecStart=/usr/bin/node /opt/transfps-mp/server.js
+Restart=on-failure
+RestartSec=5
+User=root
+StandardOutput=append:/var/log/transfps-mp.log
+StandardError=append:/var/log/transfps-mp.log
+
+[Install]
+WantedBy=multi-user.target

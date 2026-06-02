@@ -57,6 +57,12 @@ import { SkillMapExtras }      from './game/scene/SkillMapExtras.js';
 import { SettingsUI }          from './game/ui/SettingsUI.js';
 import { MusicSystem }         from './game/audio/MusicSystem.js';
 import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
+import { AuthSystem }          from './game/auth/AuthSystem.js';
+import { LoginScreen }         from './game/ui/LoginScreen.js';
+import { LobbyUI }             from './game/ui/LobbyUI.js';
+import { MultiplayerClient }   from './game/multiplayer/MultiplayerClient.js';
+import { RemotePlayer }        from './game/multiplayer/RemotePlayer.js';
+import { getConfig }           from './game/auth/SupabaseClient.js';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -337,6 +343,77 @@ async function init() {
   const settingsUI = new SettingsUI(bloodFX, musicSystem);
   window._settingsUI = settingsUI;
 
+  // ── AUTH + LOGIN + LOBBY + MULTIPLAYER ─────────────────────────
+  const auth = new AuthSystem();
+  try { await auth.init(); } catch (e) { console.warn('[Auth] init falhou:', e.message); }
+  window._auth = auth;
+
+  const mpClient = new MultiplayerClient();
+  window._mpClient = mpClient;
+  const _remotePlayers = new Map();  // playerId → RemotePlayer
+
+  mpClient.on('join', (p) => {
+    if (_remotePlayers.has(p.player_id)) return;
+    const rp = new RemotePlayer(scene, p);
+    _remotePlayers.set(p.player_id, rp);
+    console.log(`[MP] +${p.nickname}`);
+  });
+  mpClient.on('leave', (p) => {
+    const rp = _remotePlayers.get(p.player_id);
+    if (rp) { rp.dispose(); _remotePlayers.delete(p.player_id); }
+  });
+  mpClient.on('snapshot', (s) => {
+    const rp = _remotePlayers.get(s.player_id);
+    if (rp) rp.applySnapshot(s);
+  });
+  mpClient.on('hit', (h) => {
+    if (h.to === auth.getUserId()) {
+      // Tomei dano de player remoto
+      player.takeDamage?.(h.dmg, 'melee', null, 2);
+    }
+  });
+  window._remotePlayers = _remotePlayers;
+
+  const loginScreen = new LoginScreen(auth);
+  window._loginScreen = loginScreen;
+  const lobbyUI = new LobbyUI(auth, mpClient);
+  window._lobbyUI = lobbyUI;
+
+  loginScreen.onContinue(() => {
+    // Modo single — só fecha login e mostra start-screen padrão
+    $('start-screen').style.display = 'flex';
+  });
+  loginScreen.onOpenLobby(() => {
+    lobbyUI.show();
+  });
+  lobbyUI.onEnterGame(async (room) => {
+    // Carrega o mapa da sala
+    if (room.map && room.map !== 'default') {
+      try { await chibataMaps.load(room.map); } catch (_) {}
+    }
+    // Conecta ao relay
+    const cfg = await getConfig();
+    const wsUrl = cfg.TRANSFPS_MP_WS_URL || 'wss://overpixel.online/transfps-mp';
+    const session = await auth.getSupabase().auth.getSession();
+    try {
+      await mpClient.connect(wsUrl, {
+        roomId: room.id,
+        playerId: auth.getUserId(),
+        nickname: auth.getNickname(),
+        jwt: session.data?.session?.access_token,
+      });
+      console.log(`[MP] conectado em sala ${room.name}`);
+    } catch (e) {
+      console.warn('[MP] conexão falhou:', e.message);
+      alert('Falha ao conectar no servidor multiplayer:\n' + e.message + '\n\nO mapa carregou mas você está jogando offline.');
+    }
+    // Entra no jogo
+    $('start-screen').style.display = 'none';
+    window._gameInput?.activate();
+    setFocusUI(true);
+    window._musicSystem?.start();
+  });
+
   // ── Diretor de combate: povoa a fase com inimigos (tecla H) ───────
   const combatDirector = new CombatDirector(enemyManager, player, scene, level);
   window._combatDirector = combatDirector;
@@ -503,6 +580,11 @@ async function init() {
     waterSystem.update(dt, player);
     settingsUI.update(input);
     musicMuteBtn.update(input);
+    // ── MP: envia snapshot + atualiza players remotos ──
+    if (mpClient.connected) {
+      mpClient.sendSnapshot(player);
+      for (const rp of _remotePlayers.values()) rp.update(dt, player.camera);
+    }
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
     navMesh.update(dt);
     dropSystem.update(dt, player.mesh?.position);
@@ -553,6 +635,15 @@ async function init() {
 
   // ── Carrega assets em background (após o jogo já estar jogável) ──
   _loadAssetsBackground(loader, player, level, shadowGen, scene);
+
+  // ── Login screen aparece após boot ──
+  //  Esconde a start-screen padrão e mostra LoginScreen.
+  //  Se já logado, fluxo passa direto (LoginScreen mostra "continuar" + lobby).
+  setTimeout(() => {
+    const ss = $('start-screen');
+    if (ss) ss.style.display = 'none';
+    loginScreen.show();
+  }, 100);
 }
 
 // ── Restaura máquinas de criação salvas no DB ─────────────────────
