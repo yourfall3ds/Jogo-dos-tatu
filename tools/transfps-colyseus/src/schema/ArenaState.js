@@ -48,8 +48,26 @@ type('number')(PlayerState.prototype, 'coins');
 type('number')(PlayerState.prototype, 'respawn_at');
 type('number')(PlayerState.prototype, 'ping');
 type(InventoryState)(PlayerState.prototype, 'inv');
+// FRENTE H: Party
+type('string')(PlayerState.prototype, 'party_id');
 
-// ── 3) Outros sub-schemas ──
+// ── 3) Boss ──
+export class BossState extends Schema {}
+type('string')(BossState.prototype, 'id');
+type('string')(BossState.prototype, 'name');
+type('string')(BossState.prototype, 'kind');
+type('number')(BossState.prototype, 'hp');
+type('number')(BossState.prototype, 'maxHp');
+type('number')(BossState.prototype, 'x');
+type('number')(BossState.prototype, 'y');
+type('number')(BossState.prototype, 'z');
+type('number')(BossState.prototype, 'ry');
+type('number')(BossState.prototype, 'phase');
+type('string')(BossState.prototype, 'state');
+type('string')(BossState.prototype, 'target_id');
+type('boolean')(BossState.prototype, 'enraged');
+
+// ── 4) Outros sub-schemas ──
 export class PropState extends Schema {}
 type('string')(PropState.prototype, 'id');
 type('string')(PropState.prototype, 'kind');
@@ -110,3 +128,10 @@ type('string')(ArenaState.prototype, 'host_id');
 type('boolean')(ArenaState.prototype, 'started');
 type('string')(ArenaState.prototype, 'map_id');
 type('number')(ArenaState.prototype, 'started_at');
+// FRENTE B: MatchDirector
+type('string')(ArenaState.prototype, 'match_state'); // WAITING|COUNTDOWN|RUNNING|BOSS_WAVE|FINISHED
+type('number')(ArenaState.prototype, 'match_timer');  // ts em ms (countdown OU duração restante)
+type('number')(ArenaState.prototype, 'wave');
+type('number')(ArenaState.prototype, 'mobs_killed');
+// FRENTE C: Boss
+type(BossState)(ArenaState.prototype, 'boss');

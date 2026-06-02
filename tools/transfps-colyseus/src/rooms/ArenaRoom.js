@@ -9,7 +9,7 @@
 //     start_match, spawn_mob, chat
 // ─────────────────────────────────────────────────────────────────
 import { Room } from '@colyseus/core';
-import { ArenaState, PlayerState, MobState, DropState, PropState, FxState, InventoryState, InvSlot } from '../schema/ArenaState.js';
+import { ArenaState, PlayerState, MobState, DropState, PropState, FxState, InventoryState, InvSlot, BossState } from '../schema/ArenaState.js';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { validateHit, getWeapon } from './WeaponTable.js';
 import { validateSkillCast, getSkill } from './SkillTable.js';
@@ -20,15 +20,14 @@ const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const JWT_REQUIRED = process.env.JWT_REQUIRED !== '0';
 
 /**
- * Persiste stats do player em transfps.profiles ao sair.
- * Usa RPC dedicada transfps_apply_match_result (criada na migration).
- * Service role bypassa RLS — só o servidor MP pode chamar.
+ * Persiste stats do player em transfps.profiles ao sair / fim de match.
+ * V2: inclui wins/losses/playtime.
  */
-async function persistStats(player) {
+async function persistStats(player, { won = false, playtimeSeconds = 0 } = {}) {
   if (!SUPABASE_SERVICE_ROLE) return;
   if (!player.id || player.id.length < 10) return;
   try {
-    const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/transfps_apply_match_result', {
+    const r = await fetch(SUPABASE_URL + '/rest/v1/rpc/transfps_apply_match_result_v2', {
       method: 'POST',
       headers: {
         apikey: SUPABASE_SERVICE_ROLE,
@@ -42,16 +41,86 @@ async function persistStats(player) {
         p_xp_gained: player.xp | 0,
         p_coins_gained: player.coins | 0,
         p_final_level: player.level | 0,
+        p_won: !!won,
+        p_playtime_seconds: playtimeSeconds | 0,
       }),
     });
     if (r.status >= 400) {
       console.warn(`[persistStats] HTTP ${r.status} ${await r.text().catch(() => '')}`);
     } else {
-      console.log(`[persistStats] ${player.nickname} kills=${player.kills} xp=${player.xp} level=${player.level} coins=${player.coins}`);
+      console.log(`[persistStats] ${player.nickname} k=${player.kills} d=${player.deaths} xp=${player.xp} lv=${player.level} 🪙${player.coins} won=${won} t=${playtimeSeconds}s`);
     }
   } catch (e) {
     console.warn('[persistStats] erro:', e.message);
   }
+}
+
+/** Carrega profile do Supabase ao entrar na sala (hidrata XP/level/etc). */
+async function loadProfile(playerId) {
+  if (!SUPABASE_SERVICE_ROLE) return null;
+  try {
+    const r = await fetch(SUPABASE_URL + `/rest/v1/transfps_profiles?id=eq.${playerId}&select=*`, {
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+      },
+    });
+    if (!r.ok) return null;
+    const arr = await r.json();
+    return arr?.[0] || null;
+  } catch (e) {
+    console.warn('[loadProfile] erro:', e.message);
+    return null;
+  }
+}
+
+/** Server-side: incrementa progresso de quest do dia. Fire-and-forget. */
+async function pushQuestProgress(playerId, questType, delta) {
+  if (!SUPABASE_SERVICE_ROLE || !playerId || playerId.length < 10) return;
+  try {
+    await fetch(SUPABASE_URL + '/rest/v1/rpc/transfps_quest_progress', {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_player_id: playerId, p_quest_type: questType, p_delta: delta | 0 }),
+    });
+  } catch (_) {}
+}
+
+/** Server-side telemetry */
+async function pushTelemetry({ playerId, roomId, mapId, duration, kills, deaths, outcome }) {
+  if (!SUPABASE_SERVICE_ROLE || !playerId || playerId.length < 10) return;
+  try {
+    await fetch(SUPABASE_URL + '/rest/v1/rpc/transfps_log_match_telemetry', {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        p_room_id: String(roomId || '').slice(0, 32),
+        p_map_id: String(mapId || 'default').slice(0, 32),
+        p_duration: duration | 0,
+        p_kills: kills | 0,
+        p_deaths: deaths | 0,
+        p_fps_avg: 0,
+        p_outcome: outcome || 'abandoned',
+      }),
+    });
+  } catch (_) {}
+}
+
+/** Fórmula: level = floor(sqrt(xp/100)) + 1 */
+function computeLevel(xp) {
+  return Math.floor(Math.sqrt(Math.max(0, xp) / 100)) + 1;
+}
+function xpForLevel(level) {
+  // Inverso: xp = (level-1)^2 * 100
+  return Math.max(0, (level - 1) * (level - 1) * 100);
 }
 
 // JWKS para RS256 (fallback se não tiver shared secret)
@@ -114,6 +183,10 @@ export class ArenaRoom extends Room {
     this.state.started = false;
     this.state.map_id = String(options.map || 'default');
     this.state.started_at = 0;
+    this.state.match_state = 'WAITING';
+    this.state.match_timer = 0;
+    this.state.wave = 0;
+    this.state.mobs_killed = 0;
     this._lastTick = Date.now();
     this._cooldowns = new Map(); // mobId → { cdT, lastAttack }
     this._atkCooldowns = new Map(); // `${playerId}:${weaponId}` → lastUseAt
@@ -166,6 +239,10 @@ export class ArenaRoom extends Room {
     this.onMessage('equip', (client, payload) => this._onEquip(client, payload));
     this.onMessage('use_item', (client, payload) => this._onUseItem(client, payload));
     this.onMessage('drop_item', (client, payload) => this._onDropItem(client, payload));
+    this.onMessage('claim_quest', (client, payload) => this._onClaimQuest(client, payload));
+    this.onMessage('party_invite', (client, payload) => this._onPartyInvite(client, payload));
+    this.onMessage('party_accept', (client, payload) => this._onPartyAccept(client, payload));
+    this.onMessage('party_leave', (client) => this._onPartyLeave(client));
     this._skillCooldowns = new Map();
 
     // ── IDLE TIMEOUT: se sala fica vazia por 60s, descarta. ──
@@ -237,6 +314,82 @@ export class ArenaRoom extends Room {
     };
   }
 
+  /** Atalho usado nos hits: dispara progress de quest fire-and-forget. */
+  _trackQuestProgress(playerId, questType, delta) {
+    if (!playerId) return;
+    pushQuestProgress(playerId, questType, delta).catch(() => {});
+  }
+
+  // ── FRENTE D: claim quest (server valida via Supabase RPC com JWT) ──
+  _onClaimQuest(client, payload) {
+    // Cliente chama RPC direto no Supabase (já authenticated com seu JWT).
+    // Aqui só repassa broadcast pra HUD atualizar.
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p) return;
+    this.broadcast('quest_claimed', { player_id: pid, quest_idx: payload?.quest_idx });
+  }
+
+  // ── FRENTE H: Party (até 4 players) ──
+  _onPartyInvite(client, payload) {
+    const pid = client.userData?.playerId;
+    const inviter = this.state.players.get(pid);
+    const target = this.state.players.get(String(payload?.target_id || ''));
+    if (!inviter || !target || inviter.id === target.id) return;
+    // Cria party_id se inviter ainda não tem
+    if (!inviter.party_id) inviter.party_id = `party_${pid.slice(0, 8)}_${Date.now()}`;
+    // Conta membros atuais da party
+    let memberCount = 0;
+    this.state.players.forEach((p) => { if (p.party_id === inviter.party_id) memberCount++; });
+    if (memberCount >= 4) {
+      client.send('error', { code: 'party_full', msg: 'Party cheia (4/4)' });
+      return;
+    }
+    // Manda mensagem privada pro alvo (broadcast filtrado)
+    this.broadcast('party_invite', {
+      from: inviter.id, from_nick: inviter.nickname,
+      to: target.id, party_id: inviter.party_id,
+    });
+  }
+
+  _onPartyAccept(client, payload) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p) return;
+    const partyId = String(payload?.party_id || '').slice(0, 64);
+    if (!partyId) return;
+    // Checa cap 4
+    let count = 0;
+    this.state.players.forEach((pp) => { if (pp.party_id === partyId) count++; });
+    if (count >= 4) return;
+    p.party_id = partyId;
+    this.broadcast('party_joined', { player_id: pid, party_id: partyId });
+  }
+
+  _onPartyLeave(client) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p || !p.party_id) return;
+    const oldParty = p.party_id;
+    p.party_id = '';
+    this.broadcast('party_left', { player_id: pid, party_id: oldParty });
+  }
+
+  async _hydrateFromProfile(player) {
+    const prof = await loadProfile(player.id);
+    if (!prof) return;
+    player.xp = prof.xp || 0;
+    player.level = computeLevel(player.xp);
+    player.coins = prof.coins || 0;
+    // kills/deaths nesta partida começam em 0 (apenas tracking de match)
+    // mas damos persistência via persistStats no onLeave
+    console.log(`[hydrate] ${player.nickname} lv${player.level} ${player.xp}xp ${player.coins}🪙`);
+    this.broadcast('profile_loaded', {
+      player_id: player.id,
+      xp: player.xp, level: player.level, coins: player.coins,
+    });
+  }
+
   onJoin(client, options, auth) {
     const playerId = auth.sub;
     // ── RECONEXÃO: se player já existia, atualiza sessionId e mantém state ──
@@ -286,8 +439,10 @@ export class ArenaRoom extends Room {
 
     this.state.players.set(playerId, p);
     if (p.is_host) this.state.host_id = playerId;
-    client.userData = { playerId };
+    client.userData = { playerId, joinedAt: Date.now() };
     console.log(`[ArenaRoom] +${p.nickname} ${p.is_host ? '[HOST]' : ''} (${this.state.players.size} players)`);
+    // Hidrata profile (xp/level/coins persistidos)
+    this._hydrateFromProfile(p).catch(() => {});
   }
 
   async onLeave(client, consented) {
@@ -310,8 +465,25 @@ export class ArenaRoom extends Room {
 
     console.log(`[ArenaRoom] -${player.nickname}`);
 
-    // Persiste stats no Supabase (fire-and-forget)
-    persistStats(player).catch(() => {});
+    // Calcula playtime e outcome
+    const joinedAt = client.userData?.joinedAt || Date.now();
+    const playtimeSeconds = Math.floor((Date.now() - joinedAt) / 1000);
+    const won = this.state.match_state === 'FINISHED' && !player.dead;
+    const outcome = this.state.match_state === 'FINISHED'
+      ? (player.dead ? 'defeat' : 'victory')
+      : 'abandoned';
+
+    // Persiste stats no Supabase + telemetria
+    persistStats(player, { won, playtimeSeconds }).catch(() => {});
+    pushTelemetry({
+      playerId: player.id,
+      roomId: this.roomId,
+      mapId: this.state.map_id,
+      duration: playtimeSeconds,
+      kills: player.kills,
+      deaths: player.deaths,
+      outcome,
+    }).catch(() => {});
 
     // Se host saiu, transfere
     const wasHost = (pid === this.state.host_id);
@@ -387,7 +559,9 @@ export class ArenaRoom extends Room {
       target.respawn_at = Date.now() + 3000;
       this._kills.set(attacker.id, (this._kills.get(attacker.id) || 0) + 1);
       attacker.kills = (attacker.kills || 0) + 1;
-      attacker.xp = (attacker.xp || 0) + 50;
+      this._awardPvpKill(attacker);
+      // Quest tracking
+      this._trackQuestProgress(attacker.id, 'kill_player', 1);
       this.broadcast('died', { player_id: target.id, killer: attacker.id });
     }
   }
@@ -395,6 +569,11 @@ export class ArenaRoom extends Room {
   _onHitMob(client, payload) {
     const pid = client.userData?.playerId;
     const attacker = this.state.players.get(pid);
+    // Roteia pro boss se mob_id casa
+    if (this.state.boss && String(payload.mob_id) === this.state.boss.id) {
+      this._onHitBoss(client, payload);
+      return;
+    }
     const mob = this.state.mobs.get(String(payload.mob_id || ''));
     if (!attacker || !mob) return;
 
@@ -421,8 +600,11 @@ export class ArenaRoom extends Room {
     if (mob.hp <= 0) {
       mob.state = 'dead';
       this._kills.set(attacker.id, (this._kills.get(attacker.id) || 0) + 1);
+      this.state.mobs_killed = (this.state.mobs_killed || 0) + 1;
       // ETAPA 4: XP/kills/level server-authoritative
       this._awardKill(attacker, mob);
+      // Quest tracking
+      this._trackQuestProgress(attacker.id, 'kill_mob', 1);
       this.broadcast('mob_killed', { mob_id: mob.id, by: attacker.id });
       // Drops server-authoritative
       this._spawnDropsFromMob(mob);
@@ -432,21 +614,51 @@ export class ArenaRoom extends Room {
     }
   }
 
-  /** Soma XP/kills no PlayerState e processa level-up. */
+  /** Soma XP/kills e processa level-up usando fórmula sqrt(xp/100)+1. */
   _awardKill(player, mob) {
-    const tierXp = { rookie: 20, champion: 45, ultimate: 90, mega: 180, boss: 400, chibata: 25 };
-    const gain = tierXp[mob.tier || 'rookie'] || 20;
+    // Spec: kill mob = 10 XP base, escalado por tier
+    const tierMult = { rookie: 1, champion: 2.5, ultimate: 6, mega: 12, boss: 30, chibata: 1.4 }[mob.tier || 'rookie'] || 1;
+    const gain = Math.round(10 * tierMult);
+    const oldLevel = player.level;
     player.xp = (player.xp || 0) + gain;
     player.kills = (player.kills || 0) + 1;
-    // Level up: cada nível custa 100 * level XP
-    while (player.xp >= player.level * 100) {
-      player.xp -= player.level * 100;
-      player.level = player.level + 1;
-      player.maxHp = 100 + (player.level - 1) * 12;
-      player.hp = player.maxHp; // cura no level up
-      this.broadcast('level_up', { player_id: player.id, level: player.level });
+    const newLevel = computeLevel(player.xp);
+    if (newLevel > oldLevel) {
+      player.level = newLevel;
+      player.maxHp = 100 + (newLevel - 1) * 12;
+      player.hp = player.maxHp;
+      this.broadcast('level_up', { player_id: player.id, level: newLevel, prev: oldLevel });
     }
     this.broadcast('xp_gain', { player_id: player.id, gain, total: player.xp, level: player.level });
+  }
+
+  /** XP por kill em outro player (PvP). */
+  _awardPvpKill(attacker) {
+    const oldLevel = attacker.level;
+    const gain = 50;
+    attacker.xp = (attacker.xp || 0) + gain;
+    const newLevel = computeLevel(attacker.xp);
+    if (newLevel > oldLevel) {
+      attacker.level = newLevel;
+      attacker.maxHp = 100 + (newLevel - 1) * 12;
+      attacker.hp = attacker.maxHp;
+      this.broadcast('level_up', { player_id: attacker.id, level: newLevel, prev: oldLevel });
+    }
+    this.broadcast('xp_gain', { player_id: attacker.id, gain, total: attacker.xp, level: attacker.level });
+  }
+
+  /** XP por vitória (broadcast no fim de partida). */
+  _awardVictory(player) {
+    const oldLevel = player.level;
+    const gain = 250;
+    player.xp = (player.xp || 0) + gain;
+    const newLevel = computeLevel(player.xp);
+    if (newLevel > oldLevel) {
+      player.level = newLevel;
+      player.maxHp = 100 + (newLevel - 1) * 12;
+      this.broadcast('level_up', { player_id: player.id, level: newLevel, prev: oldLevel });
+    }
+    this.broadcast('xp_gain', { player_id: player.id, gain, total: player.xp, level: player.level, victory: true });
   }
 
   /** RNG de loot do servidor. Tier do mob define quantidade e raridade. */
@@ -855,6 +1067,7 @@ export class ArenaRoom extends Room {
     }
 
     this.state.drops.delete(drop.id);
+    this._trackQuestProgress(pid, 'collect_drop', 1);
   }
 
   _onReady(client, payload) {
@@ -878,15 +1091,221 @@ export class ArenaRoom extends Room {
       client.send('error', { code: 'not_ready', msg: `${notReady} player(s) sem PRONTO` });
       return;
     }
-    this.state.started = true;
-    this.state.started_at = Date.now();
-    this.broadcast('match_started', {});
-    // Spawn inicial de mobs
-    const initial = 4 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < initial; i++) this._spawnMob();
-    // Spawn de props destrutíveis (barris/caixas)
-    this._spawnInitialProps();
-    console.log(`[ArenaRoom] partida iniciada em ${this.roomId}`);
+    if (this.state.players.size < 1) return;
+    // Inicia countdown de 10s
+    this.state.match_state = 'COUNTDOWN';
+    this.state.match_timer = Date.now() + 10_000;
+    this.broadcast('match_countdown', { ends_at: this.state.match_timer });
+    console.log(`[ArenaRoom] countdown iniciado em ${this.roomId} (10s)`);
+  }
+
+  /** Transição WAITING→COUNTDOWN→RUNNING→BOSS_WAVE→FINISHED no tick. */
+  _matchDirectorTick() {
+    const now = Date.now();
+    const ms = this.state.match_state;
+    if (ms === 'COUNTDOWN') {
+      if (now >= this.state.match_timer) {
+        this.state.match_state = 'RUNNING';
+        this.state.started = true;
+        this.state.started_at = now;
+        this.state.wave = 1;
+        this.state.mobs_killed = 0;
+        this.broadcast('match_started', {});
+        // Spawn inicial wave 1
+        const initial = 4 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < initial; i++) this._spawnMob();
+        this._spawnInitialProps();
+        console.log(`[ArenaRoom] RUNNING — wave 1 em ${this.roomId}`);
+      }
+    } else if (ms === 'RUNNING') {
+      // Trigger boss após 20 kills OU 3 minutos
+      const dur = now - (this.state.started_at || now);
+      if (this.state.mobs_killed >= 20 || dur > 180_000) {
+        this._enterBossWave();
+      } else if (this.state.mobs.size < 3) {
+        // Repõe mobs (mantém alvo de inimigos vivos)
+        const wave = this.state.wave;
+        const reposi = Math.min(5, 3 + wave);
+        for (let i = 0; i < reposi; i++) this._spawnMob();
+        if (this.state.mobs_killed > 0 && this.state.mobs_killed % 8 === 0) {
+          this.state.wave = wave + 1;
+          this.broadcast('wave_up', { wave: this.state.wave });
+        }
+      }
+    } else if (ms === 'BOSS_WAVE') {
+      // Boss morto? → FINISHED
+      if (this.state.boss && this.state.boss.hp <= 0) {
+        this._finishMatch(true);
+      }
+    } else if (ms === 'FINISHED') {
+      // Auto-volta pra WAITING após 30s
+      if (now >= this.state.match_timer) {
+        this._resetToLobby();
+      }
+    }
+  }
+
+  /** IA simples do boss: persegue player mais próximo, ataque em range. */
+  _tickBoss(dt) {
+    const boss = this.state.boss;
+    if (!boss || boss.hp <= 0) return;
+    let best = null, bestDist = Infinity;
+    this.state.players.forEach((p) => {
+      if (p.dead) return;
+      const dx = p.x - boss.x, dz = p.z - boss.z;
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (d < bestDist) { bestDist = d; best = p; }
+    });
+    if (!best) { boss.state = 'idle'; return; }
+    boss.target_id = best.id;
+    const BOSS_SPEED = 4.5;
+    const BOSS_RANGE = 4.0;
+    const BOSS_DMG = 35;
+    const BOSS_CD_MS = 1800;
+    const dx = best.x - boss.x, dz = best.z - boss.z;
+    if (bestDist > BOSS_RANGE) {
+      const nx = dx / bestDist, nz = dz / bestDist;
+      const spd = boss.enraged ? BOSS_SPEED * 1.5 : BOSS_SPEED;
+      boss.x += nx * spd * dt;
+      boss.z += nz * spd * dt;
+      boss.ry = Math.atan2(nx, nz) * 180 / Math.PI;
+      boss.state = 'run';
+    } else {
+      boss.state = 'attack';
+      const now = Date.now();
+      const cdKey = `boss:${boss.id}`;
+      const lastAt = this._atkCooldowns.get(cdKey) || 0;
+      if (now - lastAt >= BOSS_CD_MS) {
+        this._atkCooldowns.set(cdKey, now);
+        const dmg = boss.enraged ? BOSS_DMG * 1.5 : BOSS_DMG;
+        best.hp = Math.max(0, best.hp - dmg);
+        this.broadcast('boss_attack', { boss_id: boss.id, target_id: best.id, dmg });
+        if (best.hp <= 0) {
+          best.dead = true;
+          best.deaths = (best.deaths || 0) + 1;
+          best.respawn_at = Date.now() + 3000;
+          this.broadcast('died', { player_id: best.id, killer: boss.id });
+        }
+      }
+    }
+    // Phase change: aos 50% vira enraged
+    if (!boss.enraged && boss.hp <= boss.maxHp * 0.5) {
+      boss.enraged = true;
+      boss.phase = 2;
+      this.broadcast('boss_phase', { phase: 2, enraged: true });
+    }
+  }
+
+  /** Recebe hit no boss (cliente envia hit_mob com mob_id = boss.id). */
+  _onHitBoss(client, payload) {
+    const pid = client.userData?.playerId;
+    const attacker = this.state.players.get(pid);
+    const boss = this.state.boss;
+    if (!attacker || !boss || boss.hp <= 0) return;
+    if (String(payload.mob_id) !== boss.id) return false;
+    const weaponId = String(payload.weapon || attacker.weapon || 'unarmed').slice(0, 32);
+    const v = validateHit({
+      attacker, target: boss, weaponId,
+      now: Date.now(), cooldowns: this._atkCooldowns,
+      pvpRequired: false,
+    });
+    if (!v.ok) return true; // tratado mas rejeitado
+    boss.hp = Math.max(0, boss.hp - v.dmg);
+    this.broadcast('hit_confirmed', {
+      from: attacker.id, to: boss.id, mob: true,
+      weapon: weaponId, dmg: v.dmg,
+    });
+    if (boss.hp <= 0) {
+      boss.state = 'dead';
+      this.broadcast('boss_killed', { boss_id: boss.id, by: attacker.id });
+      // XP enorme + coins
+      const oldL = attacker.level;
+      attacker.xp = (attacker.xp || 0) + 500;
+      attacker.coins = (attacker.coins || 0) + 200;
+      attacker.kills = (attacker.kills || 0) + 1;
+      const nL = computeLevel(attacker.xp);
+      if (nL > oldL) {
+        attacker.level = nL; attacker.maxHp = 100 + (nL - 1) * 12; attacker.hp = attacker.maxHp;
+        this.broadcast('level_up', { player_id: attacker.id, level: nL, prev: oldL });
+      }
+      this.broadcast('xp_gain', { player_id: attacker.id, gain: 500, total: attacker.xp, level: attacker.level });
+    }
+    return true;
+  }
+
+  _enterBossWave() {
+    this.state.match_state = 'BOSS_WAVE';
+    // Limpa mobs comuns
+    this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
+    // Spawn boss
+    const BOSSES = [
+      { kind: 'cb_stormKingBoss',    name: 'Storm King',    hp: 1500 },
+      { kind: 'cb_mushroomBoss',     name: 'Mushroom Lord', hp: 1300 },
+      { kind: 'cb_theLich',          name: 'The Lich',      hp: 1800 },
+      { kind: 'cb_dragonBig',        name: 'Great Dragon',  hp: 2200 },
+      { kind: 'cb_drogonDragon',     name: 'Drogon',        hp: 2000 },
+    ];
+    const def = BOSSES[Math.floor(Math.random() * BOSSES.length)];
+    const b = new BossState();
+    b.id = `boss_${Date.now()}`;
+    b.name = def.name;
+    b.kind = def.kind;
+    b.hp = def.hp;
+    b.maxHp = def.hp;
+    // Spawn no centro do mapa
+    b.x = 0; b.y = 0; b.z = 0;
+    b.ry = 0;
+    b.phase = 1;
+    b.state = 'idle';
+    b.target_id = '';
+    b.enraged = false;
+    this.state.boss = b;
+    this.broadcast('boss_appeared', { name: b.name, kind: b.kind, hp: b.hp });
+    console.log(`[ArenaRoom] 🐉 BOSS WAVE — ${b.name} (${b.hp} hp)`);
+  }
+
+  _finishMatch(victory) {
+    this.state.match_state = 'FINISHED';
+    this.state.match_timer = Date.now() + 30_000;
+    // XP vitória pra todos vivos
+    const winners = [];
+    this.state.players.forEach((p) => {
+      if (!p.dead) {
+        this._awardVictory(p);
+        winners.push(p.id);
+      }
+    });
+    this.broadcast('match_finished', {
+      victory,
+      winners,
+      boss_name: this.state.boss?.name || null,
+    });
+    console.log(`[ArenaRoom] FINISHED victory=${victory} winners=${winners.length}`);
+  }
+
+  _resetToLobby() {
+    this.state.match_state = 'WAITING';
+    this.state.started = false;
+    this.state.started_at = 0;
+    this.state.wave = 0;
+    this.state.mobs_killed = 0;
+    this.state.match_timer = 0;
+    // Limpa mundo
+    this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
+    this.state.drops.forEach((_, id) => this.state.drops.delete(id));
+    this.state.props.forEach((_, id) => this.state.props.delete(id));
+    this.state.fx.forEach((_, id) => this.state.fx.delete(id));
+    this.state.boss = undefined;
+    // Reset ready/hp dos players
+    this.state.players.forEach((p) => {
+      p.is_ready = false;
+      p.hp = p.maxHp;
+      p.dead = false;
+      p.respawn_at = 0;
+      p.kills = 0;
+      p.deaths = 0;
+    });
+    this.broadcast('lobby_reset', {});
   }
 
   _onSpawnMob(client, payload) {
@@ -927,9 +1346,17 @@ export class ArenaRoom extends Room {
     this.broadcast('chat', { from: p.id, nick: p.nickname, msg });
   }
 
-  // ── Tick autoritativo (IA mobs + expiração de drops) ──────────
+  // ── Tick autoritativo (MatchDirector + IA mobs + IA boss + expiração drops/fx) ──
   _tick(dt) {
-    if (!this.state.started) return;
+    // MatchDirector roda SEMPRE (não só durante started)
+    this._matchDirectorTick();
+
+    // IA do boss (quando existe)
+    if (this.state.boss && this.state.boss.hp > 0) {
+      this._tickBoss(dt);
+    }
+
+    if (!this.state.started && this.state.match_state !== 'BOSS_WAVE') return;
 
     // Expira drops antigos (auto-despawn 2 min)
     if (this.state.drops.size > 0) {
