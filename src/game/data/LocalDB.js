@@ -68,4 +68,10 @@ export class LocalDB {
       await supa.from("transfps_storage").delete().eq("user_id", uid).eq("collection", collection);
     } catch (e) { console.warn("[LocalDB] supa del falhou", collection, e?.message); }
   }
+
+  // ── Aliases retrocompat: codigo legacy chama LocalDB.save()/.load() ──
+  // (BuildMode, AssetGroups, ItemCatalog, etc) — preserva API original.
+  static async save(collection, data) { return LocalDB.set(collection, data); }
+  static async load(collection, defaultData = {}) { return LocalDB.get(collection, defaultData); }
+  static async remove(collection) { return LocalDB.del(collection); }
 }
