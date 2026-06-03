@@ -259,6 +259,9 @@ export class ColyseusClient {
       const now = performance.now();
       const rtt = Math.max(0, now - (m.t || now));
       this.ping = rtt | 0;
+      if (m && Number.isFinite(m.server_t)) {
+        this.serverTimeDelta = m.server_t - Date.now();
+      }
       this._notify('pong', { rtt: this.ping, server_t: m.server_t });
     });
 

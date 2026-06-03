@@ -93,6 +93,7 @@ export class SoundManager {
       deathfall       : 'assets/Sound FX/voos e rushs/Caindo morto forte.wav',
       // Inimigo voando longe após golpe forte (ESPACIAL — abaixa com a distância)
       flyby           : 'assets/Sound FX/voos e rushs/Barulho do cara voando longe quando recebe um golpe forte.wav',
+      bullet_whiz     : "assets/Sound FX/voos e rushs/Barulho do cara voando longe quando recebe um golpe forte.wav",
       // Coleta de drop (moeda/material)
       pickup_item     : 'assets/Sound FX/senzu/mordendo uma fruta.wav',
       // CHIBATADA — som de impacto da arma Chibata (whip)
@@ -120,6 +121,7 @@ export class SoundManager {
         'chibatada', // som de impacto da Chibata — precarrega pra nao engolir o 1o golpe
       ]);
       this._getSpatialSound('flyby', 45);   // pré-carrega o som de voar
+      this._getSpatialSound("bullet_whiz", 60);
       this._getLoopSound('mg_loop');        // pré-carrega o loop da metralhadora
     });
   }

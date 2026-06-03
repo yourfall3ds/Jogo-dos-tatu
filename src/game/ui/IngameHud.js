@@ -313,8 +313,10 @@ export class DeathTimer {
       this._visible = true;
     }
     // Conta tempo restante até respawn_at
-    const remainingMs = Math.max(0, (me.respawn_at || 0) - Date.now());
-    const secs = Math.ceil(remainingMs / 1000);
+    const serverDelta = window._cs?.serverTimeDelta || 0;
+    const remainingMs = Math.max(0, (me.respawn_at || 0) - (Date.now() + serverDelta));
+    // Clamp visual a 5s (server SEMPRE seta 5000ms; valores maiores eh drift)
+    const secs = Math.min(5, Math.ceil(remainingMs / 1000));
     this._secsEl.textContent = String(secs);
     if (remainingMs <= 0 && !this._respawnRequested) {
       this._respawnRequested = true;

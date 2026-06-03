@@ -53,6 +53,7 @@ import { TestArena }            from './game/scene/TestArena.js';
 import { ChibataMapLoader }    from './game/scene/ChibataMapLoader.js';
 import { MapSelectUI }         from './game/ui/MapSelectUI.js';
 import { BloodFX }             from './game/combat/BloodFX.js';
+import { BulletTracer }        from './game/effects/BulletTracer.js';
 import { WaterSystem }         from './game/scene/WaterSystem.js';
 import { SkillMapExtras }      from './game/scene/SkillMapExtras.js';
 import { SettingsUI }          from './game/ui/SettingsUI.js';
@@ -508,6 +509,9 @@ async function init() {
   const bloodFX = new BloodFX(scene);
   window._bloodFX = bloodFX;
 
+  const bulletTracer = new BulletTracer(scene);
+  window._bulletTracer = bulletTracer;
+
   const waterSystem = new WaterSystem(scene, level);
   window._waterSystem = waterSystem;
   waterSystem.build();
@@ -707,6 +711,36 @@ async function init() {
         { multiplier: isSword ? 1.8 : 1.0, sourceNode: targetMesh, isHeavy: isSword || m.dmg >= 80 }
       );
     }
+    // Som whiz surround na posicao do alvo
+    if (targetPos) {
+      const tPos = targetPos;
+      try {
+        const sm = window._soundManager;
+        if (sm?._getSpatialSound) {
+          sm._getSpatialSound("bullet_whiz", 60).then(snd => {
+            if (!snd) return;
+            try {
+              if (snd.spatial?.position?.set) snd.spatial.position.set(tPos.x, tPos.y, tPos.z);
+              snd.volume = 0.7;
+              snd.play();
+            } catch (_) {}
+          }).catch(() => {});
+        }
+      } catch (e) { console.error("[BulletWhiz]", e); }
+    }
+  });
+
+  // ── BulletTracer: linha amarela + impact spark no hit_confirmed ──
+  cs.on("hit_confirmed", (m) => {
+    try {
+      const me = window._player?.mesh?.position;
+      const target = m?.target_id ? cs.state?.players?.get?.(m.target_id) : null;
+      if (me && target && Number.isFinite(target.x)) {
+        const tPos = new BABYLON.Vector3(target.x, target.y + 1.5, target.z);
+        bulletTracer.spawn(me, tPos);
+        bulletTracer.spawnImpact(tPos);
+      }
+    } catch (e) { console.error("[BulletTracer]", e); }
   });
 
   // ── Mob attack hit no player local ──

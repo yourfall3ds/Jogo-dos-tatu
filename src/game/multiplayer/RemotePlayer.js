@@ -117,9 +117,35 @@ export class RemotePlayer {
     this._pushSnapshot();
   }
 
+  _maybePlayFootstep(state) {
+    if (!state || !state.anim_state) return;
+    const a = String(state.anim_state);
+    const isMoving = a.includes("walk") || a.includes("run");
+    if (!isMoving) return;
+    const now = (undefined);
+    const cooldown = a.includes("run") ? 280 : 420;
+    if (this._lastStepT && now - this._lastStepT < cooldown) return;
+    this._lastStepT = now;
+    try {
+      const sm = window._soundManager;
+      if (!sm?._getSpatialSound) return;
+      sm._getSpatialSound("run_concrete", 30).then(snd => {
+        if (!snd) return;
+        try {
+          if (snd.spatial?.position?.set) snd.spatial.position.set(state.x, state.y, state.z);
+          snd.volume = 0.45;
+          snd.play();
+        } catch (_) {}
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
   /** Chamado pelo ColyseusClient quando um campo do schema muda. */
   onSchemaChange(field, newValue) {
     const s = this.state;
+    if (field === "x" || field === "z" || field === "anim_state") {
+      try { this._maybePlayFootstep(s || this.state); } catch (_) {}
+    }
     switch (field) {
       case 'pos':
       case 'ry':
@@ -426,10 +452,27 @@ export class RemotePlayer {
   }
 
   async _tryLoadAvatar() {
+    const url = "assets/itens 3d/Animations-meshy/Meshy_AI_Faça_um_rato_mistura_biped_Character_output.glb";
+    const shortId = this.playerId.slice(0, 8);
+    console.log("[RemotePlayer]", shortId, "loading avatar from", url);
+
+    // Timeout de 8s pra avisar caso o load esteja travado
+    const timeoutId = setTimeout(() => {
+      if (!this._avatarRoot) {
+        console.warn("[RemotePlayer]", shortId, "avatar load TIMEOUT (>8s) — URL:", url);
+      }
+    }, 8000);
+
     try {
-      const url = "assets/character/playerUnarmed.glb";
-      const result = await BABYLON.SceneLoader.ImportMeshAsync("", url.substring(0, url.lastIndexOf("/") + 1), url.substring(url.lastIndexOf("/") + 1), this.scene);
-      if (!result?.meshes?.length) return;
+      const lastSlash = url.lastIndexOf("/") + 1;
+      const rootUrl = url.substring(0, lastSlash);
+      const fileName = url.substring(lastSlash);
+      const result = await BABYLON.SceneLoader.ImportMeshAsync("", rootUrl, fileName, this.scene);
+      clearTimeout(timeoutId);
+      if (!result?.meshes?.length) {
+        console.warn("[RemotePlayer]", shortId, "avatar load returned ZERO meshes");
+        return;
+      }
       const root = result.meshes[0];
       root.name = "remote_avatar_" + this.playerId;
       root.parent = this.body;
@@ -440,9 +483,10 @@ export class RemotePlayer {
       this._avatarAnims = result.animationGroups || [];
       const idleAnim = this._avatarAnims.find(a => /idle/i.test(a.name));
       if (idleAnim) { try { idleAnim.start(true, 1.0); } catch (_) {} }
-      console.log("[RemotePlayer] avatar carregado:", this.playerId.slice(0,8));
+      console.log("[RemotePlayer]", shortId, "avatar carregado OK — meshes:", result.meshes.length, "anims:", this._avatarAnims.length);
     } catch (e) {
-      console.warn("[RemotePlayer] _tryLoadAvatar falhou:", e?.message);
+      clearTimeout(timeoutId);
+      console.error("[RemotePlayer] AVATAR FALHOU", shortId, e?.message);
     }
   }
 }
