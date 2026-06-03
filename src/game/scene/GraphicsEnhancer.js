@@ -80,20 +80,32 @@ export class GraphicsEnhancer {
     // ── GlowLayer: brilho SÓ de quem é pra brilhar (neon/plasma/sol) ──
     //  Sem filtro, o glow pegava o emissivo leve do PERSONAGEM (rato
     //  radioativo). Filtramos por nome → só tracers/muzzle/neon/sol brilham.
-    try {
-      const glow = new BABYLON.GlowLayer('glow', scene, { mainTextureSamples: 2 });
-      glow.intensity = 0.5;
-      const GLOW_OK = /tracer|muzzle|spark|neon|plasma|sunDisc|moonDisc|crystal|beam|glow/i;
-      glow.customEmissiveColorSelector = (mesh, subMesh, material, result) => {
-        if (GLOW_OK.test(mesh.name || '')) {
-          const e = material.emissiveColor || BABYLON.Color3.Black();
-          result.set(e.r, e.g, e.b, 1);
-        } else {
-          result.set(0, 0, 0, 0);   // não brilha (player, cenário, etc)
-        }
-      };
-      this.glow = glow;
-    } catch (_) {}
+    //
+    //  ⚠️ DESLIGADO no WebGPU. O GlowLayer cria o PostProcessRTT-highlights, que
+    //  injeta varyings extras no fragment shader: com os materiais PBR pesados
+    //  (uv/uv2 + normal+tangent + vColor + fog + front_facing) o total passa de
+    //  16 (erro real: "fragment input 17 > 16") → RenderPipeline inválido →
+    //  tela quebrada com spam de GPUValidationError. Igual ao SSAO acima, o glow
+    //  só roda em WebGL2. Em WebGPU os tracers/neon ainda aparecem (emissivo do
+    //  material), só não ganham o "bloom de contorno" do glow.
+    if (!window._webgpu) {
+      try {
+        const glow = new BABYLON.GlowLayer('glow', scene, { mainTextureSamples: 2 });
+        glow.intensity = 0.5;
+        const GLOW_OK = /tracer|muzzle|spark|neon|plasma|sunDisc|moonDisc|crystal|beam|glow/i;
+        glow.customEmissiveColorSelector = (mesh, subMesh, material, result) => {
+          if (GLOW_OK.test(mesh.name || '')) {
+            const e = material.emissiveColor || BABYLON.Color3.Black();
+            result.set(e.r, e.g, e.b, 1);
+          } else {
+            result.set(0, 0, 0, 0);   // não brilha (player, cenário, etc)
+          }
+        };
+        this.glow = glow;
+      } catch (_) {}
+    } else {
+      console.log('[GFX] GlowLayer desligado no WebGPU (highlights estoura limite de 16 varyings)');
+    }
 
     // — Aberração cromática sutil (lente real) → bordas com franja de cor —
     try {

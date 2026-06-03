@@ -392,6 +392,15 @@ export class WeaponSystem {
 
   // ── GlowLayer: faz traçadores e flash brilharem ───────────────────
   _buildGlowLayer() {
+    // ⚠️ DESLIGADO no WebGPU: o GlowLayer cria o PostProcessRTT-highlights que
+    // injeta varyings extras no fragment shader → com PBR pesado o total passa
+    // de 16 ("fragment input 17 > 16") → RenderPipeline inválido → tela quebrada
+    // com spam de GPUValidationError todo frame. Glow só em WebGL2; em WebGPU os
+    // tracers/muzzle ainda aparecem pelo emissivo, só sem o bloom de contorno.
+    if (window._webgpu) {
+      console.log('[WeaponSystem] GlowLayer desligado no WebGPU (evita estouro de 16 varyings)');
+      return;
+    }
     try {
       this._glowLayer = new BABYLON.GlowLayer('weaponGlow', this.scene, {
         mainTextureFixedSize: 256,
