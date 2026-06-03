@@ -37,8 +37,13 @@ export class GraphicsEnhancer {
 
     // ── DefaultRenderingPipeline: FXAA + Bloom + sharpen + grão ──────
     const pl = new BABYLON.DefaultRenderingPipeline('mainPipeline', true, scene, [cam]);
-    pl.samples = 4;                 // MSAA
-    pl.fxaaEnabled = true;
+    // MSAA: no WebGPU, MSAA (samples>1) propaga pros RTTs de post-process
+    //  (bloom highlights) → "Invalid RenderPipeline ...samples4..." e tela
+    //  preta ao trocar de arma. MSAA em post-process é inválido por design no
+    //  WebGPU. Solução: samples=1 + FXAA (mais leve, sem o crash). No WebGL2
+    //  mantém MSAA 4x.
+    pl.samples = window._webgpu ? 1 : 4;
+    pl.fxaaEnabled = true;          // AA principal (cobre a falta de MSAA no WebGPU)
     pl.bloomEnabled = true;
     pl.bloomThreshold = 1.0;       // só brilho REAL (>1) floresce — chão claro não estoura
     pl.bloomWeight = 0.30;        // calibrado no painel F8
@@ -152,10 +157,10 @@ export class GraphicsEnhancer {
       pl.bloomEnabled = false; pl.grainEnabled = false; pl.sharpenEnabled = false; pl.samples = 1;
       this.engine.setHardwareScalingLevel(1.3);
     } else if (q === 'medio') {
-      pl.bloomEnabled = true; pl.grainEnabled = false; pl.sharpenEnabled = true; pl.samples = 2;
+      pl.bloomEnabled = true; pl.grainEnabled = false; pl.sharpenEnabled = true; pl.samples = window._webgpu ? 1 : 2;
       this.engine.setHardwareScalingLevel(1);
     } else { // alto
-      pl.bloomEnabled = true; pl.grainEnabled = true; pl.sharpenEnabled = true; pl.samples = 4;
+      pl.bloomEnabled = true; pl.grainEnabled = true; pl.sharpenEnabled = true; pl.samples = window._webgpu ? 1 : 4;
       this.engine.setHardwareScalingLevel(1);
     }
   }
