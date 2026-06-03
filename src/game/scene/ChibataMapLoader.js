@@ -9,7 +9,7 @@
 import { AssetRegistry } from '../data/AssetRegistry.js';
 
 export const MapCatalog = {
-  default:         { name: 'Mundo Padrão (procedural)', id: null,                 size: 'auto', biome: 'forest'    },
+  default:         { name: 'Mundo Padrão (procedural)', id: 'default',            size: 'auto', biome: 'forest'    },
   calcata:         { name: 'Calcata',                   id: 'calcata',            size: 'XL',   biome: 'medieval'  },
   cemetery:        { name: 'Cemitério',                 id: 'cemetery',           size: 'L',    biome: 'horror'    },
   castleInterior:  { name: 'Castelo (Interior)',        id: 'castleInterior',     size: 'M',    biome: 'medieval'  },
@@ -39,7 +39,7 @@ export class ChibataMapLoader {
   constructor(scene, level) {
     this.scene = scene;
     this.level = level;
-    this.currentId = null;        // null = mundo padrão
+    this.currentId = 'default';   // 'default' = mundo procedural
     this._loaded = {};            // cache de containers
     this._activeMeshes = [];      // meshes do mapa atual instanciados
     this._proceduralRoots = null; // snapshot dos roots procedurais (escondidos quando ativa mapa)
@@ -83,7 +83,7 @@ export class ChibataMapLoader {
       try { m.dispose(); } catch (_) {}
     }
     this._activeMeshes = [];
-    this.currentId = null;
+    this.currentId = 'default';
     this._setProceduralVisible(true);
     console.log('[ChibataMap] mundo padrão restaurado');
   }

@@ -55,7 +55,7 @@ export class MapSelectUI {
     for (const [id, def] of Object.entries(MapCatalog)) {
       const row = document.createElement('div');
       row.className = 'map-row';
-      if (this.loader.currentId === def.id || (this.loader.currentId === null && id === 'default')) {
+      if (this.loader.currentId === def.id) {
         row.classList.add('active');
       }
       const icon = BIOME_ICON[def.biome] || '🌐';

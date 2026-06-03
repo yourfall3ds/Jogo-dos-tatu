@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────────
 //  main.js — TransFPS
 // ─────────────────────────────────────────────────────────────────
+import './utils/quietConsole.js';  // PRIMEIRO: silencia ruído de boot/assets no console
 import { InputManager }  from './InputManager.js';
 import { Player }        from './Player.js';
 import { Level }         from './Level.js';
@@ -63,8 +64,8 @@ import { DEBUG }               from './utils/debug.js';
 // OAuth callback handler — roda ANTES do init normal.
 // Se essa janela for o popup de login (tem ?code= [PKCE] ou #access_token=
 // [implicit] no URL), troca por session, manda tokens pro opener via
-// BroadcastChannel('transfps-auth') e fecha sozinha. Flag global pra
-// init() abortar e nao bootar o jogo dentro do popup.
+// BroadcastChannel('transfps-auth') e mostra tela de confirmacao.
+// Flag global pra init() abortar e nao bootar o jogo dentro do popup.
 window.__transfpsIsOAuthPopup = false;
 if (typeof window !== 'undefined') {
   const _qs = new URLSearchParams(window.location.search);
@@ -77,9 +78,24 @@ if (typeof window !== 'undefined') {
     // Flag IMEDIATA pra impedir o init() de rodar enquanto o exchange
     // assincrono acontece (handleOAuthCallback agora eh async).
     window.__transfpsIsOAuthPopup = true;
+    // LIMPA a tela do index.html JA, antes do jogo carregar nada visual
+    // (logo TransFPS, barras de loading, etc).
+    try {
+      const _clearScreen = () => {
+        document.body.innerHTML = '';
+        document.body.style.background = '#02030a';
+        // Tela de espera enquanto handleOAuthCallback monta a confirmacao
+        const wait = document.createElement('div');
+        wait.id = '__oauth_wait';
+        wait.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#dff5ff;font:600 14px Segoe UI,monospace;letter-spacing:2px;';
+        wait.textContent = 'AUTORIZANDO…';
+        document.body.appendChild(wait);
+      };
+      if (document.body) _clearScreen();
+      else document.addEventListener('DOMContentLoaded', _clearScreen, { once: true });
+    } catch (_) {}
     AuthSystem.handleOAuthCallback().catch((e) => {
       console.error('[Auth] callback async erro:', e);
-      throw e;
     });
   }
 }

@@ -260,12 +260,18 @@ export class ColyseusClient {
   }
 
   _attachStateListeners() {
-    if (!this.room?.state) return;
+    if (!this.room?.state) { console.error('[CS] _attachStateListeners SEM room.state'); return; }
+    const playersInState = [];
+    this.room.state.players?.forEach?.((p, k) => playersInState.push({ k, nick: p?.nickname }));
+    console.log('[CS] _attachStateListeners playerId=', this.playerId, 'playersInState=', playersInState, 'map_id=', this.room.state.map_id);
     const serverNick = this.room.state.players?.get?.(this.playerId)?.nickname;
     if (!serverNick) {
-      throw new Error('[CS] _attachStateListeners sem nickname do server pra playerId=' + this.playerId);
+      // NÃO throw — atacha listeners mesmo assim. Welcome às vezes chega sem o próprio player (race),
+      // os listeners onAdd vão capturar quando ele aparecer.
+      console.warn('[CS] _attachStateListeners: player próprio ainda não no state (playerId=' + this.playerId + '). Listeners attached mesmo assim.');
+    } else {
+      this.nickname = serverNick;
     }
-    this.nickname = serverNick;
 
     // Usa API getStateCallbacks (@colyseus/schema@3.0)
     const $ = getStateCallbacks(this.room);
@@ -330,7 +336,11 @@ export class ColyseusClient {
     $(this.room.state).listen('started', (v) => {
       if (v === true) this._notify('match_started');
     });
-    $(this.room.state).listen('host_id', () => {});
+    // map_id e host_id chegam no welcome via delta de root, DEPOIS de players.onAdd.
+    // A UI do lobby precisa re-renderizar quando esses campos sincronizam — senao
+    // o render fica preso no guard `if (!mapId) return` da primeira passada (pre-sync).
+    $(this.room.state).listen('map_id', () => this._notify('state_change', { field: 'map_id' }));
+    $(this.room.state).listen('host_id', () => this._notify('state_change', { field: 'host_id' }));
 
     // Re-emite players já no welcome (se chegaram antes do listener)
     this.room.state.players.forEach((player, key) => {

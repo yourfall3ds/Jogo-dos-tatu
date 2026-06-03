@@ -137,11 +137,59 @@ export class LoginScreen {
   }
 
   async _doGoogle() {
-    this._setStatus('Redirecionando pro Google…', '#ffcc66');
-    try { await this.auth.signInWithGoogle(); }
-    catch (e) {
+    // Tranca o botao pra impedir user abrir 500 janelas
+    const btn = this._el?.querySelector('#ls-google');
+    if (btn?.disabled) return; // ja em andamento
+    if (btn) {
+      btn.dataset._origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.style.cursor = 'wait';
+      btn.style.opacity = '0.7';
+      btn.innerHTML = `
+        <span style="display:inline-block;width:16px;height:16px;border:2px solid #888;
+                     border-top-color:#333;border-radius:50%;
+                     animation:lgspin 0.7s linear infinite;margin-right:8px;
+                     vertical-align:middle;"></span>
+        <span style="vertical-align:middle;">Aguardando autenticação Google…</span>
+      `;
+      if (!document.getElementById('lgspin-css')) {
+        const s = document.createElement('style');
+        s.id = 'lgspin-css';
+        s.textContent = '@keyframes lgspin { to { transform: rotate(360deg); } }';
+        document.head.appendChild(s);
+      }
+    }
+    this._setStatus('Aguardando autenticação na janela do Google…', '#ffcc66');
+    try {
+      await this.auth.signInWithGoogle();
+      this._setStatus('✓ Logado com sucesso — entrando…', '#7efa9a');
+      // Espera o profile carregar (onAuthStateChange dispara _loadProfile assincrono)
+      // e ENTRA NO LOBBY automaticamente. NAO deixa user travado na tela de login.
+      let tries = 0;
+      const waitProfile = () => new Promise((resolve) => {
+        const tick = () => {
+          tries++;
+          if (this.auth.user && this.auth.profile) return resolve();
+          if (tries > 50) return resolve(); // 5s timeout - segue mesmo sem profile
+          setTimeout(tick, 100);
+        };
+        tick();
+      });
+      await waitProfile();
+      // Vai direto pra Lobby Multiplayer (era esse o intent do click do Google)
+      this.hide();
+      if (this._onOpenLobby) this._onOpenLobby();
+      else if (this._onContinue) this._onContinue();
+    } catch (e) {
       console.error('[Login] Google:', e);
       this._setStatus('Erro: ' + e.message, '#f55');
+      // Destranca botao se erro pra user tentar de novo
+      if (btn) {
+        btn.disabled = false;
+        btn.style.cursor = 'pointer';
+        btn.style.opacity = '1';
+        if (btn.dataset._origHtml) btn.innerHTML = btn.dataset._origHtml;
+      }
     }
   }
   // _doGuest removido: produto pessoal exige credenciais 100% Lucas.

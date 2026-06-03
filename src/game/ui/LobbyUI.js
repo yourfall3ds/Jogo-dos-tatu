@@ -36,6 +36,9 @@ export class LobbyUI {
       if (!ev || !this._LOBBY_RELEVANT_FIELDS.has(ev.field)) return;
       this._refreshRoomView();
     });
+    // Root state (map_id/host_id) sincroniza DEPOIS do welcome de players — re-renderiza
+    // pra preencher nome da sala + lista quando os campos de root finalmente chegam.
+    this.cs.on('state_change', () => this._refreshRoomView());
     this.cs.on('chat', (m) => this._appendChat(m));
     this.cs.on('match_started', () => this._onMatchStarted());
     this.cs.on('error', (m) => this._setStatus('erro: ' + (m.msg || m.code || 'desconhecido'), '#f55'));
@@ -204,20 +207,33 @@ export class LobbyUI {
     list.innerHTML = '';
     for (const r of rooms) {
       const row = document.createElement('div');
-      const isCurrent = (this.cs.room?.id === r.roomId);
+      const isCurrent = (this.cs.room?.roomId === r.roomId);
       row.style.cssText = `
         background: ${isCurrent ? 'rgba(92,204,255,0.18)' : 'rgba(15,25,50,0.5)'};
         border: 1px solid ${isCurrent ? '#5cf' : 'rgba(120,180,255,0.18)'};
         padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: .15s;
       `;
-      if (!r.metadata) throw new Error('[Lobby] sala sem metadata: ' + r.roomId);
+      // Metadata pode chegar parcial via matchmaker (race com setMetadata no onCreate).
+      // Em vez de matar o render da lista inteira com throw, skipamos a row mas logamos uma vez.
+      if (!r.metadata) {
+        if (this._warnedRoomMissing !== r.roomId) {
+          console.warn('[Lobby] sala sem metadata (skipping):', r.roomId);
+          this._warnedRoomMissing = r.roomId;
+        }
+        continue;
+      }
       const meta = r.metadata;
-      if (!meta.map) throw new Error('[Lobby] sala sem map em metadata: ' + r.roomId);
-      const mapInfo = Object.values(MapCatalog).find((m) => m.id === meta.map);
-      if (!mapInfo) throw new Error('[Lobby] mapa desconhecido em sala ' + r.roomId + ': ' + meta.map);
-      if (!meta.name) throw new Error('[Lobby] sala sem name: ' + r.roomId);
+      const mapKey = meta.map || 'default';
+      const mapInfo = Object.values(MapCatalog).find((m) => m.id === mapKey);
+      if (!mapInfo) {
+        if (this._warnedRoomMap !== r.roomId + ':' + mapKey) {
+          console.warn('[Lobby] sala com mapa desconhecido (skipping):', r.roomId, mapKey);
+          this._warnedRoomMap = r.roomId + ':' + mapKey;
+        }
+        continue;
+      }
       const mapName = mapInfo.name;
-      const name = meta.name;
+      const name = meta.name || 'Sala';
       const modeIcon = meta.mode === 'BATTLE_ROYALE'
         ? '<span style="color:#ffd54a;background:rgba(255,213,74,0.15);padding:1px 6px;border-radius:3px;font-size:0.65em;margin-left:4px;letter-spacing:1px;">BR</span>'
         : '';
@@ -239,7 +255,7 @@ export class LobbyUI {
   }
 
   async _joinRoom(roomInfo) {
-    if (this.cs.room?.id === roomInfo.roomId) return;
+    if (this.cs.room?.roomId === roomInfo.roomId) return;
     if (this.cs.room) {
       try { await this.cs.leave(); }
       catch (e) { console.error('[Lobby] _joinRoom leave atual:', e); }
@@ -446,6 +462,7 @@ export class LobbyUI {
 
   _refreshRoomView() {
     if (!this.cs.room || !this.cs.state) {
+      console.log('[Lobby] _refreshRoomView early: room=', !!this.cs.room, 'state=', !!this.cs.state);
       this._el.querySelector('#lb-empty').style.display = 'flex';
       this._el.querySelector('#lb-room').style.display = 'none';
       return;
@@ -458,9 +475,9 @@ export class LobbyUI {
     // Loga 1x por sala caso o map_id de fato nunca chegue (evita spam de 17 logs no welcome).
     const mapId = this.cs.state.map_id;
     if (!mapId) {
-      if (this._warnedNoMapIdFor !== this.cs.room.id) {
+      if (this._warnedNoMapIdFor !== this.cs.room.roomId) {
         console.warn('[Lobby] _refreshRoomView: state.map_id ainda nao sincronizado (aguardando welcome)');
-        this._warnedNoMapIdFor = this.cs.room.id;
+        this._warnedNoMapIdFor = this.cs.room.roomId;
       }
       return;
     }
@@ -477,18 +494,18 @@ export class LobbyUI {
     this._lastBadMapId = null;
 
     if (this.cs.state.players?.size == null) {
-      if (this._warnedNoPlayersSize !== this.cs.room.id) {
+      if (this._warnedNoPlayersSize !== this.cs.room.roomId) {
         console.error('[Lobby] _refreshRoomView: state.players sem size');
-        this._warnedNoPlayersSize = this.cs.room.id;
+        this._warnedNoPlayersSize = this.cs.room.roomId;
       }
       return;
     }
     this._warnedNoPlayersSize = null;
 
     if (!this.cs.room.maxClients) {
-      if (this._warnedNoMaxClients !== this.cs.room.id) {
+      if (this._warnedNoMaxClients !== this.cs.room.roomId) {
         console.error('[Lobby] _refreshRoomView: room sem maxClients');
-        this._warnedNoMaxClients = this.cs.room.id;
+        this._warnedNoMaxClients = this.cs.room.roomId;
       }
       return;
     }
@@ -590,7 +607,7 @@ export class LobbyUI {
 
   async _copyInvite() {
     if (!this.cs.room) return;
-    const url = window.location.origin + window.location.pathname + '?room=' + this.cs.room.id;
+    const url = window.location.origin + window.location.pathname + '?room=' + this.cs.room.roomId;
     try {
       await navigator.clipboard.writeText(url);
       this._setStatus('🔗 link copiado!', '#7efa9a');

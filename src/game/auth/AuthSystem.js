@@ -161,21 +161,98 @@ export class AuthSystem {
     // Listener via BroadcastChannel (COOP-safe). NAO usa postMessage nem
     // popup.closed polling (ambos disparam warning/bloqueio por COOP do
     // accounts.google.com). Timeout absoluto de 120s.
+    //
+    // FIX RACE/DEADLOCK: opener + popup compartilham origin/localStorage.
+    // Popup com detectSessionInUrl=true do supabase-js consome o ?code= e
+    // dispara storage sync no opener -> onAuthStateChange('SIGNED_IN')
+    // ANTES da gente chamar exchangeCodeForSession. Se chamarmos exchange
+    // depois, o code ja foi consumido OU o NavigatorLock trava disputando
+    // com o popup (Promise nunca resolve/rejeita). Estrategia:
+    //   1) Registra onAuthStateChange LOCAL: se SIGNED_IN chega, resolve.
+    //   2) getSession() agora: se ja existe session, resolve direto.
+    //   3) BroadcastChannel: se chegar code, tenta exchange MAS guarda
+    //      pra race (se settled, sai). No catch, confere getSession().
+    //   4) Timeout 120s tambem confere getSession() antes de rejeitar.
+    console.log('[Auth] signInWithGoogle: popup aberto, aguardando handshake…');
     return new Promise((resolve, reject) => {
       const bc = new BroadcastChannel('transfps-auth');
       let settled = false;
       let timeoutId = null;
+      let unsubAuth = null;
 
       const cleanup = () => {
+        if (settled) return;
         settled = true;
         try { bc.close(); }
         catch (e) { console.error('[Auth] bc.close:', e); }
+        try { unsubAuth?.data?.subscription?.unsubscribe(); } catch (_) {}
+        try { unsubAuth?.subscription?.unsubscribe(); } catch (_) {}
         if (timeoutId) clearTimeout(timeoutId);
+        // Limpa polling se ativo (set no fallback)
+        try {
+          if (window.__transfpsAuthPollId) {
+            clearInterval(window.__transfpsAuthPollId);
+            window.__transfpsAuthPollId = null;
+          }
+        } catch (_) {}
       };
+
+      // (1) Fonte primaria: onAuthStateChange dispara em TODO setSession
+      // bem-sucedido. Aceita QUALQUER event que traga session valida
+      // (SIGNED_IN, TOKEN_REFRESHED, USER_UPDATED, INITIAL_SESSION).
+      // Storage sync entre janelas pode disparar como INITIAL_SESSION.
+      try {
+        unsubAuth = this._supabase.auth.onAuthStateChange((event, session) => {
+          if (settled) return;
+          console.log('[Auth] signInWithGoogle: onAuthStateChange:', event, !!session?.user);
+          // Aceita QUALQUER evento que traga session com user
+          if (session?.user) {
+            console.log('[Auth] signInWithGoogle: Promise RESOLVIDA via onAuthStateChange (' + event + ')');
+            cleanup();
+            resolve();
+          }
+        });
+      } catch (e) { console.error('[Auth] onAuthStateChange subscribe:', e); }
+
+      // (2) Session pode ja estar la (race muito rapida ou retry de click)
+      this._supabase.auth.getSession().then(({ data: { session } }) => {
+        if (settled) return;
+        if (session?.user) {
+          console.log('[Auth] signInWithGoogle: Promise RESOLVIDA via getSession (sessao ja existia)');
+          cleanup();
+          resolve();
+        }
+      }).catch((e) => { console.error('[Auth] getSession check:', e); });
+
+      // (3) FALLBACK FORTE: polling de getSession a cada 500ms ate 15s.
+      // Cobre o caso do storage event nao disparar onAuthStateChange por
+      // bug do supabase-js ou COOP. Se popup ja gravou session no
+      // localStorage compartilhado, getSession() le e a gente resolve.
+      let pollTries = 0;
+      const pollId = setInterval(async () => {
+        pollTries++;
+        if (settled) { clearInterval(pollId); return; }
+        if (pollTries > 30) { clearInterval(pollId); return; } // 15s max
+        try {
+          const { data: { session } } = await this._supabase.auth.getSession();
+          if (settled) { clearInterval(pollId); return; }
+          if (session?.user) {
+            console.log('[Auth] signInWithGoogle: Promise RESOLVIDA via polling getSession (try ' + pollTries + ')');
+            clearInterval(pollId);
+            cleanup();
+            resolve();
+          }
+        } catch (e) { /* segue tentando */ }
+      }, 500);
+      // Limpa interval no cleanup
+      const origCleanup = cleanup;
+      // Nao consigo reatribuir const — guardo o pollId no scope pra cleanup achar.
+      window.__transfpsAuthPollId = pollId;
 
       const handlePayload = async (payload) => {
         if (settled) return;
         if (!payload) return;
+        console.log('[Auth] signInWithGoogle: BC mensagem recebida:', payload.type);
         if (payload.type === 'transfps-auth-err') {
           cleanup();
           return reject(new Error(payload.error || 'oauth erro'));
@@ -185,31 +262,82 @@ export class AuthSystem {
         // achado no localStorage do supabase-js (gravado pela mesma instancia).
         if (payload.type === 'transfps-auth-code') {
           try {
+            console.log('[Auth] signInWithGoogle: tentando exchangeCodeForSession…');
             const { data, error } = await this._supabase.auth.exchangeCodeForSession(payload.callback_url);
-            if (error || !data?.session) {
+            if (settled) return; // onAuthStateChange ganhou a corrida
+            if (data?.session) {
+              console.log('[Auth] signInWithGoogle: Promise resolvida via exchange OK');
               cleanup();
-              return reject(new Error(error?.message || 'exchange falhou'));
+              return resolve();
+            }
+            // Exchange retornou sem session — pode ser que o code ja foi
+            // consumido pelo popup e a session ja esta gravada. Confere.
+            const { data: { session } } = await this._supabase.auth.getSession();
+            if (settled) return;
+            if (session?.user) {
+              console.log('[Auth] signInWithGoogle: exchange falhou mas session existe — resolve()');
+              cleanup();
+              return resolve();
             }
             cleanup();
-            return resolve();
-          } catch (e) { cleanup(); return reject(e); }
+            return reject(new Error(error?.message || 'exchange falhou sem session'));
+          } catch (e) {
+            if (settled) return;
+            // Throw do exchange: pode ja ter session via storage sync
+            try {
+              const { data: { session } } = await this._supabase.auth.getSession();
+              if (settled) return;
+              if (session?.user) {
+                console.log('[Auth] signInWithGoogle: exchange throw mas session existe — resolve()');
+                cleanup();
+                return resolve();
+              }
+            } catch (_) {}
+            cleanup();
+            return reject(e);
+          }
         }
         if (payload.type === 'transfps-auth-ok') {
           const { access_token, refresh_token } = payload;
           if (!access_token) { cleanup(); return reject(new Error('sem token')); }
           try {
+            console.log('[Auth] signInWithGoogle: setSession iniciando');
             await this._supabase.auth.setSession({ access_token, refresh_token });
+            if (settled) return;
+            console.log('[Auth] signInWithGoogle: Promise resolvida via setSession');
             cleanup();
             resolve();
-          } catch (e) { cleanup(); reject(e); }
+          } catch (e) {
+            if (settled) return;
+            cleanup();
+            reject(e);
+          }
         }
       };
 
       bc.onmessage = (ev) => handlePayload(ev.data);
 
-      // Timeout absoluto (sem polling de popup.closed → evita COOP warning)
+      // Timeout absoluto (sem polling de popup.closed → evita COOP warning).
+      // Antes de rejeitar, confere getSession() — se houver session, o
+      // onAuthStateChange pode nao ter disparado por algum motivo do storage.
       timeoutId = setTimeout(() => {
-        if (!settled) { cleanup(); reject(new Error('timeout login')); }
+        if (settled) return;
+        console.warn('[Auth] signInWithGoogle: timeout 120s, conferindo session…');
+        this._supabase.auth.getSession().then(({ data: { session } }) => {
+          if (settled) return;
+          if (session?.user) {
+            console.log('[Auth] signInWithGoogle: timeout mas session existe — resolve()');
+            cleanup();
+            resolve();
+          } else {
+            cleanup();
+            reject(new Error('timeout login'));
+          }
+        }).catch((e) => {
+          if (settled) return;
+          cleanup();
+          reject(e);
+        });
       }, 120000);
     });
   }
@@ -245,7 +373,7 @@ export class AuthSystem {
 
       if (errParam) {
         signal({ type: 'transfps-auth-err', error: errParam });
-        setTimeout(() => window.close(), 150);
+        AuthSystem._showPopupConfirmScreen({ ok: false, error: errParam });
         return true;
       }
 
@@ -262,7 +390,7 @@ export class AuthSystem {
           type: 'transfps-auth-code',
           callback_url: window.location.href,
         });
-        setTimeout(() => window.close(), 150);
+        AuthSystem._showPopupConfirmScreen({ ok: true });
         return true;
       }
 
@@ -273,13 +401,72 @@ export class AuthSystem {
           access_token: hashAccess,
           refresh_token: hp.get('refresh_token'),
         });
-        setTimeout(() => window.close(), 150);
+        AuthSystem._showPopupConfirmScreen({ ok: true });
         return true;
       }
       return false;
     } catch (e) {
       console.error('[Auth] callback handler erro:', e);
       throw e;
+    }
+  }
+
+  /** Tela de confirmacao dentro do popup OAuth.
+   *  Mostra "Login OK" / "Erro" e botao "Fechar esta janela".
+   *  Opener ja foi notificado via BroadcastChannel ANTES dessa funcao
+   *  rodar — entao o jogo ja esta autenticando em paralelo.
+   *  Tambem fecha sozinho em 4s se user ignorar. */
+  static _showPopupConfirmScreen({ ok, error }) {
+    try {
+      // Limpa hash/search da URL pra nao expor token na barra
+      try { history.replaceState(null, '', window.location.pathname); } catch (_) {}
+      document.title = ok ? 'Login OK - TransFPS' : 'Erro no Login - TransFPS';
+      document.body.innerHTML = '';
+      document.body.style.cssText = `
+        margin:0; min-height:100vh;
+        background:radial-gradient(ellipse at 50% 35%, ${ok ? '#0d2e1a' : '#2e0d0d'} 0%, #050810 60%, #02030a 100%);
+        display:flex; align-items:center; justify-content:center;
+        font-family:'Segoe UI',Arial,sans-serif; color:#dff5ff;
+      `;
+      const wrap = document.createElement('div');
+      wrap.style.cssText = `
+        background:rgba(10,16,30,0.9); padding:40px 50px;
+        border:1px solid ${ok ? 'rgba(46,255,182,0.45)' : 'rgba(255,90,90,0.5)'};
+        border-radius:16px; box-shadow:0 0 40px ${ok ? 'rgba(46,255,182,0.25)' : 'rgba(255,90,90,0.3)'};
+        text-align:center; max-width:380px;
+      `;
+      const ICON = ok ? '✓' : '⚠';
+      const COLOR = ok ? '#2effb6' : '#ff5a5a';
+      wrap.innerHTML = `
+        <div style="font-size:64px; color:${COLOR}; text-shadow:0 0 16px ${COLOR}; margin-bottom:10px;">${ICON}</div>
+        <div style="font-size:22px; font-weight:800; letter-spacing:2px; color:${COLOR}; margin-bottom:8px;">
+          ${ok ? 'LOGIN AUTORIZADO' : 'ERRO NO LOGIN'}
+        </div>
+        <div style="font-size:13px; opacity:0.75; margin-bottom:24px; line-height:1.4;">
+          ${ok
+            ? 'O jogo já está autenticando.<br>Pode fechar esta janela.'
+            : 'Detalhe: ' + (error || 'desconhecido')}
+        </div>
+        <button id="pcs-close" style="
+          background:${ok ? '#2effb6' : '#ff5a5a'}; color:#04101a; border:0;
+          padding:13px 28px; font:900 13px 'Segoe UI',monospace; letter-spacing:2px;
+          cursor:pointer; border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,0.4);
+        ">FECHAR ESTA JANELA</button>
+        <div style="margin-top:14px; font-size:10px; opacity:0.45;">fecha automaticamente em <span id="pcs-secs">4</span>s</div>
+      `;
+      document.body.appendChild(wrap);
+      wrap.querySelector('#pcs-close').onclick = () => { try { window.close(); } catch (_) {} };
+      // Auto-close 4s com countdown
+      let secs = 4;
+      const secsEl = wrap.querySelector('#pcs-secs');
+      const t = setInterval(() => {
+        secs--;
+        if (secsEl) secsEl.textContent = secs;
+        if (secs <= 0) { clearInterval(t); try { window.close(); } catch (_) {} }
+      }, 1000);
+    } catch (e) {
+      console.error('[Auth] popup confirm screen falhou:', e);
+      try { window.close(); } catch (_) {}
     }
   }
 
