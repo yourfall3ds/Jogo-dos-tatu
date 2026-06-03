@@ -26,7 +26,7 @@ export class Player {
 
     // ── Parâmetros de movimento ─────────────────────────────────────
     this.SPEED       = 11;
-    this.AIR_CTRL    = 0.60;
+    this.AIR_CTRL    = 0.75;
     this.JUMP_FORCE  = 15.5;
     this.GRAVITY     = 38;
     this.MAX_FALL    = 58;
@@ -76,10 +76,12 @@ export class Player {
     this.stamina       = 100;
     this.STAMINA_DRAIN = 32;    // por segundo correndo (segurando Shift)
     this.STAMINA_REGEN = 20;    // por segundo recuperando
-    this.SPRINT_MULT   = 1.55;  // quão mais rápido o sprint é
+    this.SPRINT_MULT   = 1.75;  // quão mais rápido o sprint é
     this._sprinting    = false;
     this._exhausted    = false; // sem fôlego (estamina zerou) → não sprinta até recuperar
     this._breathT      = 0;     // timer da animação de recuperar o fôlego
+    // Momentum aereo: ao pular sprintando, preserva o embalo no ar (Fortnite/Apex feel)
+    this._sprintMomentumLeft = 0;
 
     // ── Dash (double-tap W) ─────────────────────────────────────────
     //  Permite ENCADEAR dashes no ar pra "plainar" estilo The Duel.
@@ -87,10 +89,10 @@ export class Player {
     this._dashT       = 0;   // timer ativo do dash (>0 = dashing)
     this._dashCdT     = 0;   // cooldown entre dashes
     this.DASH_DUR     = 0.26;
-    this.DASH_FORCE   = 44;  // um toque mais forte
-    this.DASH_AIR_LIFT = 2.6;   // empurrão pra cima no dash aéreo (sustenta planagem)
-    this.AIR_DASH_MAX = 2;     // 2 dashes aéreos consecutivos sem tocar chão
-    this._airDashesLeft = 2;
+    this.DASH_FORCE   = 52;  // um toque mais forte
+    this.DASH_AIR_LIFT = 3.4;   // empurrão pra cima no dash aéreo (sustenta planagem)
+    this.AIR_DASH_MAX = 6;     // 6 dashes aéreos consecutivos sem tocar chão
+    this._airDashesLeft = 6;
 
     // ── Mira (ADS — Aim Down Sights) ────────────────────────────────
     this._aiming      = false;
@@ -458,7 +460,7 @@ export class Player {
       const canDash = this.isGrounded || this._airDashesLeft > 0;
       if (canDash) {
         this._dashT = this.DASH_DUR;
-        this._dashCdT = 0.22;
+        this._dashCdT = 0.14;
         // Calcula vetor de dash baseado na direção
         let dx = 0, dz = 0, dy = 0;
         const right = new BABYLON.Vector3(fwd.z, 0, -fwd.x); // perpendicular horizontal
@@ -535,12 +537,30 @@ export class Player {
     }
     if (this._breathT > 0) this._breathT -= dt;
 
+    // ── Momentum aereo do sprint ─────────────────────────────────────
+    //  Ao deixar o chao sprintando, armazena 100% de embalo. Decai no ar.
+    //  Soltar Shift no ar NAO mata a velocidade — preserva o impulso lateral
+    //  estilo Fortnite/Apex/The Duel. Tocar chao zera.
+    if (this.isGrounded) {
+      this._sprintMomentumLeft = 0;
+    } else {
+      this._sprintMomentumLeft = Math.max(0, this._sprintMomentumLeft - dt * 0.4);
+    }
+    // Takeoff: acabou de sair do chao sprintando → salva embalo cheio.
+    if (!this.isGrounded && this._wasGrounded && this._sprinting) {
+      this._sprintMomentumLeft = 1.0;
+    }
+
     let spd = this.SPEED;
     if (this._dodgeT > 0) {
       this._dodgeT -= dt;
       spd *= 1.8;
     } else {
       if (this._sprinting) spd *= this.SPRINT_MULT;
+      else if (!this.isGrounded && this._sprintMomentumLeft > 0) {
+        // Soltou Shift no ar mas ainda tem embalo do sprint → preserva.
+        spd *= (1 + this._sprintMomentumLeft * (this.SPRINT_MULT - 1));
+      }
       else if (this._exhausted) spd *= 0.78;   // cansado → mais lento
       spd *= (this.isGrounded ? 1 : this.AIR_CTRL);
     }

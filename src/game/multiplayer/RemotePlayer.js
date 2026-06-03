@@ -59,6 +59,11 @@ export class RemotePlayer {
     this.body._isRemotePlayer = true;
     this.body._remoteRef = this;
 
+    // FRENTE 3: capsule ja inicia com visibility baixa (vai ser escondida total quando GLB carregar)
+    try { this.body.visibility = 0.25; } catch (_) {}
+    this._glbLoadAttempts = 0;
+    this._glbMaxAttempts = 3;
+
     // ── FRENTE 7: tenta carregar GLB do avatar real (capsule fica como fallback) ──
     this._tryLoadAvatar().catch(e => console.warn("[RemotePlayer] GLB load fail", e?.message));
 
@@ -452,9 +457,11 @@ export class RemotePlayer {
   }
 
   async _tryLoadAvatar() {
-    const url = "assets/itens 3d/Animations-meshy/Meshy_AI_Faça_um_rato_mistura_biped_Character_output.glb";
-    const shortId = this.playerId.slice(0, 8);
-    console.log("[RemotePlayer]", shortId, "loading avatar from", url);
+    // FRENTE 3 EDIT 3c: usar mesmo path do Player.js local (assets/characters/player.glb)
+    const url = "assets/characters/player.glb";
+    const shortId = (this.playerId || "").slice(0, 8);
+    this._glbLoadAttempts = (this._glbLoadAttempts || 0) + 1;
+    console.log("[RemotePlayer]", shortId, "loading avatar from", url, "(attempt", this._glbLoadAttempts, "/", this._glbMaxAttempts, ")");
 
     // Timeout de 8s pra avisar caso o load esteja travado
     const timeoutId = setTimeout(() => {
@@ -471,6 +478,12 @@ export class RemotePlayer {
       clearTimeout(timeoutId);
       if (!result?.meshes?.length) {
         console.warn("[RemotePlayer]", shortId, "avatar load returned ZERO meshes");
+        // Tenta de novo se ainda tem tentativas
+        if (this._glbLoadAttempts < this._glbMaxAttempts) {
+          setTimeout(() => this._tryLoadAvatar().catch(() => {}), 500);
+        } else {
+          this._applyFallbackColor();
+        }
         return;
       }
       const root = result.meshes[0];
@@ -478,7 +491,9 @@ export class RemotePlayer {
       root.parent = this.body;
       root.position.set(0, -1, 0);
       root.scaling.set(1, 1, 1);
-      try { this.body.visibility = 0.05; } catch (_) {}
+      // FRENTE 3 EDIT 3a: esconde capsule TOTALMENTE quando GLB carrega
+      try { this.body.visibility = 0; } catch (_) {}
+      try { this.body.setEnabled(false); } catch (_) {}
       this._avatarRoot = root;
       this._avatarAnims = result.animationGroups || [];
       const idleAnim = this._avatarAnims.find(a => /idle/i.test(a.name));
@@ -487,7 +502,41 @@ export class RemotePlayer {
     } catch (e) {
       clearTimeout(timeoutId);
       console.error("[RemotePlayer] AVATAR FALHOU", shortId, e?.message);
+      // FRENTE 3 EDIT 3b: retry ate 3x, depois aplica cor fallback unica por player
+      if (this._glbLoadAttempts < this._glbMaxAttempts) {
+        setTimeout(() => this._tryLoadAvatar().catch(() => {}), 800);
+      } else {
+        try {
+          const hash = (this.playerId || "").split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+          const hue = (hash % 360) / 360;
+          const rgb = BABYLON.Color3.FromHSV(hue, 0.7, 1.0);
+          if (this.body?.material?.diffuseColor) this.body.material.diffuseColor.copyFrom(rgb);
+          else if (this.body) {
+            const m = new BABYLON.StandardMaterial("remote_fallback_" + this.playerId, this.scene);
+            m.diffuseColor = rgb;
+            this.body.material = m;
+          }
+          // Capsule fica MAIS visivel no fallback (era 0.25)
+          try { this.body.visibility = 1.0; } catch (_) {}
+        } catch (_) {}
+      }
     }
+  }
+
+  /** Aplica cor fallback unica por playerId quando GLB falha em todas as tentativas. */
+  _applyFallbackColor() {
+    try {
+      const hash = (this.playerId || "").split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+      const hue = (hash % 360) / 360;
+      const rgb = BABYLON.Color3.FromHSV(hue, 0.7, 1.0);
+      if (this.body?.material?.diffuseColor) this.body.material.diffuseColor.copyFrom(rgb);
+      else if (this.body) {
+        const m = new BABYLON.StandardMaterial("remote_fallback_" + this.playerId, this.scene);
+        m.diffuseColor = rgb;
+        this.body.material = m;
+      }
+      try { this.body.visibility = 1.0; } catch (_) {}
+    } catch (_) {}
   }
 }
 
