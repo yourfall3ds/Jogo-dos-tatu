@@ -609,7 +609,7 @@ async function init() {
     }
     // RemotePlayer aplica mudança visual
     const rp = _remotePlayers.get(id);
-    if (rp) rp.onSchemaChange?.(field);
+    if (rp) rp.onSchemaChange?.(field, value);
   });
 
   cs.on('mob_add', ({ id, state }) => {
@@ -801,7 +801,68 @@ async function init() {
       defesa_perfeita: 'swing_1',
     };
     const sid = skillSounds[m.skill_id];
-    if (sid) player.sounds?.playNow?.(sid, 0.85);
+    if (sid) {
+      if (isMe) {
+        // Skill própria: emissor local (sem panning — vem de "mim").
+        player.sounds?.playNow?.(sid, 0.85);
+      } else {
+        // Skill do PARCEIRO: som ESPACIAL na posição do caster (surround real),
+        // não no meu emissor local. Usa pos do server (m.x/y/z) com fallback no root.
+        try {
+          const px = Number.isFinite(m.x) ? m.x : casterPos.x;
+          const py = Number.isFinite(m.y) ? m.y : casterPos.y;
+          const pz = Number.isFinite(m.z) ? m.z : casterPos.z;
+          const sm = window._soundManager;
+          if (sm?._getSpatialSound) {
+            sm._getSpatialSound(sid, 60).then(snd => {
+              if (!snd) return;
+              try {
+                if (snd.spatial?.position?.set) snd.spatial.position.set(px, py, pz);
+                snd.volume = 0.85;
+                snd.play();
+              } catch (_) {}
+            }).catch(() => {});
+          } else {
+            player.sounds?.playNow?.(sid, 0.85);
+          }
+        } catch (_) { player.sounds?.playNow?.(sid, 0.85); }
+      }
+    }
+  });
+
+  // ── DISPARO/GOLPE do parceiro (tiro/swing) — som ESPACIAL na pos do ATIRADOR.
+  //    Dispara mesmo quando o tiro ERRA (hit_confirmed só toca o whiz no acerto). ──
+  cs.on('remote_fire', (m) => {
+    if (!m || m.id === auth.getUserId()) return; // ignora meu próprio disparo (já soa local)
+    try {
+      const sm = window._soundManager;
+      if (!sm?._getSpatialSound) return;
+      // Pos do atirador (server-auth); fallback no root do RemotePlayer.
+      let px = m.x, py = m.y, pz = m.z;
+      if (!Number.isFinite(px)) {
+        const rp = _remotePlayers.get(m.id);
+        const rpPos = rp?.root?.getAbsolutePosition?.();
+        if (rpPos) { px = rpPos.x; py = rpPos.y; pz = rpPos.z; }
+      }
+      if (!Number.isFinite(px)) return;
+      // Som por tipo de arma. Melee = swing; senão som de tiro da arma (ou pistola).
+      let sid;
+      if (m.melee) {
+        sid = 'swing_2';
+      } else {
+        const w = String(m.weapon || '');
+        if (w.includes('cannon') || w.includes('canhao') || w.includes('bazooka')) sid = 'gun_cannon';
+        else sid = 'gun_pistol';
+      }
+      sm._getSpatialSound(sid, 55).then(snd => {
+        if (!snd) return;
+        try {
+          if (snd.spatial?.position?.set) snd.spatial.position.set(px, py, pz);
+          snd.volume = m.melee ? 0.55 : 0.6;
+          snd.play();
+        } catch (_) {}
+      }).catch(() => {});
+    } catch (e) { console.error('[remote_fire]', e); }
   });
 
   // ── XP/LEVEL UP (server-authoritative) ──
@@ -1159,17 +1220,50 @@ async function init() {
 
   // OPEN_WORLD CLEAN: plano vazio 200x200 com material liso + colisao
   function _ensureOpenWorldGround(scene) {
+    // FIX flicker preto/branco: o Level (clean:true) cria um mesh 'ground'
+    // PBR claro coplanar em Y=0 que faz z-fighting com o nosso plano escuro.
+    // Esconde QUALQUER chao procedural do Level antes de criar/retornar o nosso.
+    scene.meshes
+      .filter(m => /^ground|procedural/i.test(m.name) && m.name !== "openworld_ground")
+      .forEach(m => { try { m.setEnabled(false); } catch (e) {} });
+
     let g = scene.getMeshByName("openworld_ground");
-    if (g) return g;
-    g = BABYLON.MeshBuilder.CreateGround("openworld_ground", { width: 200, height: 200, subdivisions: 4 }, scene);
+    if (g) { g.setEnabled(true); return g; }
+    // subdivisions:1 — plano liso basta, menos vertices = menos z-fight
+    g = BABYLON.MeshBuilder.CreateGround("openworld_ground", { width: 200, height: 200, subdivisions: 1 }, scene);
     g.position.y = 0;
     g.checkCollisions = true;
     g.receiveShadows = true;
     const mat = new BABYLON.StandardMaterial("openworld_ground_mat", scene);
-    mat.diffuseColor = new BABYLON.Color3(0.18, 0.20, 0.25);
-    mat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
-    mat.emissiveColor = new BABYLON.Color3(0.04, 0.06, 0.10);
+    // Config estavel pra WebGPU: sem specular (mata IBL flicker), leve emissive
+    // pra nao ficar 100% preto, ambient pra captar luz ambiente da cena.
+    mat.backFaceCulling = true;
+    mat.disableLighting = false;
+    mat.specularColor = new BABYLON.Color3(0, 0, 0);
+    mat.diffuseColor = new BABYLON.Color3(0.20, 0.22, 0.27);
+    mat.emissiveColor = new BABYLON.Color3(0.02, 0.03, 0.05);
+    mat.ambientColor = new BABYLON.Color3(0.3, 0.3, 0.35);
+    // StandardMaterial nao usa IBL, mas garantimos sem reflexao residual.
+    if (mat.reflectionTexture) mat.reflectionTexture = null;
     g.material = mat;
+    // Grid sutil opcional: so se a lib de materials estiver carregada no bundle.
+    // Caso contrario mantem a cor solida (sem quebrar nada).
+    try {
+      if (BABYLON.GridMaterial) {
+        const grid = new BABYLON.GridMaterial("openworld_ground_grid", scene);
+        grid.majorUnitFrequency = 10;
+        grid.minorUnitVisibility = 0.35;
+        grid.gridRatio = 2;
+        grid.backFaceCulling = true;
+        grid.mainColor = new BABYLON.Color3(0.20, 0.22, 0.27);
+        grid.lineColor = new BABYLON.Color3(0.30, 0.45, 0.55);
+        grid.opacity = 0.99;
+        grid.freeze && grid.freeze();
+        g.material = grid;
+      }
+    } catch (e) { /* sem GridMaterial: fica na cor solida */ }
+    // Congela o material apos config: evita recompile/flicker no WebGPU.
+    if (g.material && g.material.freeze) g.material.freeze();
     console.log("[OpenWorld] plano vazio criado");
     return g;
   }

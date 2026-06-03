@@ -312,6 +312,9 @@ export class ColyseusClient {
       $(player).listen('y', () => this._notify('player_change', { id: key, field: 'pos', value: null, state: player }));
       $(player).listen('z', () => this._notify('player_change', { id: key, field: 'pos', value: null, state: player }));
       $(player).listen('ry', () => this._notify('player_change', { id: key, field: 'ry', value: null, state: player }));
+      // anim_state: sem isto o parceiro fica em T-pose/idle e os PASSOS nunca tocam
+      // (RemotePlayer._maybePlayFootstep depende de anim_state walk/run).
+      $(player).listen('anim_state', (v) => this._notify('player_change', { id: key, field: 'anim_state', value: v, state: player }));
     });
     $(this.room.state).players.onRemove((player, key) => {
       this._notify('player_remove', { id: key, state: player });
@@ -444,6 +447,13 @@ export class ColyseusClient {
   /** Cast de skill — server valida cooldown e broadcasta pra todos renderizarem. */
   sendCastSkill(skillId, { dirX = null, dirZ = null } = {}) {
     this.room?.send('cast_skill', { skill_id: skillId, dir_x: dirX, dir_z: dirZ });
+  }
+  /**
+   * Avisa o server que DISPAROU/GOLPEOU (pra parceiros OUVIREM o tiro/swing mesmo no erro).
+   * Server rebroadcast posicional (remote_fire) com a pos autoritativa do atirador.
+   */
+  sendFire(weapon, melee = false) {
+    this.room?.send('fire_sound', { weapon: weapon || 'unarmed', melee: !!melee });
   }
   /** Hit em prop destrutivel (barril/caixa). Servidor calcula dmg. */
   sendHitProp(propId, weapon) {

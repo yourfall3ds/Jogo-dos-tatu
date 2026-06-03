@@ -313,6 +313,11 @@ export class CombatSystem {
     }
     this._swingIdx = ((this._swingIdx || 0) % 3) + 1;
     snd.playNow('swing_' + this._swingIdx, 0.5);
+    // MP: avisa o server pra parceiros OUVIREM o golpe (espacial), mesmo se errar.
+    try {
+      const wId = pl?.weapon?.getCurrentWeapon?.()?.id || 'melee';
+      window._cs?.sendFire?.(wId, true);
+    } catch (_) {}
   }
 
   // Som de IMPACTO (acertou alguém). Combo normal → som CONSISTENTE; só o

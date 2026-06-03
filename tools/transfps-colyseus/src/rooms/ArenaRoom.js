@@ -265,6 +265,9 @@ export class ArenaRoom extends Room {
     this.onMessage("place_object", (client, payload) => this._onPlaceObject(client, payload));
     this.onMessage("remove_object", (client, payload) => this._onRemoveObject(client, payload));
     this.onMessage("hit_object", (client, payload) => this._onHitObject(client, payload));
+    // Som de disparo/golpe (tiro/swing) — rebroadcast posicional p/ todos OUVIREM o parceiro
+    // mesmo quando o tiro ERRA (hit_confirmed só dispara no acerto).
+    this.onMessage('fire_sound', (client, payload) => this._onFireSound(client, payload));
     this._skillCooldowns = new Map();
 
     // ── IDLE TIMEOUT: OPEN_WORLD nunca descarta (sala 24/7). Demais salas: dispose vazio. ──
@@ -591,6 +594,31 @@ export class ArenaRoom extends Room {
     if (typeof payload.held_item === 'string') p.held_item = payload.held_item.slice(0, 48);
   }
 
+  /**
+   * Som de disparo/golpe do parceiro. Rebroadcast posicional (pos do ATIRADOR) pra
+   * todos OUVIREM o tiro/swing — inclusive quando ERRA (hit_confirmed só dispara no acerto).
+   * Throttle por player pra não floodar (automática dispara muito rápido).
+   */
+  _onFireSound(client, payload) {
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
+    if (!p || p.dead) return;
+    if (!this._fireSoundCd) this._fireSoundCd = new Map();
+    const now = Date.now();
+    const last = this._fireSoundCd.get(pid) || 0;
+    if (now - last < 55) return; // ~18 sons/s máx por player
+    this._fireSoundCd.set(pid, now);
+    const melee = payload?.melee === true;
+    const weapon = String(payload?.weapon || p.weapon || 'unarmed').slice(0, 32);
+    // Posição do ATIRADOR (server-auth) — não confiar em coords do cliente.
+    this.broadcast('remote_fire', {
+      id: p.id,
+      x: p.x, y: p.y, z: p.z,
+      weapon,
+      melee,
+    });
+  }
+
   _onHitPlayer(client, payload) {
     const pid = client.userData?.playerId;
     const attacker = this.state.players.get(pid);
@@ -617,6 +645,7 @@ export class ArenaRoom extends Room {
     // Broadcast pra clientes mostrarem dmg number/sangue
     this.broadcast('hit_confirmed', {
       from: attacker.id, to: target.id,
+      from_x: attacker.x, from_y: attacker.y, from_z: attacker.z,
       weapon: weaponId, dmg: v.dmg,
     });
 
@@ -661,6 +690,7 @@ export class ArenaRoom extends Room {
     mob.hp = Math.max(0, mob.hp - v.dmg);
     this.broadcast('hit_confirmed', {
       from: attacker.id, to: mob.id, mob: true,
+      from_x: attacker.x, from_y: attacker.y, from_z: attacker.z,
       weapon: weaponId, dmg: v.dmg,
     });
 
@@ -827,6 +857,7 @@ export class ArenaRoom extends Room {
         mob.hp = Math.max(0, mob.hp - s.dmg);
         this.broadcast('hit_confirmed', {
           from: caster.id, to: mob.id, mob: true,
+          from_x: caster.x, from_y: caster.y, from_z: caster.z,
           weapon: 'skill:' + skillId, dmg: s.dmg,
         });
         if (mob.hp <= 0) {
@@ -848,6 +879,7 @@ export class ArenaRoom extends Room {
         target.hp = Math.max(0, target.hp - s.dmg);
         this.broadcast('hit_confirmed', {
           from: caster.id, to: target.id,
+          from_x: caster.x, from_y: caster.y, from_z: caster.z,
           weapon: 'skill:' + skillId, dmg: s.dmg,
         });
         if (target.hp <= 0) {

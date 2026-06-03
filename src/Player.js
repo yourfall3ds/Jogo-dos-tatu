@@ -123,6 +123,8 @@ export class Player {
       // Som POR TIRO (semi-auto). Automático usa loop (tratado no input).
       const w = this.weapon.getCurrentWeapon?.();
       if (w && !w.automatic) this.sounds?.playNow?.(w.fireSound || 'gun_pistol', 0.7);
+      // MP: avisa o server pra parceiros OUVIREM esse disparo (espacial), inclusive se errar.
+      try { window._cs?.sendFire?.(w?.id || 'unarmed', false); } catch (_) {}
     };
     // Reload: toca o som AJUSTANDO a velocidade pra casar com a duração da
     //  recarga (reloadDur). Se o áudio for mais longo, acelera; mais curto,

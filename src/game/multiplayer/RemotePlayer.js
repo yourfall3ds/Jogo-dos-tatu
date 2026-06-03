@@ -127,7 +127,7 @@ export class RemotePlayer {
     const a = String(state.anim_state);
     const isMoving = a.includes("walk") || a.includes("run");
     if (!isMoving) return;
-    const now = (undefined);
+    const now = performance.now();
     const cooldown = a.includes("run") ? 280 : 420;
     if (this._lastStepT && now - this._lastStepT < cooldown) return;
     this._lastStepT = now;
@@ -148,7 +148,9 @@ export class RemotePlayer {
   /** Chamado pelo ColyseusClient quando um campo do schema muda. */
   onSchemaChange(field, newValue) {
     const s = this.state;
-    if (field === "x" || field === "z" || field === "anim_state") {
+    // 'pos' = wiring real do ColyseusClient p/ x/y/z (ver listeners). 'x'/'z' mantidos
+    // por compat caso o wiring passe a emitir nomes de campo crus.
+    if (field === "pos" || field === "x" || field === "z" || field === "anim_state") {
       try { this._maybePlayFootstep(s || this.state); } catch (_) {}
     }
     switch (field) {
@@ -264,9 +266,13 @@ export class RemotePlayer {
   }
 
   _applyDead(dead) {
+    // Aplica pose de morte no alvo visivel: avatar GLB se carregado, senao a capsule fallback.
+    const target = this._avatarRoot || this.body;
     if (dead) {
+      try { target.rotation.x = -Math.PI / 2; } catch (_) {}
       try { this.body.rotation.x = -Math.PI / 2; this.body.position.y = 0.4; } catch (_) {}
     } else {
+      try { target.rotation.x = 0; } catch (_) {}
       try { this.body.rotation.x = 0; this.body.position.y = 0.9; } catch (_) {}
     }
   }
@@ -488,12 +494,31 @@ export class RemotePlayer {
       }
       const root = result.meshes[0];
       root.name = "remote_avatar_" + this.playerId;
-      root.parent = this.body;
-      root.position.set(0, -1, 0);
-      root.scaling.set(1, 1, 1);
-      // FRENTE 3 EDIT 3a: esconde capsule TOTALMENTE quando GLB carrega
+      // FIX AVATAR INVISIVEL: NAO parentar na capsule (this.body).
+      // setEnabled(false) na capsule propaga isEnabled()=false pra TODA a arvore
+      // de descendentes (incl. este GLB), deixando o avatar 100% invisivel.
+      // Parenteia DIRETO no this.root (TransformNode que recebe a posicao do mundo
+      // via update/_pushSnapshot). Assim a capsule pode ser escondida sem tocar no avatar.
+      root.parent = this.root;
+      // Offset Y: base nos pes (capsule height=1.8 => meia altura 0.9), igual Player local
+      // que usa -(playerHeight/2). this.root fica no chao, GLB fica em 0 (sobe pela escala).
+      root.position.set(0, 0, 0);
+      // Escala correta do player.glb Meshy (igual PlayerAnimator.js linha 291).
+      root.scaling.setAll(1.164);
+      // FIX: esconde APENAS a capsule. setEnabled(false) aqui NAO afeta o avatar,
+      // pois o avatar agora e filho de this.root, NAO da capsule.
       try { this.body.visibility = 0; } catch (_) {}
+      try { this.body.isVisible = false; } catch (_) {}
       try { this.body.setEnabled(false); } catch (_) {}
+      // Garante que o avatar GLB e a arvore estejam habilitados/visiveis.
+      try {
+        root.setEnabled(true);
+        const desc = root.getDescendants ? root.getDescendants(false) : [];
+        for (const n of desc) {
+          try { n.setEnabled(true); } catch (_) {}
+          if (n.visibility !== undefined) { try { n.isVisible = true; n.visibility = 1; } catch (_) {} }
+        }
+      } catch (_) {}
       this._avatarRoot = root;
       this._avatarAnims = result.animationGroups || [];
       const idleAnim = this._avatarAnims.find(a => /idle/i.test(a.name));
