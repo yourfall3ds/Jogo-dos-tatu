@@ -17,6 +17,8 @@
 //  Sem fall damage. Last 8m antes do chão entra LandingImpact.
 // ─────────────────────────────────────────────────────────────────
 
+import { DropPod } from './DropPod.js';
+
 const PHYSICS = {
   GRAVITY: 9.81,             // m/s²
   TERMINAL_HORIZONTAL: 30,   // m/s (pose belly-down)
@@ -69,6 +71,12 @@ export class SkydiveController {
     this.yaw = this.player.yaw || 0;
     this._lastY = startPos.y;
     this._onLanded = onLanded;
+
+    // DropPod: cápsula procedural ao redor do player durante a queda
+    try {
+      if (!this._dropPod) this._dropPod = new DropPod(this.scene);
+      this._dropPod.attach(this.player.mesh);
+    } catch (_) {}
 
     // Desativa colisão normal do player (vai usar kinematic durante skydive)
     if (this.player.body?.setMotionType) {
