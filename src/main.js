@@ -384,11 +384,11 @@ async function init() {
   const gfxPanel = new GraphicsDebugPanel(gfx, dayNight, shadowGen, scene);
   window._gfxPanel = gfxPanel;
 
-  // Arena de teste limpa (sombras) — window.arena() ou tecla F9
+  // Arena de teste limpa (sombras) — window.arena() ou tecla F10 (F9 = engine mode)
   const testArena = new TestArena(scene, player, shadowGen);
   window._testArena = testArena;
   window.arena = () => { testArena.toggle(); return testArena.active ? 'na arena' : 'voltou'; };
-  window._wasF9 = false;
+  window._wasF10 = false;
 
   // ── Weapon Editor (criado ANTES dos GLBs para configs salvas serem aplicadas) ─
   const weaponEditor = new WeaponEditor(player.weapon, scene);
@@ -1305,10 +1305,10 @@ async function init() {
     dayNight.update(dt);
     window._updateShadowFrustum?.();   // frustum da sombra segue o player
     gfxPanel.update();
-    // F9 → entra/sai da arena de teste de sombras
-    const f9 = input.isDown('F9');
-    if (f9 && !window._wasF9) testArena.toggle();
-    window._wasF9 = f9;
+    // F10 → entra/sai da arena de teste de sombras (F9 = engine mode do Lucas)
+    const f10 = input.isDown('F10');
+    if (f10 && !window._wasF10) testArena.toggle();
+    window._wasF10 = f10;
     charSelectUI.update();
     buildMode.update();
     rpgHUD.update(dt);
