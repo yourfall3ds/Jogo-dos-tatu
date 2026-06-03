@@ -1164,7 +1164,9 @@ async function init() {
     const ov = $('pause-overlay');
     if (!ov) return;
     ov.classList.add('visible');
-    _injectPauseMenuButtons();
+    // NÃO injeta mais a 2ª caixa de pause (duplicava por cima do overlay
+    //  original do index.html, que já tem todas as opções). Em vez disso,
+    //  o "Voltar ao Menu" foi enxertado no overlay original (window._leaveToMenu).
   }
   function _resumeFromPause() {
     const ov = $('pause-overlay');
@@ -1205,6 +1207,7 @@ async function init() {
     wrap.querySelector('#pause-resume-btn').onclick = () => _resumeFromPause();
     wrap.querySelector('#pause-leave-btn').onclick = () => _confirmLeaveToMenu();
   }
+  window._leaveToMenu = _confirmLeaveToMenu;   // botão "Voltar ao Menu" do pause original
   function _confirmLeaveToMenu() {
     // Modal de confirmação inline (sem confirm() nativo)
     if (document.getElementById('confirm-leave-modal')) return;
@@ -1423,24 +1426,6 @@ async function init() {
 
   // Gerador de miniaturas dos assets
   window._thumbnailGen = new ThumbnailGen(scene);
-
-  // ── Miniaturas das ARMAS → inventário/hotbar (uma vez, cacheado) ──
-  (async () => {
-    try {
-      const WEAPON_GLB = {
-        weapon_pistol: 'assets/itens 3d/Armas/Arma inicial.glb',
-        weapon_rifle:  'assets/itens 3d/ExternalAssets/Sketchfab/Weapons/sci_fi_plasma_rifle.glb',
-      };
-      const thumbs = (await LocalDB.get('asset_thumbnails', {})) || {};
-      let changed = false;
-      for (const [itemId, url] of Object.entries(WEAPON_GLB)) {
-        if (thumbs[itemId]) continue;                       // já gerada
-        const dataURL = await window._thumbnailGen.generate(url);
-        if (dataURL) { thumbs[itemId] = dataURL; changed = true; }
-      }
-      if (changed) { await LocalDB.save('asset_thumbnails', thumbs); window._rpgHUD?._loadThumbs?.(); }
-    } catch (e) { console.warn('[Weapon thumbs] falhou:', e.message); }
-  })();
 
   // ── Tecla J: fallback para abrir a Máquina de Criação de qualquer lugar ──
   window.addEventListener('keydown', e => {

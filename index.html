@@ -606,7 +606,8 @@
     <button id="scene-editor-btn" style="background: #006e30; color: white; margin-bottom: 15px; font-family: inherit; font-size: 1em; padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; letter-spacing: .5px;" onclick="window.enterEngineMode('scene')">🗺️ Editor de Cena</button>
     <button id="map-select-btn" style="background: #5a1f12; color: #ffcc99; margin-bottom: 10px; font-family: inherit; font-size: 1em; padding: 10px 24px; border: 1px solid #d44d2e; border-radius: 8px; cursor: pointer; letter-spacing: .5px;" onclick="window._mapSelectUI?.show()">🗺️ Mapas Chibata  <span style="font-size:.78em;opacity:.75">(N)</span></button>
     <button id="monster-catalog-btn">📖 Catálogo de Monstros</button>
-    <p class="tip">ESC  ou  clique no botão  para pausar / resumir</p>
+    <button id="leave-to-menu-btn" style="background: transparent; color: #ff7a8a; border: 1px solid #ff5a5a; margin-top: 8px; font-family: inherit; font-size: .92em; padding: 9px 24px; border-radius: 8px; cursor: pointer; letter-spacing: .5px;" onclick="window._leaveToMenu?.()">✕ Voltar ao Menu</button>
+    <p class="tip">ESC  ou  clique no botão  para pausar / resumir  ·  F9 Engine Mode</p>
   </div>
 
   <!-- ══ Catálogo de Monstros ══ -->
@@ -787,7 +788,7 @@
   <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
   <!-- materialsLibrary: SkyMaterial (céu HD procedural do ciclo dia/noite) -->
   <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
-  <script type="module" src="src/main.js?v=20260603-24"></script>
+  <script type="module" src="src/main.js?v=20260603-25"></script>
 
   <!-- ── Config-server status monitor ── -->
   <script>
