@@ -1642,6 +1642,10 @@ async function init() {
   // XP ao matar inimigo (hook chamado pelo EnemyManager.onDeath)
   const XP_TABLE = { rookie: 20, champion: 45, ultimate: 90, mega: 180, boss: 400 };
   player.onEnemyKilled = (enemy) => {
+    // EM SALA MP o XP/kill/drop é SERVER-AUTHORITATIVE (eventos xp_gain/level_up
+    // + DropState). Nada de recompensa local aqui, senão o level fica "fantasma"
+    // (somado local antes/sem o servidor confirmar).
+    if (window._mpGuard?.isInMpRoom?.()) return;
     const tier = enemy?.def?.tier;
     const xp = XP_TABLE[tier];
     if (xp == null) throw new Error('[XP] tier desconhecido: ' + tier);
