@@ -51,7 +51,7 @@ export class AuthSystem {
 
   async _loadProfile() {
     if (!this.user) return;
-    const { data, error } = await this._supabase
+    let { data, error } = await this._supabase
       .from('transfps_profiles')
       .select('id, nickname, avatar_url, total_kills, total_deaths, xp, level, coins, last_match_at, created_at')
       .eq('id', this.user.id)
@@ -59,6 +59,22 @@ export class AuthSystem {
     if (error) {
       console.error('[Auth] profile load FALHOU:', error);
       throw error;
+    }
+    // Se profile nao existir (user antigo, signup pre-trigger), chama RPC
+    // idempotente transfps_ensure_profile() que cria com defaults e retorna.
+    // NAO eh fallback - eh funcao designada de "garantir profile existe".
+    if (!data) {
+      console.warn('[Auth] profile nao existe, chamando transfps_ensure_profile');
+      const { data: ensured, error: ensureErr } = await this._supabase
+        .rpc('transfps_ensure_profile');
+      if (ensureErr) {
+        console.error('[Auth] transfps_ensure_profile FALHOU:', ensureErr);
+        throw ensureErr;
+      }
+      if (!ensured) {
+        throw new Error('[Auth] transfps_ensure_profile retornou null');
+      }
+      data = ensured;
     }
     if (data) {
       this.profile = data;
