@@ -57,54 +57,90 @@ function _pickAnim(groups, hints, regex) {
 
 // 7 personagens com nomes FINAIS. Cada um: idle/attack/combo por hints +
 // regex resolvidos no GLB carregado.
+// faceYaw: rotação Y (rad) aplicada ao root no preview pra olhar PRA CÂMERA.
+//   0       = já nasce de frente.
+//   Math.PI = nasce de costas → vira 180°.
+// Ajustado por inspeção visual: FUBA e RONARIA apareciam de costas.
 const CHARACTERS = [
   {
     id: 'abelha', name: 'ABELHA', emoji: '🐝',
     url: 'assets/characters/player.glb',
     desc: 'Rato padrão · equilibrado',
-    idleHints: ['Idle_5', 'Idle'], attackHints: ['Archery_Shot', 'Shot'], comboHints: ['Run_and_Shoot'],
+    // anims EXATAS (player.glb): Idle_5 / Archery_Shot_1 / Archery_Shot_3 / Walking
+    idleHints: ['Idle_5', 'Idle'],
+    attackHints: ['Archery_Shot_1', 'Archery_Shot', 'Shot'],
+    comboHints: ['Archery_Shot_3', 'Run_and_Shoot'],
+    walkHints: ['Walking', 'Walk'],
+    faceYaw: 0,
     sound: 'ui_select',
   },
   {
     id: 'dandan', name: 'DAN DAN', emoji: '⚔️',
     url: 'assets/characters/dark_warrior_aaa_ready.glb',
     desc: 'Guerreiro sombrio · ataque pesado',
-    idleHints: ['Idle Ver.1', 'Idle'], attackHints: ['Attack Horizontal', 'Attack'], comboHints: ['Attack 360 Low', '360'],
+    // anims EXATAS (dark_warrior): Standing Idle Looking Ver. 1 / Attack Horizontal / Attack 360 Low / Boss-Walking
+    idleHints: ['Standing Idle Looking Ver. 1', 'Standing Idle Looking', 'Idle'],
+    attackHints: ['Attack Horizontal', 'Attack'],
+    comboHints: ['Attack 360 Low', '360'],
+    walkHints: ['Boss-Walking', 'Walking', 'Walk'],
+    faceYaw: 0,
     sound: 'ui_select',
   },
   {
     id: 'candao', name: 'CANDAO', emoji: '🪓',
     url: 'assets/characters/orc_warrior_ready.glb',
     desc: 'Orc bruto · força máxima',
-    idleHints: ['Orc_Ideal', 'Orc_Idle', 'Idle'], attackHints: ['Orc_Punch', 'Punch'], comboHints: ['Orc_Punch', 'Punch'],
+    // anims EXATAS (orc): Armature|Orc_Ideal / Armature|Orc_Punch / Armature|Jumping_Jack / Armature|Orc_Walk
+    idleHints: ['Armature|Orc_Ideal', 'Orc_Ideal', 'Idle'],
+    attackHints: ['Armature|Orc_Punch', 'Orc_Punch', 'Punch'],
+    comboHints: ['Armature|Jumping_Jack', 'Jumping_Jack', 'Armature|Orc_Punch', 'Orc_Punch'],
+    walkHints: ['Armature|Orc_Walk', 'Orc_Walk', 'Walk'],
+    faceYaw: 0,
     sound: 'ui_select',
   },
   {
     id: 'ronaria', name: 'RONARIA', emoji: '🏹',
     url: 'assets/characters/cleric_priestess48_ready.glb',
     desc: 'Caçadora · à distância',
-    idleHints: ['Idle'], attackHints: ['Fire'], comboHints: ['Fire'],
+    // anims EXATAS (cleric): Idle.001 (EM PÉ, não Crouch) / Fire / Standing Purify / Walk.002
+    idleHints: ['Idle.001', 'Idle'],
+    attackHints: ['Fire'],
+    comboHints: ['Standing Purify', 'Purify'],
+    walkHints: ['Walk.002', 'Walk'],
+    faceYaw: Math.PI,   // apareceu de costas
     sound: 'ui_select',
   },
   {
     id: 'fuba', name: 'FUBA', emoji: '🔮',
     url: 'assets/characters/mage_oldwizard_ready.glb',
     desc: 'Mago · poder arcano',
-    idleHints: ['idle'], attackHints: ['attack'], comboHints: ['attack'],
+    // anims EXATAS (mage): idle / attack / death / run / walk (só UM ataque)
+    idleHints: ['idle'],
+    attackHints: ['attack'],
+    comboHints: ['attack'],
+    walkHints: ['walk'],
+    faceYaw: Math.PI,   // apareceu de costas
     sound: 'ui_select',
   },
   {
     id: 'spray', name: 'SPRAY-BNOOKKER', emoji: '🦎',
     url: 'assets/characters/lizard_monster_ready.glb',
     desc: 'Monstro lagarto · brutal',
-    idleHints: ['Walking', 'Walk'], attackHints: ['Right_Hand_Sword_Slash', 'Slash'], comboHints: ['Punch_Combo_5', 'Combo', 'Punch'],
+    // anims EXATAS (lizard): SEM idle/death → Walking como pose neutra. Right_Hand_Sword_Slash / Punch_Combo_5
+    idleHints: ['Walking', 'Walk'],
+    attackHints: ['Right_Hand_Sword_Slash', 'Slash'],
+    comboHints: ['Punch_Combo_5', 'Combo', 'Punch'],
+    walkHints: ['Walking', 'Walk', 'Running'],
+    faceYaw: 0,
     sound: 'spray_bnookker',
   },
 ];
 
-const RE_IDLE = /idle|stand|walk/i;
+// Fallbacks regex. RE_IDLE inclui 'ideal' (orc) e 'walk' (spray sem idle).
+// NUNCA casa T-pose nem death — só poses neutras/locomoção parada.
+const RE_IDLE = /idle|ideal|stand|walk/i;
 const RE_ATTACK = /attack|punch|slash|fire|shot/i;
-const RE_COMBO = /combo|spin|360/i;
+const RE_COMBO = /combo|spin|360|purify|jumping_jack/i;
 
 const CYAN = '#2effb6';
 const CYAN_RGB = '46,255,182';
@@ -470,15 +506,28 @@ export class CharacterSelectScreen {
       root.rotation = new BABYLON.Vector3(0, 0, 0);
       this._previewMesh = root;
 
-      // resolve anims por hints + regex
+      // orientação: vira o root pra olhar PRA CÂMERA (faceYaw por avatar).
+      // FUBA e RONARIA nascem de costas → faceYaw = Math.PI.
+      try { root.rotation.y = (typeof c.faceYaw === 'number') ? c.faceYaw : 0; } catch (_) {}
+
+      // resolve anims por hints EXATOS (perfil) + substring + regex.
       const groups = result.animationGroups || [];
       this._previewGroups = groups;
       groups.forEach(g => { try { g.stop(); } catch (_) {} });
 
-      const idle = _pickAnim(groups, c.idleHints, RE_IDLE) || groups[0] || null;
+      // Fallback de IDLE BLINDADO: nunca pega cegamente groups[0] (pode ser
+      // T-pose/death/ataque). Procura primeiro algo neutro (idle/walk/stand),
+      // excluindo explicitamente t-pose e morte; só então cai pra groups[0].
+      const RE_BAD = /t.?pose|death|dying|die|dead/i;
+      const neutralFallback = () =>
+        groups.find(g => g.name && RE_IDLE.test(g.name) && !RE_BAD.test(g.name)) ||
+        groups.find(g => g.name && !RE_BAD.test(g.name)) ||
+        groups[0] || null;
+
+      const idle = _pickAnim(groups, c.idleHints, RE_IDLE) || neutralFallback();
       const attack = _pickAnim(groups, c.attackHints, RE_ATTACK) || idle;
       const combo = _pickAnim(groups, c.comboHints, RE_COMBO) || attack;
-      const walk = _pickAnim(groups, ['walk', 'walking', 'run', 'move'], /walk|run|move/i) || idle;
+      const walk = _pickAnim(groups, c.walkHints || ['walk', 'walking', 'run', 'move'], /walk|run|move/i) || idle;
       this._previewAnims = { idle, attack, combo, walk };
 
       // garante que NUNCA fica em T-pose: já deixa o idle rodando.
