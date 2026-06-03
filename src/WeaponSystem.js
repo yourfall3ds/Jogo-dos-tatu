@@ -161,6 +161,8 @@ export class WeaponSystem {
     this._weaponMeshes[weaponId] = glbRoot;
     glbRoot.parent = this._root;
 
+    this._fitWebGPUMaterials(meshes);   // cabe no limite de 16 varyings do WebGPU
+
     const weaponRef = this.weapons.find(w => w.id === weaponId);
     if (!weaponRef) {
         console.warn(`[WeaponSystem] Tentou setar mesh para arma inexistente: ${weaponId}`);
@@ -200,10 +202,11 @@ export class WeaponSystem {
       this._tpsMeshes[weaponId] = tpsRoot;
       tpsRoot.setEnabled(false);
       weaponRef.applyToMesh(tpsRoot, true);
-      tpsRoot.getChildMeshes().forEach(m => { 
-          m.setEnabled(true); m.isVisible = true; m.isPickable = false; 
-          m.castShadows = true; m.receiveShadows = true; 
+      tpsRoot.getChildMeshes().forEach(m => {
+          m.setEnabled(true); m.isVisible = true; m.isPickable = false;
+          m.castShadows = true; m.receiveShadows = false;   // não recebe (varyings WebGPU)
       });
+      this._fitWebGPUMaterials([tpsRoot, ...tpsRoot.getChildMeshes()]);   // limite de 16 varyings
     }
 
     if (weaponRef.id === this.getCurrentWeapon().id) {
@@ -215,6 +218,32 @@ export class WeaponSystem {
         }
     } else {
         glbRoot.setEnabled(false);
+    }
+  }
+
+  /**
+   * Ajusta materiais de arma pro limite do WebGPU (máx 16 variáveis
+   * inter-stage vertex→fragment). Materiais PBR pesados (4 texturas +
+   * normal map) + extras da cena (clip planes da água, sombras) estouravam
+   * 16 → o shader não compilava → "Invalid RenderPipeline" → tela preta em
+   * 3ª pessoa. O `two-sided lighting` adiciona o `front_facing` (+1); desligá-lo
+   * (com backface culling ligado) libera 1 varying e resolve. Só no WebGPU.
+   */
+  _fitWebGPUMaterials(meshes) {
+    if (!window._webgpu || !meshes) return;
+    const seen = new Set();
+    for (const m of meshes) {
+      // Arma NÃO precisa RECEBER sombra (continua PROJETANDO). Com sol+lua
+      //  em CSM (8 cascatas somadas), receber sombra adiciona MUITAS varyings
+      //  → estoura o limite de 16 do WebGPU. Desligar libera bastante folga.
+      try { m.receiveShadows = false; } catch (_) {}
+      const mat = m.material;
+      if (!mat || seen.has(mat)) continue;
+      seen.add(mat);
+      try {
+        if ('twoSidedLighting' in mat) mat.twoSidedLighting = false;  // tira o front_facing (+1)
+        mat.backFaceCulling = true;
+      } catch (_) {}
     }
   }
 
