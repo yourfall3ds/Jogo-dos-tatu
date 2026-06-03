@@ -164,10 +164,16 @@ export class Player {
     this.camera.inputs.clear();          // remove inputs padrão
     this.scene.activeCamera = this.camera;
 
-    // Anti-aliasing FXAA → mata o "tremido/crawling" das bordas ao andar
-    try {
-      this._fxaa = new BABYLON.FxaaPostProcess('fpsFxaa', 1.0, this.camera);
-    } catch (_) {}
+    // Anti-aliasing FXAA → mata o "tremido/crawling" das bordas ao andar.
+    //  NO WEBGPU: pulamos este FXAA standalone. O DefaultRenderingPipeline do
+    //  GraphicsEnhancer já tem fxaaEnabled; ter os DOIS na mesma câmera cria
+    //  cadeias de post-process com formato conflitante → "Invalid RenderPipeline
+    //  ...fpsFxaa..." floodando o console no WebGPU. No WebGL2 mantém.
+    if (!window._webgpu) {
+      try {
+        this._fxaa = new BABYLON.FxaaPostProcess('fpsFxaa', 1.0, this.camera);
+      } catch (_) {}
+    }
   }
 
   // ── Character Controller (Havok) ──────────────────────────────────
