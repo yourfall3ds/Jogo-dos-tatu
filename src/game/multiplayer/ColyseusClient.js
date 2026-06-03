@@ -73,24 +73,59 @@ export class ColyseusClient {
    */
   async subscribeLobby(onRooms) {
     if (!this.client) throw new Error('client not initialized');
-    if (this._lobby) { try { await this._lobby.leave(); } catch (_) {} }
-    this._lobby = await this.client.joinOrCreate('lobby');
-    this._lobbyRooms = [];
-    this._lobby.onMessage('rooms', (rooms) => {
-      this._lobbyRooms = rooms || [];
-      onRooms?.(this._lobbyRooms.slice());
-    });
-    this._lobby.onMessage('+', ([roomId, data]) => {
-      const idx = this._lobbyRooms.findIndex((r) => r.roomId === roomId);
-      if (idx >= 0) this._lobbyRooms[idx] = data;
-      else this._lobbyRooms.push(data);
-      onRooms?.(this._lobbyRooms.slice());
-    });
-    this._lobby.onMessage('-', (roomId) => {
-      this._lobbyRooms = this._lobbyRooms.filter((r) => r.roomId !== roomId);
-      onRooms?.(this._lobbyRooms.slice());
-    });
-    return this._lobby;
+    // Se já tem lobby ativo (não em CLOSING/CLOSED), só atualiza callback e retorna.
+    // Evita race condition de criar WS novo enquanto o anterior fecha.
+    if (this._lobby && this._lobby.connection?.isOpen) {
+      this._lobbyCallback = onRooms;
+      // Já dispara com snapshot atual
+      if (this._lobbyRooms) onRooms?.(this._lobbyRooms.slice());
+      return this._lobby;
+    }
+    // Race-guard: se já tem subscribe em andamento, aguarda
+    if (this._lobbyPromise) {
+      try { await this._lobbyPromise; } catch (_) {}
+      if (this._lobby?.connection?.isOpen) {
+        this._lobbyCallback = onRooms;
+        if (this._lobbyRooms) onRooms?.(this._lobbyRooms.slice());
+        return this._lobby;
+      }
+    }
+    // Limpa lobby antigo se em CLOSING/CLOSED
+    if (this._lobby) {
+      try { await this._lobby.leave(false); } catch (_) {}
+      this._lobby = null;
+    }
+    this._lobbyCallback = onRooms;
+    this._lobbyPromise = (async () => {
+      this._lobby = await this.client.joinOrCreate('lobby');
+      this._lobbyRooms = [];
+      this._lobby.onMessage('rooms', (rooms) => {
+        this._lobbyRooms = rooms || [];
+        this._lobbyCallback?.(this._lobbyRooms.slice());
+      });
+      this._lobby.onMessage('+', ([roomId, data]) => {
+        const idx = this._lobbyRooms.findIndex((r) => r.roomId === roomId);
+        if (idx >= 0) this._lobbyRooms[idx] = data;
+        else this._lobbyRooms.push(data);
+        this._lobbyCallback?.(this._lobbyRooms.slice());
+      });
+      this._lobby.onMessage('-', (roomId) => {
+        this._lobbyRooms = this._lobbyRooms.filter((r) => r.roomId !== roomId);
+        this._lobbyCallback?.(this._lobbyRooms.slice());
+      });
+      // Limpa lobby quando desconectar
+      this._lobby.onLeave?.(() => { this._lobby = null; this._lobbyRooms = []; });
+      return this._lobby;
+    })();
+    try {
+      const r = await this._lobbyPromise;
+      this._lobbyPromise = null;
+      return r;
+    } catch (e) {
+      this._lobbyPromise = null;
+      this._lobby = null;
+      throw e;
+    }
   }
 
   /** Snapshot atual cached pelo lobby (após subscribeLobby). */

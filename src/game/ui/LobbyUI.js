@@ -497,10 +497,8 @@ export class LobbyUI {
     this._visible = true;
     this._el.style.display = 'flex';
     this._loadRooms();
-    if (this._refreshTimer) clearInterval(this._refreshTimer);
-    this._refreshTimer = setInterval(() => {
-      if (!this.cs.room) this._loadRooms();
-    }, 3000);
+    // SEM setInterval: LobbyRoom do Colyseus já emite '+/-' em tempo real,
+    // refresh manual é só pelo botão "↻ atualizar".
   }
 
   hide() {

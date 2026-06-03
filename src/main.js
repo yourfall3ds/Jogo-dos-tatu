@@ -461,6 +461,20 @@ async function init() {
     const rp = _remotePlayers.get(id);
     if (rp) { rp.dispose(); _remotePlayers.delete(id); }
   });
+  // Quando desconecta da sala (close): limpa TODOS os RemotePlayers com fade
+  // (evita stub "fantasma" se varios sairem juntos / server cair / etc).
+  cs.on('close', () => {
+    _remotePlayers.forEach((rp) => { try { rp.dispose(); } catch (_) {} });
+    _remotePlayers.clear();
+    _remoteMobs.forEach((m) => { try { m.dispose(); } catch (_) {} });
+    _remoteMobs.clear();
+    _remoteDrops.forEach((d) => { try { d.dispose(); } catch (_) {} });
+    _remoteDrops.clear();
+    _remoteProps.forEach((p) => { try { p.dispose(); } catch (_) {} });
+    _remoteProps.clear();
+    _remoteFx.forEach((f) => { try { f.dispose(); } catch (_) {} });
+    _remoteFx.clear();
+  });
   cs.on('player_change', ({ id, field, value, state }) => {
     // Player local mudou pvp_on → ativa LocalAura
     if (id === auth.getUserId() && field === 'pvp_on') {
@@ -964,21 +978,137 @@ async function init() {
   const loader = new AssetLoader(scene, shadowGen);
   player.assetLoader = loader;
 
-  // ── Pointer lock solto → abre ENGINE MODE diretamente na aba Cena ──
+  // ── Pointer lock solto → abre PAUSE OVERLAY (não engine mode) ──
+  // ESC libera o pointer lock automaticamente. Aqui pegamos isso pra mostrar
+  // o overlay de pausa com botoes (Voltar ao Jogo / Voltar ao Menu).
   input.onDeactivated = () => {
-    if (window._gamePlayer?._dead) return;   // morto → tela de morte, não abre editor
-    if (!_engineMode) window.enterEngineMode('scene');
+    if (window._gamePlayer?._dead) return;   // morto → tela de morte
+    if (_engineMode) return;                 // ja em engine mode
+    if ($('start-screen').style.display !== 'none') return;
+    _showGamePause();
   };
 
-  // ── ESC: se em jogo → abre engine mode; se em engine mode → retorna ao jogo ──
+  // ── F9: abre ENGINE MODE (antes era ESC, agora atalho separado) ──
   window.addEventListener('keydown', e => {
-    if (e.code !== 'Escape') return;
-    if ($('start-screen').style.display !== 'none') return; // jogo não iniciado
-    if (animatorMode?.active) return;                        // animador ativo
-    // ESC nunca mais mostra o overlay de pausa — vai pro engine mode
+    if (e.code === 'F9' && !e.repeat && $('start-screen').style.display === 'none') {
+      e.preventDefault();
+      if (!_engineMode) window.enterEngineMode('scene');
+      else window.exitEngineMode();
+    }
+    // ESC: pause / engine mode handling
+    if (e.code === 'Escape' && !e.repeat) {
+      if ($('start-screen').style.display !== 'none') return; // jogo nao iniciado
+      if (animatorMode?.active) return;
+      if (_engineMode) {
+        // ESC em engine mode = volta pro jogo
+        e.preventDefault();
+        window.exitEngineMode();
+        window._gameInput?.activate();
+        setFocusUI(true);
+        return;
+      }
+      const ov = $('pause-overlay');
+      if (ov?.classList.contains('visible')) {
+        e.preventDefault();
+        _resumeFromPause();
+      }
+      // Se nao tem pause aberto, deixa o browser liberar pointer lock
+      // → input.onDeactivated dispara → _showGamePause()
+    }
   });
-  // (o próprio browser vai liberar o pointer lock ao pressionar ESC,
-  //  o que dispara onDeactivated → enterEngineMode automaticamente)
+
+  // Helpers de pause real (overlay com botões)
+  function _showGamePause() {
+    const ov = $('pause-overlay');
+    if (!ov) return;
+    ov.classList.add('visible');
+    _injectPauseMenuButtons();
+  }
+  function _resumeFromPause() {
+    const ov = $('pause-overlay');
+    if (!ov) return;
+    ov.classList.remove('visible');
+    window._gameInput?.activate();
+    setFocusUI(true);
+  }
+  function _injectPauseMenuButtons() {
+    const ov = $('pause-overlay');
+    if (!ov) return;
+    if (ov.querySelector('#pause-resume-btn')) return; // ja injetado
+    // Cria container minimal SE o overlay nao tem botoes propios
+    const wrap = document.createElement('div');
+    wrap.id = 'pause-menu-wrap';
+    wrap.style.cssText = `
+      position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+      display:flex; flex-direction:column; gap:14px; align-items:center;
+      font-family:'Segoe UI',monospace; color:#fff; z-index:10;
+      background:rgba(10,16,30,0.92); padding:30px 50px; border-radius:14px;
+      border:1px solid rgba(126,239,196,0.3); box-shadow:0 0 40px rgba(0,0,0,0.6);
+      min-width:280px;
+    `;
+    wrap.innerHTML = `
+      <div style="font:900 26px 'Segoe UI',monospace; letter-spacing:6px; color:#2effb6;
+                  text-shadow:0 0 12px #2effb6; margin-bottom:6px;">⏸ PAUSADO</div>
+      <button id="pause-resume-btn" style="
+        background:#2effb6; color:#04101a; border:0; padding:14px 36px;
+        font:900 14px monospace; letter-spacing:3px; cursor:pointer; border-radius:6px;
+        min-width:240px;">▶ VOLTAR AO JOGO</button>
+      <button id="pause-leave-btn" style="
+        background:transparent; color:#ff7a8a; border:1px solid #ff5a5a;
+        padding:11px 28px; font:800 12px monospace; letter-spacing:2px; cursor:pointer;
+        border-radius:6px; min-width:240px;">✕ VOLTAR AO MENU</button>
+      <div style="opacity:0.5; font:600 10px monospace; margin-top:6px;">ESC para retomar · F9 para Engine Mode</div>
+    `;
+    ov.appendChild(wrap);
+    wrap.querySelector('#pause-resume-btn').onclick = () => _resumeFromPause();
+    wrap.querySelector('#pause-leave-btn').onclick = () => _confirmLeaveToMenu();
+  }
+  function _confirmLeaveToMenu() {
+    // Modal de confirmação inline (sem confirm() nativo)
+    if (document.getElementById('confirm-leave-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'confirm-leave-modal';
+    modal.style.cssText = `
+      position:fixed; inset:0; z-index:1000;
+      background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center;
+      font-family:'Segoe UI',monospace; color:#fff;
+    `;
+    const inMatch = !!(window._cs?.room && window._cs?.state?.match_state === 'RUNNING');
+    modal.innerHTML = `
+      <div style="background:linear-gradient(180deg,#1a0a0a,#0a0408);
+                  border:2px solid #ff5a5a; border-radius:12px; padding:28px 40px;
+                  text-align:center; min-width:340px; box-shadow:0 0 40px #ff5a5a;">
+        <div style="font:900 22px monospace; letter-spacing:3px; color:#ff5a5a;
+                    text-shadow:0 0 10px #ff5a5a; margin-bottom:10px;">⚠ ABANDONAR ?</div>
+        <div style="font:600 13px monospace; opacity:0.85; margin-bottom:20px; max-width:300px;">
+          ${inMatch
+            ? 'Você está em uma partida ativa. Sair vai te marcar como derrotado.'
+            : 'Você vai sair da sala e voltar ao menu principal.'}
+        </div>
+        <div style="display:flex; gap:10px; justify-content:center;">
+          <button id="cl-yes" style="background:#ff5a5a; color:#fff; border:0;
+                  padding:11px 24px; font:800 12px monospace; letter-spacing:2px;
+                  cursor:pointer; border-radius:5px;">SIM, SAIR</button>
+          <button id="cl-no" style="background:transparent; color:#fff;
+                  border:1px solid rgba(255,255,255,0.3); padding:11px 24px;
+                  font:800 12px monospace; letter-spacing:2px; cursor:pointer;
+                  border-radius:5px;">CANCELAR</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    modal.querySelector('#cl-no').onclick = () => modal.remove();
+    modal.querySelector('#cl-yes').onclick = async () => {
+      modal.remove();
+      // Sai da sala se em uma
+      try { await window._cs?.leave?.(); } catch (_) {}
+      try { await window._cs?.leaveLobby?.(); } catch (_) {}
+      // Esconde pause
+      $('pause-overlay')?.classList.remove('visible');
+      // Volta pro lobby UI (ou loginscreen se nao logado)
+      try { window._lobbyUI?.show?.(); } catch (_) {}
+    };
+  }
 
   // ── Game loop ────────────────────────────────────────────────────
   engine.runRenderLoop(() => {

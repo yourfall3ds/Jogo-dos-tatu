@@ -306,12 +306,111 @@ export class RemotePlayer {
     }
   }
 
-  dispose() {
-    try { this.body.dispose(); } catch (_) {}
-    try { this.eye.dispose(); } catch (_) {}
+  /** Dispose imediato (sem animação). Use só em cleanup forçado. */
+  disposeNow() {
+    if (this._disposed) return;
+    this._disposed = true;
+    try { this.body?.dispose(); } catch (_) {}
+    try { this.eye?.dispose(); } catch (_) {}
     try { this.aura?.dispose(); } catch (_) {}
-    try { this.root.dispose(); } catch (_) {}
-    if (this._nameEl?.parentElement) this._nameEl.parentElement.removeChild(this._nameEl);
+    try { this._pedestal?.dispose(); } catch (_) {}
+    try { this.root?.dispose(); } catch (_) {}
+    if (this._nameEl?.parentElement) {
+      try { this._nameEl.parentElement.removeChild(this._nameEl); } catch (_) {}
+    }
+  }
+
+  /** Dispose com animação fade-glow (player saiu / desconectou / morreu).
+   *  Avatar brilha cyan/laranja por ~0.8s, encolhe e some. Garante zero stub. */
+  dispose() {
+    if (this._disposing || this._disposed) return;
+    this._disposing = true;
+    // Esconde nameplate imediato pra nao ficar HTML stub flutuando
+    if (this._nameEl) {
+      this._nameEl.style.transition = 'opacity 0.3s';
+      this._nameEl.style.opacity = '0';
+    }
+    // Brilho emissivo forte
+    try {
+      if (this._bodyMat) {
+        this._bodyMat.emissiveColor = new BABYLON.Color3(0.3, 1.0, 0.7);
+      }
+    } catch (_) {}
+    // Particulas de "vanish" (caso BABYLON disponivel)
+    try {
+      if (typeof BABYLON !== 'undefined' && this.root?.position) {
+        const ps = new BABYLON.ParticleSystem('vanish', 80, this.scene);
+        const dt = new BABYLON.DynamicTexture('vanishTex', 16, this.scene, false);
+        const ctx = dt.getContext();
+        const g = ctx.createRadialGradient(8,8,2,8,8,8);
+        g.addColorStop(0, 'rgba(180,255,220,1)');
+        g.addColorStop(1, 'rgba(120,200,255,0)');
+        ctx.fillStyle = g; ctx.fillRect(0,0,16,16); dt.update();
+        ps.particleTexture = dt;
+        const emitter = new BABYLON.TransformNode('vanishEmit', this.scene);
+        emitter.position.copyFrom(this.root.position);
+        emitter.position.y += 1.0;
+        ps.emitter = emitter;
+        ps.minEmitBox = new BABYLON.Vector3(-0.4, 0, -0.4);
+        ps.maxEmitBox = new BABYLON.Vector3(0.4, 0.5, 0.4);
+        ps.color1 = new BABYLON.Color4(0.6, 1.0, 0.85, 1);
+        ps.color2 = new BABYLON.Color4(0.3, 0.8, 1.0, 0.9);
+        ps.colorDead = new BABYLON.Color4(0.3, 0.6, 1.0, 0);
+        ps.minSize = 0.15; ps.maxSize = 0.4;
+        ps.minLifeTime = 0.4; ps.maxLifeTime = 0.9;
+        ps.emitRate = 0;
+        ps.manualEmitCount = 60;
+        ps.gravity = new BABYLON.Vector3(0, 2, 0);
+        ps.direction1 = new BABYLON.Vector3(-1.5, 1, -1.5);
+        ps.direction2 = new BABYLON.Vector3(1.5, 4, 1.5);
+        ps.minEmitPower = 1; ps.maxEmitPower = 3;
+        ps.blendMode = BABYLON.ParticleSystem.BLENDMODE_ONEONE;
+        ps.start();
+        setTimeout(() => {
+          try { ps.stop(); } catch (_) {}
+          setTimeout(() => {
+            try { ps.dispose(); emitter.dispose(); } catch (_) {}
+          }, 1200);
+        }, 200);
+      }
+    } catch (_) {}
+
+    // Anima escala -> 0, alpha -> 0 ao longo de 0.6s, então dispose hard
+    const FADE_MS = 600;
+    const startT = performance.now();
+    const startScale = (this.root?.scaling?.x) || 1;
+    const tick = () => {
+      if (this._disposed) return;
+      const t = performance.now() - startT;
+      const k = Math.min(1, t / FADE_MS);
+      const s = startScale * (1 - k * 0.85); // encolhe pra 15%
+      try {
+        if (this.root?.scaling) this.root.scaling.set(s, s, s);
+        if (this.root?.position) {
+          this.root.position.y += 0.012; // sobe enquanto desaparece
+        }
+        if (this._bodyMat) {
+          this._bodyMat.alpha = 1 - k;
+          this._bodyMat.emissiveColor = new BABYLON.Color3(
+            0.3 + 0.7 * (1 - k),
+            1.0,
+            0.7 + 0.3 * k
+          );
+        }
+      } catch (_) {}
+      if (k < 1) requestAnimationFrame(tick);
+      else this.disposeNow();
+    };
+    // Garante materiais transparentes pra fade funcionar
+    try {
+      if (this._bodyMat) {
+        this._bodyMat.alphaMode = BABYLON.Engine.ALPHA_COMBINE;
+        this._bodyMat.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
+      }
+    } catch (_) {}
+    requestAnimationFrame(tick);
+    // Safety: hard dispose em 1.2s mesmo se algo trave
+    setTimeout(() => { if (!this._disposed) this.disposeNow(); }, FADE_MS + 600);
   }
 }
 
