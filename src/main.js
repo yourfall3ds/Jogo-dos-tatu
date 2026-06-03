@@ -415,7 +415,12 @@ async function init() {
   shadowGen.cascadeBlendPercentage = 0.05;
   shadowGen.shadowMaxZ = 115;           // alcance das cascatas (u) — valor F8
   shadowGen.depthClamp = true;
-  shadowGen.autoCalcDepthBounds = true; // ajusta profundidade à cena
+  // autoCalcDepthBounds=false: recalcular os limites de profundidade a cada
+  //  frame fazia as cascatas RE-ENCAIXAREM quando o frustum varria ao girar
+  //  a câmera → AMPLIFICAVA o flicker do depth. Com shadowMinZ/shadowMaxZ
+  //  fixos (1..250) + stabilizeCascades, a profundidade das cascatas fica
+  //  estável durante a rotação. (era true)
+  shadowGen.autoCalcDepthBounds = false;
   // PCSS: penumbra realista (nítida no contato, suave ao longe)
   shadowGen.filter = BABYLON.ShadowGenerator.FILTER_PCSS;
   shadowGen.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM;

@@ -61,8 +61,11 @@ const CHESTS = [
   FORG + 'chests/chest_legendary_serpent_ready.glb',
 ];
 
-const STREAM_IN  = 260;   // carrega o bioma quando o player chega a <260m do centro
-const STREAM_OUT = 420;   // descarrega quando passa de >420m (histerese evita liga/desliga)
+const STREAM_IN      = 260;   // carrega o bioma quando o player chega a <260m do centro
+const STREAM_OUT     = 420;   // OCULTA (setEnabled false) quando passa de >420m (histerese)
+const STREAM_DISPOSE = 700;   // só DESTRÓI (dispose) quando MUITO longe — evita o dispose
+                              //  recursivo disparar perto do campo de visão (causa hitch/flash).
+                              //  Entre 420 e 700m o bioma fica oculto, pronto pra re-exibir barato.
 
 // RNG seedado (mulberry32) — determinístico: todos os clientes veem o mesmo layout.
 function mulberry32(seed) {
@@ -109,12 +112,19 @@ export class BiomeWorld {
       const dx = playerPos.x - b.pos[0];
       const dz = playerPos.z - b.pos[2];
       const dist = Math.sqrt(dx * dx + dz * dz);
-      const isLoaded = this._loaded.has(b.id);
+      const entry = this._loaded.get(b.id);
+      const isLoaded = !!entry;
       const isLoading = this._loading.has(b.id);
-      if (dist < STREAM_IN && !isLoaded && !isLoading) {
-        this._loadBiome(b);
-      } else if (dist > STREAM_OUT && isLoaded) {
+      if (dist < STREAM_IN) {
+        // dentro do raio: garante carregado E visível (re-exibe se estava oculto)
+        if (!isLoaded && !isLoading) this._loadBiome(b);
+        else if (isLoaded && entry.hidden) this._showBiome(b.id);
+      } else if (dist > STREAM_DISPOSE && isLoaded) {
+        // MUITO longe → libera memória de fato (dispose deferido)
         this._unloadBiome(b.id);
+      } else if (dist > STREAM_OUT && isLoaded && !entry.hidden) {
+        // longe (mas não tão longe) → só OCULTA, sem dispose (barato, sem flash)
+        this._hideBiome(b.id);
       }
     }
   }
@@ -139,7 +149,7 @@ export class BiomeWorld {
       // 3) props/árvores/baús espalhados deterministicamente nesse bioma
       const props = await this._scatterProps(b, root);
 
-      this._loaded.set(b.id, { root, props });
+      this._loaded.set(b.id, { root, props, hidden: false });
       console.log(`[BiomeWorld] bioma "${b.id}" carregado @ ${b.pos[0]},${b.pos[2]}`);
     } catch (e) {
       console.error(`[BiomeWorld] falha bioma ${b.id}:`, e?.message);
@@ -289,12 +299,31 @@ export class BiomeWorld {
     return placed;
   }
 
+  /** OCULTA o bioma sem destruir (barato, reversível). Dispose deferido p/
+   *  STREAM_DISPOSE → não dispara dispose recursivo perto do campo de visão. */
+  _hideBiome(id) {
+    const entry = this._loaded.get(id);
+    if (!entry || entry.hidden) return;
+    try { entry.root.setEnabled(false); } catch (_) {}
+    entry.hidden = true;
+    console.log(`[BiomeWorld] bioma "${id}" oculto (player afastou — sem dispose)`);
+  }
+
+  /** Re-exibe um bioma que estava oculto (volta sem recarregar GLB). */
+  _showBiome(id) {
+    const entry = this._loaded.get(id);
+    if (!entry || !entry.hidden) return;
+    try { entry.root.setEnabled(true); } catch (_) {}
+    entry.hidden = false;
+    console.log(`[BiomeWorld] bioma "${id}" re-exibido (player voltou)`);
+  }
+
   _unloadBiome(id) {
     const entry = this._loaded.get(id);
     if (!entry) return;
     try { entry.root.dispose(false, true); } catch (_) {}  // dispose recursivo (filhos + props)
     this._loaded.delete(id);
-    console.log(`[BiomeWorld] bioma "${id}" descarregado (player saiu)`);
+    console.log(`[BiomeWorld] bioma "${id}" descarregado (player MUITO longe)`);
   }
 
   dispose() { this.disable(); }

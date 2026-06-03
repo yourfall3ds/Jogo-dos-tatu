@@ -193,9 +193,21 @@ export class Player {
   // ── Câmera FPS ────────────────────────────────────────────────────
   _createCamera() {
     this.camera = new BABYLON.FreeCamera('fpsCam', BABYLON.Vector3.Zero(), this.scene);
-    this.camera.minZ = 0.05;
-    this.camera.maxZ = 2500;   // far-plane p/ ver o mapão (névoa esconde o pop-in)
+    // ── Precisão do depth-buffer (anti-flicker ao girar a câmera) ──────
+    //  O far-plane grande (mapão) com near minúsculo (0.05) dava razão
+    //  far/near = 50000:1 → estouro de precisão do depth-buffer e PISCA
+    //  preto ao girar. Correção: razão muito menor (1500/0.3 = 5000:1) +
+    //  reverse-depth-buffer (Z invertido espalha a precisão pelo far) +
+    //  logarithmicDepthBuffer como reforço quando suportado. Mantém o
+    //  far-plane pro mapão; a névoa segue escondendo o pop-in.
+    this.camera.minZ = 0.3;    // era 0.05 — sobe o near p/ encolher a razão far/near
+    this.camera.maxZ = 1500;   // era 2500 — far seguro p/ ver o mapão sem estourar o depth
     this.camera.fov  = 1.38;
+    try {
+      // Reverse-Z: redistribui a precisão do depth-buffer — mata o z-fighting
+      //  e o flicker no far. Suportado em WebGL2 e WebGPU.
+      if (this.scene?.getEngine) this.scene.getEngine().useReverseDepthBuffer = true;
+    } catch (_) {}
     this.camera.inputs.clear();          // remove inputs padrão
     this.scene.activeCamera = this.camera;
 
