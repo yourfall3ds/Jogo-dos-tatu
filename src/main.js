@@ -2026,15 +2026,31 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
             }
           });
         });
-        
-        // Carrega todas as animações em paralelo (antes: sequential ~10s → agora: ~1-2s)
+
+        // ── FIX VELOCIDADE: so as anims BASICAS bloqueiam a entrada. ──────
+        //  idle/walk/run/jump/falling/dead bastam pra cair do ceu e andar.
+        //  O resto (ataques, espada, chibata, chutes, parkour) carrega em
+        //  BACKGROUND depois — antes esperava ~50 GLBs sequenciais = 15s.
+        const CORE_ANIMS = new Set(['idle', 'walk', 'run', 'run_fast', 'jump', 'falling', 'dead', 'idle_aim', 'walk_aim', 'run_aim']);
+        const coreAnims = allAnims.filter(a => CORE_ANIMS.has(a.name));
+        const restAnims = allAnims.filter(a => !CORE_ANIMS.has(a.name));
+
+        // Bloqueante: so as basicas (paralelo, ~1s)
         await Promise.all(
-          allAnims.map(a =>
+          coreAnims.map(a =>
             p.animLib.loadExternalAnimations(a.path, a.name, root)
-              .catch(e => console.error(`[anim] Falha ao absorver [${a.name}] (${a.path}):`, e))
+              .catch(e => console.error(`[anim] Falha core [${a.name}] (${a.path}):`, e))
           )
         );
-        
+
+        // Background: o resto das anims carrega sem travar a entrada no jogo.
+        Promise.all(
+          restAnims.map(a =>
+            p.animLib.loadExternalAnimations(a.path, a.name, root)
+              .catch(e => console.error(`[anim] Falha bg [${a.name}] (${a.path}):`, e))
+          )
+        ).then(() => { try { p.animLib.list?.(); } catch (_) {} });
+
 
         // ── Pós-processamento (sem Blender) ────────────────────────
         //  aim_charge: tem root motion (corre pra frente) → travar XZ
