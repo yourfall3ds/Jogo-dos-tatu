@@ -306,6 +306,24 @@ async function init() {
     engine = gpu;
     window._engineKind = 'WebGPU';
     window._webgpu = true;
+    // ── Logger de RAIZ de erros WebGPU ──────────────────────────────
+    //  O WebGPU floda "...invalid due to a previous error" (cascata). O que
+    //  importa é o PRIMEIRO erro (a raiz). Aqui filtramos a cascata e
+    //  imprimimos só a raiz, 1x por mensagem → fica fácil diagnosticar.
+    try {
+      const dev = gpu._device;
+      if (dev?.addEventListener) {
+        const _seenRoots = new Set();
+        dev.addEventListener('uncapturederror', (e) => {
+          const m = e.error?.message || String(e.error || '');
+          if (/due to a previous error|Invalid CommandBuffer|Invalid RenderPipeline|too many warnings/i.test(m)) return;
+          const key = m.slice(0, 120);
+          if (_seenRoots.has(key)) return;
+          _seenRoots.add(key);
+          console.error('%c[WebGPU RAIZ]', 'color:#f55;font-weight:bold', m.slice(0, 500));
+        });
+      }
+    } catch (_) {}
     console.log('%c[Engine] 🚀 WebGPU ativo' + (FALLBACK_WEBGL ? '' : ' (SOLO — fallback OFF)'), 'color:#4f8;font-weight:bold');
   } else if (FALLBACK_WEBGL || forceWebGL) {
     engine = new BABYLON.Engine(canvas, true, {
