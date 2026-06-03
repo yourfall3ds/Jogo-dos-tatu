@@ -137,12 +137,29 @@ export class BuildMode {
     this._unsubWorld = await WorldObjects.subscribe({
       onInsert: async (rec) => {
         if (!rec._worldId || this._worldEntries.has(rec._worldId)) return; // dedupe (inclui os meus)
+        // ECHO do próprio builder: o Realtime devolve o objeto que EU acabei de
+        // colocar (chega antes do place() resolver e setar o worldId). Em vez de
+        // renderizar de novo (duplicado), só reconcilia o id no entry local.
+        const mine = this._placed.find(e => e && !e.worldId && this._sameWorldRecord(e.record, rec));
+        if (mine) { mine.worldId = rec._worldId; this._worldEntries.set(rec._worldId, mine); return; }
         const entry = await this._renderRecordToScene(rec);
         if (entry) this._worldEntries.set(rec._worldId, entry);
       },
       onDelete: (worldId) => this._removeWorldEntry(worldId),
       onUpdate: (rec, row) => { if (row?.broken) this._removeWorldEntry(rec._worldId); },
     });
+  }
+
+  /** Mesmo objeto do mundo? (echo do realtime) kind+asset iguais e pos ≈. */
+  _sameWorldRecord(a, b) {
+    if (!a || !b) return false;
+    const ka = a.kind === 'piece' ? 'p:' + a.pieceId : 'g:' + (a.id || a.url || '');
+    const kb = b.kind === 'piece' ? 'p:' + b.pieceId : 'g:' + (b.id || b.url || '');
+    if (ka !== kb) return false;
+    const pa = a.p || [], pb = b.p || [];
+    return Math.abs((pa[0] || 0) - (pb[0] || 0)) < 0.5 &&
+           Math.abs((pa[1] || 0) - (pb[1] || 0)) < 0.5 &&
+           Math.abs((pa[2] || 0) - (pb[2] || 0)) < 0.5;
   }
 
   /** Remove (visual + colisor) um objeto do mundo pelo worldId. */

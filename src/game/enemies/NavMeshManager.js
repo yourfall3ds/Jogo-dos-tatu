@@ -149,6 +149,10 @@ export class NavMeshManager {
 
   update(dt) {
     if (!this.ready || !this._dirty) return;
+    // Não regenera ENQUANTO está construindo: o Recast createNavMesh é síncrono
+    // (~85ms+ em cena grande) e travava o jogo a CADA peça colocada. Segura o
+    // debounce e regenera de uma vez só quando sair do modo construção.
+    if (window._buildMode?._state === 'placing') { this._debounceT = this.DEBOUNCE; return; }
     this._debounceT -= dt;
     if (this._debounceT <= 0 && !this._regenPending) {
       this._regenPending = true;

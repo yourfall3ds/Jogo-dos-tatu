@@ -610,12 +610,17 @@ export class ArenaRoom extends Room {
     this._fireSoundCd.set(pid, now);
     const melee = payload?.melee === true;
     const weapon = String(payload?.weapon || p.weapon || 'unarmed').slice(0, 32);
+    // Direção de mira (do cliente) — só pra DESENHAR o tracer no parceiro; a
+    // posição continua server-auth. Clampa em [-1,1] e ignora se não vier.
+    const cl = (n) => (Number.isFinite(n) ? Math.max(-1, Math.min(1, n)) : null);
+    const dx = cl(payload?.dx), dy = cl(payload?.dy), dz = cl(payload?.dz);
     // Posição do ATIRADOR (server-auth) — não confiar em coords do cliente.
     this.broadcast('remote_fire', {
       id: p.id,
       x: p.x, y: p.y, z: p.z,
       weapon,
       melee,
+      dx, dy, dz,
     });
   }
 

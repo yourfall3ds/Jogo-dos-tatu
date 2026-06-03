@@ -130,6 +130,15 @@ export const WorldObjects = {
   async subscribe({ onInsert, onUpdate, onDelete } = {}) {
     try {
       const supa = await getSupabase();
+      // CRÍTICO: o Realtime avalia a RLS com o JWT do usuário no SOCKET. Sem
+      // setAuth, o canal assina como anon → a RLS de world_objects não deixa
+      // passar nada → os outros players só viam as construções no F5 (loadAll
+      // via REST). Com o token setado, os eventos INSERT/UPDATE/DELETE chegam.
+      try {
+        const { data } = await supa.auth.getSession();
+        const tok = data?.session?.access_token;
+        if (tok) supa.realtime.setAuth(tok);
+      } catch (_) {}
       const ch = supa.channel('transfps_world_objects')
         .on('postgres_changes',
           { event: 'INSERT', schema: 'transfps', table: 'world_objects' },
@@ -140,7 +149,11 @@ export const WorldObjects = {
         .on('postgres_changes',
           { event: 'DELETE', schema: 'transfps', table: 'world_objects' },
           (p) => { try { onDelete?.(p.old?.id); } catch (_) {} })
-        .subscribe();
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED')      console.log('[WorldObjects] 🌍 realtime ATIVO (construções ao vivo)');
+          else if (status === 'CHANNEL_ERROR') console.warn('[WorldObjects] realtime CHANNEL_ERROR:', err?.message || err || '(sem msg)');
+          else if (status === 'TIMED_OUT')  console.warn('[WorldObjects] realtime TIMED_OUT');
+        });
       return () => { try { supa.removeChannel(ch); } catch (_) {} };
     } catch (e) {
       console.warn('[WorldObjects] subscribe falhou:', e?.message || e);

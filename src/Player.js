@@ -143,8 +143,14 @@ export class Player {
       // Som POR TIRO (semi-auto). Automático usa loop (tratado no input).
       const w = this.weapon.getCurrentWeapon?.();
       if (w && !w.automatic) this.sounds?.playNow?.(w.fireSound || 'gun_pistol', 0.7);
-      // MP: avisa o server pra parceiros OUVIREM esse disparo (espacial), inclusive se errar.
-      try { window._cs?.sendFire?.(w?.id || 'unarmed', false); } catch (_) {}
+      // MP: avisa o server pra parceiros OUVIREM o disparo (espacial) E VEREM o
+      // tracer. Manda a DIREÇÃO de mira (forward da câmera) pra reconstruir o
+      // traçado da bala no client do parceiro.
+      try {
+        const fwd = this.camera?.getDirection?.(BABYLON.Axis.Z);
+        const dir = fwd ? { dx: +fwd.x.toFixed(3), dy: +fwd.y.toFixed(3), dz: +fwd.z.toFixed(3) } : null;
+        window._cs?.sendFire?.(w?.id || 'unarmed', false, dir);
+      } catch (_) {}
     };
     // Reload: toca o som AJUSTANDO a velocidade pra casar com a duração da
     //  recarga (reloadDur). Se o áudio for mais longo, acelera; mais curto,
@@ -1381,6 +1387,34 @@ export class Player {
     if (this.hp <= 0 && !this._dead) {
       this._startDeath('enemy');
     }
+  }
+
+  /**
+   * MULTIPLAYER: o SERVIDOR é autoritativo no HP (calcula o dano via
+   * WeaponTable). Aqui só REFLETIMOS o valor recebido na barra local
+   * (this.hp/this.maxHp são o que o HUD lê) — sem recalcular dano — e damos
+   * o feedback visual quando cai + tratamos morte/renascimento que o servidor
+   * decidiu. Assim a vida desce na hora do soco/tiro e dá pra saber quanto
+   * falta pra morrer, em vez de "morrer do nada".
+   */
+  applyServerHp(newHp, newMax) {
+    if (Number.isFinite(newMax) && newMax > 0) this.maxHp = newMax;
+    if (!Number.isFinite(newHp)) return;
+    const clamped = Math.max(0, Math.min(this.maxHp, newHp));
+    const took = clamped < this.hp;            // levou dano neste delta?
+    this.hp = clamped;
+    if (took && !this._dead) {
+      // feedback de pancada SEM re-descontar vida (flash + tremor + reação)
+      this._damageFlashT = 0.45;
+      this._dmgShakeT = 0.22; this._dmgShakeMag = 0.16;
+      if (this.hp > 0 && this.animCtrl && this.animLib) {
+        const react = this.animLib.has('hit_face') ? 'hit_face'
+                    : (this.animLib.has('hit_face_2') ? 'hit_face_2' : null);
+        if (react) { this._hitStunT = 0.22; this.animCtrl.play(react, { loop: false, speed: 1.3, fade: 0.06 }); }
+      }
+    }
+    if (this.hp <= 0 && !this._dead)      this._startDeath('enemy');  // servidor me matou
+    else if (this.hp > 0 && this._dead)   this.respawn();             // servidor me reviveu
   }
 
   /**

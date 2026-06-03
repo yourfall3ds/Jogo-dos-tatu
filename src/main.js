@@ -606,8 +606,14 @@ async function init() {
     _remoteFx.clear();
   });
   cs.on('player_change', ({ id, field, value, state }) => {
+    const isMe = id === auth.getUserId();
+    // HP é AUTORITATIVO do servidor no MP → reflete na barra local + morte/respawn.
+    // (antes a vida do servidor caía mas a barra local nunca atualizava → "morria do nada")
+    if (isMe && (field === 'hp' || field === 'maxHp')) {
+      player.applyServerHp?.(state?.hp, state?.maxHp);
+    }
     // Player local mudou pvp_on → ativa LocalAura
-    if (id === auth.getUserId() && field === 'pvp_on') {
+    if (isMe && field === 'pvp_on') {
       if (!_localAura) _localAura = new LocalAura(scene, player);
       _localAura.setActive(!!value);
     }
@@ -869,6 +875,32 @@ async function init() {
         rpAtk.playAttackOnce(atkState, m.melee ? 500 : 350);
       }
     } catch (e) { console.warn('[remote_fire] attack anim', e?.message); }
+    // ── TRACER do disparo do parceiro (ver a "bala vindo" / de onde atira) ──
+    try {
+      if (!m.melee && window._bulletTracer) {
+        const rp = _remotePlayers.get(m.id);
+        // origem ≈ cano: pos do atirador (server-auth) na altura do peito
+        let ox = m.x, oy = (Number.isFinite(m.y) ? m.y : 0) + 1.4, oz = m.z;
+        if (!Number.isFinite(ox)) {
+          const rpPos = rp?.root?.getAbsolutePosition?.();
+          if (rpPos) { ox = rpPos.x; oy = rpPos.y + 1.4; oz = rpPos.z; }
+        }
+        if (Number.isFinite(ox)) {
+          // direção: do payload (mira REAL do atirador) OU fallback no forward
+          // do avatar remoto (funciona mesmo com servidor antigo, sem dx/dy/dz).
+          let dx = m.dx, dy = m.dy, dz = m.dz;
+          if (!Number.isFinite(dx)) {
+            const f = rp?.root?.getDirection?.(BABYLON.Axis.Z);
+            if (f) { dx = f.x; dy = 0; dz = f.z; } else { dx = 0; dy = 0; dz = 1; }
+          }
+          const L = 80;
+          window._bulletTracer.spawn(
+            new BABYLON.Vector3(ox, oy, oz),
+            new BABYLON.Vector3(ox + dx * L, oy + dy * L, oz + dz * L),
+          );
+        }
+      }
+    } catch (e) { console.warn('[remote_fire] tracer', e?.message); }
     try {
       const sm = window._soundManager;
       if (!sm?._getSpatialSound) return;

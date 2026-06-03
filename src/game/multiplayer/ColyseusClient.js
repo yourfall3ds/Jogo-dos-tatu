@@ -304,6 +304,7 @@ export class ColyseusClient {
     $(this.room.state).players.onAdd((player, key) => {
       this._notify('player_add', { id: key, state: player });
       $(player).listen('hp', (v) => this._notify('player_change', { id: key, field: 'hp', value: v, state: player }));
+      $(player).listen('maxHp', (v) => this._notify('player_change', { id: key, field: 'maxHp', value: v, state: player }));
       $(player).listen('dead', (v) => this._notify('player_change', { id: key, field: 'dead', value: v, state: player }));
       $(player).listen('pvp_on', (v) => this._notify('player_change', { id: key, field: 'pvp_on', value: v, state: player }));
       $(player).listen('is_ready', (v) => this._notify('player_change', { id: key, field: 'is_ready', value: v, state: player }));
@@ -470,8 +471,10 @@ export class ColyseusClient {
    * Avisa o server que DISPAROU/GOLPEOU (pra parceiros OUVIREM o tiro/swing mesmo no erro).
    * Server rebroadcast posicional (remote_fire) com a pos autoritativa do atirador.
    */
-  sendFire(weapon, melee = false) {
-    this.room?.send('fire_sound', { weapon: weapon || 'unarmed', melee: !!melee });
+  sendFire(weapon, melee = false, dir = null) {
+    const msg = { weapon: weapon || 'unarmed', melee: !!melee };
+    if (dir && Number.isFinite(dir.dx)) { msg.dx = dir.dx; msg.dy = dir.dy; msg.dz = dir.dz; }
+    this.room?.send('fire_sound', msg);
   }
   /** Hit em prop destrutivel (barril/caixa). Servidor calcula dmg. */
   sendHitProp(propId, weapon) {
