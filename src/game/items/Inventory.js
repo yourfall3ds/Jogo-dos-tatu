@@ -123,12 +123,23 @@ export class Inventory {
     return true;
   }
 
+  /** Guarda a arma (sai da mão → punhos) ao trocar p/ item não-arma. */
+  _holsterWeapon() {
+    const p = window._gamePlayer;
+    try {
+      if (p?.stateMachine?.state === 'armed') p.stateMachine.dropWeapon();
+      p?._updateWeaponVisibility?.();
+    } catch (_) {}
+    this.equippedWeapon = null;
+  }
+
   useHotbar(index) {
     const id = this.hotbar[index];
     if (!id) return false;
     const entry = this.getEntry(id);
-    // construível → vai "pra mão" (modo de colocar). Não consome.
+    // construível → vai "pra mão" (modo de colocar). Guarda a arma. Não consome.
     if (entry?.kind === 'buildable') {
+      this._holsterWeapon();
       window._buildMode?.startPlacingInventoryAsset?.(entry.data);
       return true;
     }
@@ -143,8 +154,12 @@ export class Inventory {
   // ── Itens iniciais (armas) ───────────────────────────────────────
   ensureStarterItems() {
     for (const wid of ['weapon_pistol', 'weapon_rifle']) {
-      if (getItemDef(wid) && !this.bag.some(s => s.id === wid)) {
-        this.bag.push({ id: wid, qty: 1 });
+      if (!getItemDef(wid)) continue;
+      if (!this.bag.some(s => s.id === wid)) this.bag.push({ id: wid, qty: 1 });
+      // arma também ocupa um slot da hotbar → trocável pelo número
+      if (!this.hotbar.includes(wid)) {
+        const free = this.hotbar.indexOf(null);
+        if (free >= 0) this.hotbar[free] = wid;
       }
     }
     this._notify();

@@ -1424,6 +1424,24 @@ async function init() {
   // Gerador de miniaturas dos assets
   window._thumbnailGen = new ThumbnailGen(scene);
 
+  // ── Miniaturas das ARMAS → inventário/hotbar (uma vez, cacheado) ──
+  (async () => {
+    try {
+      const WEAPON_GLB = {
+        weapon_pistol: 'assets/itens 3d/Armas/Arma inicial.glb',
+        weapon_rifle:  'assets/itens 3d/ExternalAssets/Sketchfab/Weapons/sci_fi_plasma_rifle.glb',
+      };
+      const thumbs = (await LocalDB.get('asset_thumbnails', {})) || {};
+      let changed = false;
+      for (const [itemId, url] of Object.entries(WEAPON_GLB)) {
+        if (thumbs[itemId]) continue;                       // já gerada
+        const dataURL = await window._thumbnailGen.generate(url);
+        if (dataURL) { thumbs[itemId] = dataURL; changed = true; }
+      }
+      if (changed) { await LocalDB.save('asset_thumbnails', thumbs); window._rpgHUD?._loadThumbs?.(); }
+    } catch (e) { console.warn('[Weapon thumbs] falhou:', e.message); }
+  })();
+
   // ── Tecla J: fallback para abrir a Máquina de Criação de qualquer lugar ──
   window.addEventListener('keydown', e => {
     const tag = document.activeElement?.tagName;
@@ -1659,11 +1677,12 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
 
     // Sombras: garante que TODA superfície (chão, paredes, plataformas) receba
     //  a sombra do sol — corrige luzes FX consumindo slots e maxLights baixo.
-    try { gfx.fixSceneShadows(); } catch (_) {}
-    setTimeout(() => { try { gfx.fixSceneShadows(); } catch (_) {} }, 400);
+    // gfx mora no escopo do initGame; aqui (background) usa-se window._gfx.
+    try { window._gfx?.fixSceneShadows(); } catch (_) {}
+    setTimeout(() => { try { window._gfx?.fixSceneShadows(); } catch (_) {} }, 400);
 
     // Realismo extra: IBL (reflexões/ambiente HDR) + SSR (reflexo em tempo real)
-    try { gfx.enableRealism(); } catch (e) { console.warn('[GFX] realism:', e); }
+    try { window._gfx?.enableRealism(); } catch (e) { console.warn('[GFX] realism:', e); }
 
     // POR ÚLTIMO: garante a arma na mão. Roda DEPOIS do applyAllSaved (que
     //  podia jogar o viewmodel no chão ao casar nome genérico __root__).

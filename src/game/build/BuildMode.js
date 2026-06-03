@@ -998,7 +998,10 @@ export class BuildMode {
     root.getChildMeshes(false).forEach(m => m.computeWorldMatrix(true));
 
     makePieceBodies(root, this.scene);                         // colisor estático
-    this.level?.shadowGen?.addShadowCaster?.(root, true);      // projeta sombra
+    // sombra: adiciona as MALHAS filhas (não a raiz TransformNode — o CSM
+    //  chama getBoundingInfo no caster e TransformNode não tem → crashava)
+    const sg = this.level?.shadowGen;
+    if (sg) root.getChildMeshes(false).forEach(m => { try { sg.addShadowCaster(m); } catch (_) {} });
 
     const record = { kind: 'piece', pieceId: item.pieceId, name: uid,
                      p: [pos.x, pos.y, pos.z], ry: rotY, sc: scale };
