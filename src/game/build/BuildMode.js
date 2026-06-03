@@ -176,7 +176,7 @@ export class BuildMode {
     if (rec.kind === 'piece' && rec.pieceId) {
       const entry = await this._placePieceAt(
         new BABYLON.Vector3(rec.p[0], rec.p[1], rec.p[2]),
-        rec.ry || 0, rec.sc ?? 1, { pieceId: rec.pieceId }, false, rec.s || null,
+        rec.ry || 0, rec.sc ?? 1, { pieceId: rec.pieceId, src: rec.src }, false, rec.s || null,
       );
       if (entry) entry.worldId = rec._worldId || null;
       return entry;
@@ -202,15 +202,17 @@ export class BuildMode {
   }
 
   /**
-   * Torna um objeto GLB QUEBRÁVEL (sandbox): bater em sequência racha e
-   * quebra; parar regenera; ao quebrar dropa o próprio asset pro inventário.
-   * hp (em golpes) escala com o tamanho. Peças/quadros não entram.
+   * Torna um objeto QUEBRÁVEL (sandbox): bater em sequência racha e quebra;
+   * parar regenera; ao quebrar dropa o asset/peça de volta pro inventário.
+   * hp (em golpes) escala com o tamanho. Vale p/ GLBs E peças (parede/chão);
+   * só quadros ficam de fora.
    */
   _attachBreakable(entry, meshes) {
     if (!entry?.root) return;
     const rec = entry.record || {};
-    if (rec.kind === 'piece' || rec.kind === 'frame') return;
-    if (!(rec.id || rec.url)) return;   // precisa ser um asset recolocável
+    if (rec.kind === 'frame') return;                  // quadros não quebram
+    if (entry.breakable) return;                        // já anexado (evita dupla)
+    if (!(rec.id || rec.url || rec.pieceId)) return;   // GLB OU peça recolocável
     let maxDim = 2;
     try {
       const bb = entry.root.getHierarchyBoundingVectors?.(true);
@@ -229,7 +231,20 @@ export class BuildMode {
     if (!entry) return;
     try {
       const rec = entry.record || {};
-      if (rec.id || rec.url) {
+      if (rec.kind === 'piece' && rec.pieceId) {
+        // Peça (parede/chão/…) → dropa o construível certo de volta.
+        const s = rec.src || {};
+        const label = rec.pieceId === 'wall' ? 'Parede'
+                    : rec.pieceId === 'floor' ? 'Chão' : rec.pieceId;
+        window._gamePlayer?.inventory?.addBuildable?.({
+          assetId: s.assetId || ('piece_' + rec.pieceId),
+          name:    s.name || label,
+          pieceId: rec.pieceId,
+          drag:    s.drag || (rec.pieceId === 'wall' ? 'wall'
+                            : rec.pieceId === 'floor' ? 'floor' : undefined),
+        });
+        window._gamePlayer?.sounds?.playNow?.('pickup_item', 0.5);
+      } else if (rec.id || rec.url) {
         window._gamePlayer?.inventory?.addBuildable?.({
           assetId: rec.id, name: rec.name || rec.id || 'asset',
           glbUrl: rec.url, groupProps: rec.groupProps || {},
@@ -237,6 +252,9 @@ export class BuildMode {
         window._gamePlayer?.sounds?.playNow?.('pickup_item', 0.5);
       }
     } catch (_) {}
+    // remove os colisores/corpos (peça: _pieceBodies Havok; senão some o
+    //  VISUAL mas o colisor INVISÍVEL fica → "parede fantasma" bloqueando).
+    try { this._disposeColliderArtifacts(entry.root); } catch (_) {}
     // mundo compartilhado: marca quebrado (some pra todos via Realtime)
     if (entry.worldId) { this._worldEntries?.delete(entry.worldId); WorldObjects.markBroken(entry.worldId); }
     const i = this._placed.indexOf(entry);
@@ -1137,8 +1155,18 @@ export class BuildMode {
     const record = { kind: 'piece', pieceId: item.pieceId, name: uid,
                      p: [pos.x, pos.y, pos.z], ry: rotY, sc: scale };
     if (scl3) record.s = scl3;
+    // origem (assetId/drag/nome) → pra dropar o construível certo ao quebrar.
+    //  Vem do item "na mão" (inventário) ao colocar, ou do próprio record ao restaurar.
+    const gs = this._ghostSrc;
+    if (gs && gs._fromInventory && (gs.assetId || gs.drag)) {
+      record.src = { assetId: gs.assetId, drag: gs.drag, name: gs.name };
+    } else if (item.src) {
+      record.src = item.src;
+    }
     const entry = { record, root };
     this._placed.push(entry);
+    // sandbox: peças (parede/chão/…) também racham → quebram → dropam de volta
+    this._attachBreakable(entry, [root, ...root.getChildMeshes(false)]);
     if (save) { this._save(); this._persistPlaced(entry); }   // user action → persiste no mundo
     return entry;
   }
