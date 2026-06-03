@@ -1366,7 +1366,14 @@ async function init() {
 }
 
 // ── Restaura máquinas de criação salvas no DB ─────────────────────
+// AssetMachine é feature de DEV (pipeline Meshy precisa do config-server
+// rodando em 127.0.0.1:3099 pra proxy-image e GLB). Em PROD não tem
+// servidor local → nenhuma máquina deve spawnar.
 async function _restoreMachines(scene) {
+  if (LocalDB.isProd()) {
+    console.info('[machines] prod detectado — AssetMachine desabilitada (feature dev-only)');
+    return;
+  }
   const meshyPanel = window._meshyPanel;
   const player     = window._gamePlayer;
   const input      = window._gameInput;

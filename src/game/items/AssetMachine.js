@@ -242,8 +242,9 @@ export class AssetMachine {
 
     // Imagem local (assets/) carrega direto; só CDN http vai pro proxy
     // (assets.meshy.ai não envia Access-Control-Allow-Origin).
+    // Em prod o config-server local não existe → pula proxy (Meshy é dev-only).
     let texUrl = imageUrl;
-    if (/^https?:/.test(imageUrl)) try {
+    if (/^https?:/.test(imageUrl) && !LocalDB.isProd()) try {
       const proxyUrl = `http://127.0.0.1:3099/proxy-image?url=${encodeURIComponent(imageUrl)}`;
       const resp = await fetch(proxyUrl);
       if (resp.ok) {
@@ -316,7 +317,9 @@ export class AssetMachine {
    * Força sempre extensão .glb na hora do load (feito pelo chamador).
    */
   async _resolveGlbLoad(glbUrl) {
-    if (/^https?:/.test(glbUrl)) {
+    // Em prod (sem config-server) pula proxy: deixa o Babylon carregar a URL crua
+    // (CORS pode falhar, mas evita ERR_CONNECTION_REFUSED em 127.0.0.1:3099).
+    if (/^https?:/.test(glbUrl) && !LocalDB.isProd()) {
       try {
         const proxy = `http://127.0.0.1:3099/proxy-image?url=${encodeURIComponent(glbUrl)}`;
         const resp  = await fetch(proxy, { signal: AbortSignal.timeout(60000) });

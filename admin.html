@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- CSP: Babylon.js precisa de 'unsafe-eval' (new Function pra shaders/decorators). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.babylonjs.com https://preview.babylonjs.com https://assets.babylonjs.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https: wss: ws:; worker-src 'self' blob:; child-src 'self' blob:;" />
   <title>TransFPS — Admin</title>
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
   <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>

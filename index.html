@@ -7,6 +7,11 @@
        código novo e o jogo roda versão antiga). Remover ao publicar. -->
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
+  <!-- CSP: Babylon.js usa new Function() pra compilar shaders dinamicamente
+       (ShaderProcessor, decorators, KTX2/Draco workers). Sem 'unsafe-eval'
+       o Chrome bloqueia e dispara "CSP blocks the use of 'eval'".
+       'unsafe-inline' tambem necessario pra inline scripts/styles do jogo. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.babylonjs.com https://preview.babylonjs.com https://assets.babylonjs.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https: wss: ws:; worker-src 'self' blob:; child-src 'self' blob:;" />
   <title>TransFPS 🧀</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -782,7 +787,7 @@
   <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
   <!-- materialsLibrary: SkyMaterial (céu HD procedural do ciclo dia/noite) -->
   <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
-  <script type="module" src="src/main.js"></script>
+  <script type="module" src="src/main.js?v=20260603-23"></script>
 
   <!-- ── Config-server status monitor ── -->
   <script>

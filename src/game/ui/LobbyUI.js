@@ -26,9 +26,16 @@ export class LobbyUI {
     this._build();
 
     // Listeners do Colyseus pra atualizar UI in-room
+    // player_change dispara em x/y/z/ry a cada tick de movimento (10Hz por player).
+    // Lobby UI so precisa re-renderizar em campos que ele exibe: is_ready, pvp_on, dead, hp, weapon.
+    // Filtrar evita 17x spam de _refreshRoomView no welcome sync.
+    this._LOBBY_RELEVANT_FIELDS = new Set(['is_ready', 'pvp_on', 'dead', 'hp', 'weapon']);
     this.cs.on('player_add', () => this._refreshRoomView());
     this.cs.on('player_remove', () => this._refreshRoomView());
-    this.cs.on('player_change', () => this._refreshRoomView());
+    this.cs.on('player_change', (ev) => {
+      if (!ev || !this._LOBBY_RELEVANT_FIELDS.has(ev.field)) return;
+      this._refreshRoomView();
+    });
     this.cs.on('chat', (m) => this._appendChat(m));
     this.cs.on('match_started', () => this._onMatchStarted());
     this.cs.on('error', (m) => this._setStatus('erro: ' + (m.msg || m.code || 'desconhecido'), '#f55'));
@@ -247,6 +254,9 @@ export class LobbyUI {
       const token = session.data?.session?.access_token;
       const avatarUrl = this.auth.profile?.avatar_url ?? this.auth.user?.user_metadata?.avatar_url ?? null;
       this.cs.setPlayerId(this.auth.getUserId());
+      // Cacheia nome ANTES do refresh — metadata da room chega depois (race do matchmaker),
+      // entao _refreshRoomView precisa de um fallback enquanto isso.
+      this._lastJoinedRoomName = roomInfo.metadata?.name || null;
       await this.cs.joinRoomById({
         roomId: roomInfo.roomId,
         token, nickname: this.auth.getNickname(), avatar_url: avatarUrl, password,
@@ -312,6 +322,9 @@ export class LobbyUI {
       const token = session.data?.session?.access_token;
       const avatarUrl = this.auth.profile?.avatar_url ?? this.auth.user?.user_metadata?.avatar_url ?? null;
       this.cs.setPlayerId(this.auth.getUserId());
+      // Cacheia o nome ANTES do refresh — room.metadata e setado pelo server apos onCreate,
+      // mas o welcome ao cliente pode chegar antes do broadcast de metadata.
+      this._lastJoinedRoomName = config.name;
       await this.cs.createRoom({
         token, nickname: this.auth.getNickname(), avatar_url: avatarUrl,
         name: config.name, map: config.map, max_players: config.max,
@@ -440,37 +453,62 @@ export class LobbyUI {
     this._el.querySelector('#lb-empty').style.display = 'none';
     this._el.querySelector('#lb-room').style.display = 'flex';
 
-    if (!this.cs.room.metadata) {
-      console.error('[Lobby] _refreshRoomView: sala sem metadata');
+    // Source of truth = state (sync confiavel via schema).
+    // room.metadata chega DEPOIS do welcome (race do matchmaker), nao confiar nela como guard.
+    // Loga 1x por sala caso o map_id de fato nunca chegue (evita spam de 17 logs no welcome).
+    const mapId = this.cs.state.map_id;
+    if (!mapId) {
+      if (this._warnedNoMapIdFor !== this.cs.room.id) {
+        console.warn('[Lobby] _refreshRoomView: state.map_id ainda nao sincronizado (aguardando welcome)');
+        this._warnedNoMapIdFor = this.cs.room.id;
+      }
       return;
     }
-    const meta = this.cs.room.metadata;
-    if (!meta.name) {
-      console.error('[Lobby] _refreshRoomView: sala sem name em metadata');
-      return;
-    }
-    if (!this.cs.state.map_id) {
-      console.error('[Lobby] _refreshRoomView: state sem map_id');
-      return;
-    }
-    const mapInfo = Object.values(MapCatalog).find((m) => m.id === this.cs.state.map_id);
+    this._warnedNoMapIdFor = null;
+
+    const mapInfo = Object.values(MapCatalog).find((m) => m.id === mapId);
     if (!mapInfo) {
-      console.error('[Lobby] _refreshRoomView: mapa desconhecido:', this.cs.state.map_id);
+      if (this._lastBadMapId !== mapId) {
+        console.error('[Lobby] _refreshRoomView: mapa desconhecido:', mapId);
+        this._lastBadMapId = mapId;
+      }
       return;
     }
+    this._lastBadMapId = null;
+
     if (this.cs.state.players?.size == null) {
-      console.error('[Lobby] _refreshRoomView: state.players sem size');
+      if (this._warnedNoPlayersSize !== this.cs.room.id) {
+        console.error('[Lobby] _refreshRoomView: state.players sem size');
+        this._warnedNoPlayersSize = this.cs.room.id;
+      }
       return;
     }
+    this._warnedNoPlayersSize = null;
+
     if (!this.cs.room.maxClients) {
-      console.error('[Lobby] _refreshRoomView: room sem maxClients');
+      if (this._warnedNoMaxClients !== this.cs.room.id) {
+        console.error('[Lobby] _refreshRoomView: room sem maxClients');
+        this._warnedNoMaxClients = this.cs.room.id;
+      }
       return;
     }
-    this._el.querySelector('#lb-room-title').textContent = meta.name;
+    this._warnedNoMaxClients = null;
+
+    // Nome da sala: tenta metadata (quando chega), cai pro nome cacheado do join/create,
+    // ou usa o nick do host (via state.host_id → state.players) como ultimo fallback.
+    const meta = this.cs.room.metadata || {};
+    let roomName = meta.name || this._lastJoinedRoomName;
+    if (!roomName && this.cs.state.host_id) {
+      const hostPlayer = this.cs.state.players.get(this.cs.state.host_id);
+      if (hostPlayer?.nickname) roomName = 'Sala de ' + hostPlayer.nickname;
+    }
+    if (!roomName) roomName = 'Sala';
+
+    this._el.querySelector('#lb-room-title').textContent = roomName;
     const playersCount = this.cs.state.players.size;
     this._el.querySelector('#lb-room-meta').textContent =
       `${mapInfo.name} · ${playersCount}/${this.cs.room.maxClients} players`;
-    this._el.querySelector('#lb-room-name').textContent = '· em: ' + meta.name;
+    this._el.querySelector('#lb-room-name').textContent = '· em: ' + roomName;
 
     const myId = this.auth.getUserId();
     const playersDiv = this._el.querySelector('#lb-players');
@@ -595,6 +633,8 @@ export class LobbyUI {
       try { await this.cs.leave(); }
       catch (e) { console.error('[MP] _doExit falha ao sair da sala:', e); return; }
     }
+    // Limpa cache do nome pra proxima sala nao herdar o nome anterior
+    this._lastJoinedRoomName = null;
 
     // 3) Cleanup: esconde a UI do lobby
     this.hide();
