@@ -1141,6 +1141,20 @@ async function init() {
         loading?.setProgress(70, 'preparando shaders');
         await new Promise(r => scene.executeWhenReady(r));
         loading?.setProgress(100, 'pronto');
+        // ── SKYDIVE OPEN_WORLD: nasce a ~80m e CAI ate o chao ──────────
+        //  Posiciona o player no alto ANTES de soltar a start-screen/click.
+        //  Player.update() detecta _isFalling → toca vento (loop) + anim de
+        //  queda, e ao aterrissar para o vento + toca o baque.
+        try {
+          player.mesh.position.set(0, 80, 0);
+          player.velY = 0; player._vx = 0; player._vz = 0;
+          player._prevY = 80;
+          player._isFalling = true;
+          if (player._cc) {
+            player._cc.setPosition(new BABYLON.Vector3(0, 80, 0));
+            player._cc.setVelocity(BABYLON.Vector3.Zero());
+          }
+        } catch (e) { console.warn('[Skydive] spawn 80m falhou:', e?.message); }
         await new Promise(r => setTimeout(r, 100));
       } else {
         loading?.show('CARREGANDO MAPA', `${mapId} · preparando assets…`, true);
@@ -1167,17 +1181,20 @@ async function init() {
       catch (e) { console.error('[ServerList] show apos map fail:', e); throw e; }
       return;
     }
-    $('start-screen').style.display = 'none';
+    // ── FIX "boneco voando": mostra o overlay click-to-play (z-index 9999,
+    //  fundo opaco) ANTES de esconder a start-screen. Assim NUNCA existe frame
+    //  com a cena exposta + camera ainda em (0,0,0) olhando o player la em cima.
+    //  Sequencia: overlay opaco cobre tudo → start-screen some por tras → so
+    //  quando o player clica (gesture fresco) o jogo ativa e a camera ja esta
+    //  posicionada por player.update no primeiro frame ativo.
     document.body.classList.add('in-game');
-    // Pointer Lock requer user-gesture. Em vez de chamar requestPointerLock automaticamente
-    // (que falha com NotAllowedError porque o gesture do click ENTRAR ja expirou apos os
-    // awaits do load), mostramos overlay "CLIQUE PARA JOGAR" — o click do overlay eh
-    // gesture FRESCO valido pro requestPointerLock.
     _showClickToPlayOverlay(() => {
       try { window._gameInput?.activate(); } catch (e) { console.error('[Input] activate:', e); }
       try { setFocusUI(true); } catch (e) { console.error('[UI] setFocusUI:', e); }
       try { window._musicSystem?.start(); } catch (e) { console.error('[Music] start:', e); }
     });
+    // start-screen escondida DEPOIS do overlay opaco ja estar no DOM cobrindo.
+    $('start-screen').style.display = 'none';
   };
 
   // ── Overlay "CLIQUE PARA JOGAR" — captura gesture fresco pro Pointer Lock ──

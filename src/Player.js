@@ -53,7 +53,11 @@ export class Player {
     this.animCtrl     = null;
 
     // ── Modo câmera ─────────────────────────────────────────────────
-    this._tpsMode  = false;   // false = FPS, true = 3ª pessoa (tecla V)
+    //  DEFAULT = 3ª pessoa (mostra o boneco). Tecla V alterna FPS<->TPS.
+    //  O boneco só aparece quando o GLB carrega: enquanto `animator == null`
+    //  não existe corpo (a capsule tem alpha=0) e, ao montar, PlayerAnimator
+    //  inicia com setVisible(false) e só vira visível via setMouseCharacter.
+    this._tpsMode  = true;    // true = 3ª pessoa, false = FPS (tecla V)
     this.animator  = null;    // PlayerAnimator (setado quando GLB carrega)
 
     // Landing shake
@@ -145,9 +149,13 @@ export class Player {
       this.sounds?.playReloadTimed?.('gun_reload', reloadDur, 0.8);
     };
     this.weapon.onWeaponSwitched = (w) => {
+      // Equipa conforme o TIPO da arma (igual o G faz): melee → 'sword'
+      // (canAttack true), arma de fogo → 'armed' (canShoot true). NUNCA
+      // forçar 'armed' fixo aqui — isso clobberava o estado de espada e
+      // exigia holster/unholster (G 2x) pra poder bater/atirar.
       if (this.stateMachine) {
-        this.stateMachine.isArmedFlag = true;
-        this.stateMachine.setState('armed');
+        if (w?.isMelee) this.stateMachine.equipSword();
+        else            this.stateMachine.equipWeapon();
       }
       this._updateWeaponVisibility();
     };
@@ -385,6 +393,30 @@ export class Player {
       this.isGrounded = this._support.supportedState === this._SUPPORTED;
     } else {
       this.isGrounded = this._checkGrounded();
+    }
+
+    // ── QUEDA DO CÉU (skydive OPEN_WORLD) ────────────────────────────
+    //  Nasce a ~80m (setado no main.js: player._isFalling = true). Enquanto
+    //  cai: vento em LOOP + anim 'falling' (forçada aqui pra entrar na hora,
+    //  sem esperar o _fallT acumular). Ao tocar o chão: para o vento + baque.
+    if (this._isFalling) {
+      if (!this._windOn) {
+        this._windOn = true;
+        try { this.sounds?.startLoop?.('wind', 0.6); } catch (_) {}
+      }
+      try {
+        if (this.animCtrl && this.animLib?.has?.('falling')) {
+          this.animCtrl.play('falling', { loop: true, speed: 1.0, fade: 0.18 });
+        } else {
+          this.animator?.play?.('falling');
+        }
+      } catch (_) {}
+      if (this.isGrounded) {
+        this._isFalling = false;
+        this._windOn    = false;
+        try { this.sounds?.stopLoop?.('wind'); } catch (_) {}
+        try { this.sounds?.playNow?.('land', 0.9); } catch (_) {}
+      }
     }
 
     // Coyote time: "grounded visual" só vira false após ~0.12s no ar.

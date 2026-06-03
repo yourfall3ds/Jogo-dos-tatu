@@ -93,6 +93,12 @@ export class SoundManager {
       jump            : 'assets/Sound FX/voos e rushs/jump.wav',
       walljump        : 'assets/Sound FX/voos e rushs/walljumps.wav',
       deathfall       : 'assets/Sound FX/voos e rushs/Caindo morto forte.wav',
+      // wind — som de vento/voo em LOOP durante a queda do céu (skydive).
+      //  Não há .wav de vento puro → reusa o "air recover" (whoosh de ar contínuo),
+      //  que segura melhor o loop que o walljump (curto/seco).
+      wind            : 'assets/Sound FX/voos e rushs/airrecover.wav',
+      // land — baque ao tocar o chão (impacto do groundhit; sobrevive à queda).
+      land            : 'assets/Sound FX/voos e rushs/groundhit.wav',
       // Inimigo voando longe após golpe forte (ESPACIAL — abaixa com a distância)
       flyby           : 'assets/Sound FX/voos e rushs/Barulho do cara voando longe quando recebe um golpe forte.wav',
       bullet_whiz     : "assets/Sound FX/voos e rushs/Barulho do cara voando longe quando recebe um golpe forte.wav",

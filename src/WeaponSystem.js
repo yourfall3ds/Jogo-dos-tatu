@@ -157,8 +157,11 @@ export class WeaponSystem {
     // Espada equipada → state 'sword' (canAttack true); arma de fogo → 'armed'.
     const sm = this._stateMachine || window._gamePlayer?.stateMachine;
     if (sm) {
+      // Trocar de arma SEMPRE deixa a arma pronta pra usar — equipa conforme
+      // o tipo, sem depender de isArmedFlag (estar em modo luta não devia
+      // pular a sincronização da arma de fogo).
       if (w.isMelee) sm.equipSword();
-      else if (sm.isArmedFlag) sm.equipWeapon();
+      else           sm.equipWeapon();
     }
 
     if (this.onWeaponSwitched) this.onWeaponSwitched(w);
@@ -400,6 +403,28 @@ export class WeaponSystem {
     } catch(e) {
       console.warn('[WeaponSystem] GlowLayer não disponível:', e.message);
     }
+  }
+
+  // ── Spread (dispersão) — aplica desvio aleatório no vetor dir IN-PLACE ──
+  // w.spread (rad). Mirando (ADS) multiplica por w.aimSpreadMult pra ficar
+  // mais preciso. _aimAmount (0..1) eh interpolado em update().
+  _applySpread(dir) {
+    try {
+      const w = this.getCurrentWeapon();
+      const base = (w?.spread ?? 0.0);
+      if (base <= 0) return;
+      const aimMult = w?.aimSpreadMult ?? 0.3;
+      const aim = this._aimAmount ?? 0;
+      // Lerp spread entre quadril (base) e mira (base*aimMult)
+      const spread = base * (1 - aim * (1 - aimMult));
+      if (spread <= 0) return;
+      // Desvio aleatorio em cone
+      const yaw   = (Math.random() - 0.5) * 2 * spread;
+      const pitch = (Math.random() - 0.5) * 2 * spread;
+      const m = BABYLON.Matrix.RotationYawPitchRoll(yaw, pitch, 0);
+      const out = BABYLON.Vector3.TransformNormal(dir, m);
+      dir.copyFrom(out.normalize());
+    } catch (_) {}
   }
 
   shoot() {
