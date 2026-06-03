@@ -153,8 +153,10 @@ export class BuildMode {
   /** Mesmo objeto do mundo? (echo do realtime) kind+asset iguais e pos ≈. */
   _sameWorldRecord(a, b) {
     if (!a || !b) return false;
-    const ka = a.kind === 'piece' ? 'p:' + a.pieceId : 'g:' + (a.id || a.url || '');
-    const kb = b.kind === 'piece' ? 'p:' + b.pieceId : 'g:' + (b.id || b.url || '');
+    const keyOf = (r) => r.kind === 'piece' ? 'p:' + r.pieceId
+                       : r.kind === 'frame' ? 'f:' + (r.imageUrl || '')
+                       : 'g:' + (r.id || r.url || '');
+    const ka = keyOf(a), kb = keyOf(b);
     if (ka !== kb) return false;
     const pa = a.p || [], pb = b.p || [];
     return Math.abs((pa[0] || 0) - (pb[0] || 0)) < 0.5 &&
@@ -177,7 +179,7 @@ export class BuildMode {
 
   /** Persiste um objeto recém-colocado no mundo compartilhado (Supabase). */
   async _persistPlaced(entry) {
-    if (!this._sharedWorld || !entry?.record || entry.record.kind === 'frame') return;
+    if (!this._sharedWorld || !entry?.record) return;
     try {
       const worldId = await WorldObjects.place(entry.record);
       if (worldId) { entry.worldId = worldId; this._worldEntries.set(worldId, entry); }
@@ -190,6 +192,14 @@ export class BuildMode {
    * Não salva — quem chama decide persistência.
    */
   async _renderRecordToScene(rec) {
+    if (rec.kind === 'frame') {
+      const entry = await this._buildFrameAt(
+        new BABYLON.Vector3(rec.p[0], rec.p[1], rec.p[2]),
+        rec.ry || 0, rec.sc ?? 1.0, rec.imageUrl, rec.prompt, false,
+      );
+      if (entry) entry.worldId = rec._worldId || null;
+      return entry;
+    }
     if (rec.kind === 'piece' && rec.pieceId) {
       const entry = await this._placePieceAt(
         new BABYLON.Vector3(rec.p[0], rec.p[1], rec.p[2]),
@@ -1465,19 +1475,29 @@ export class BuildMode {
 
     // ── Persiste ──────────────────────────────────────────────────────
     const record = { kind: 'frame', id: uid, imageUrl, prompt: prompt || '', p: [pos.x, pos.y, pos.z], ry: rotY, sc: scale };
-    this._placed.push({ record, root });
+    const entry = { record, root };
+    this._placed.push(entry);
 
     if (save) {
-      let frames = [];
-      try { frames = await LocalDB.get('placed_frames', []); } catch (_) {}
-      frames.push(record);
-      await LocalDB.save('placed_frames', frames);
+      if (this._sharedWorld) {
+        // MUNDO GLOBAL: quadro vira world_object (todos veem via Realtime).
+        await this._persistPlaced(entry);
+      } else {
+        let frames = [];
+        try { frames = await LocalDB.get('placed_frames', []); } catch (_) {}
+        frames.push(record);
+        await LocalDB.save('placed_frames', frames);
+      }
     }
+    return entry;
   }
 
   /** Restaura todos os quadros salvos (chamado no construtor) */
   async _restoreFrames() {
     try {
+      // No MUNDO COMPARTILHADO os quadros vêm do Supabase (loadAll) — não
+      // restaura os locais (LocalDB) pra não duplicar/conflitar.
+      if (await WorldObjects.available()) return;
       const frames = await LocalDB.get('placed_frames', []);
       for (const f of frames) {
         await this._buildFrameAt(

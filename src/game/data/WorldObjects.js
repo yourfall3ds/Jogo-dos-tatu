@@ -32,6 +32,15 @@ export function recordToRow(rec) {
       sx: s[0], sy: s[1], sz: s[2], props: {},
     };
   }
+  // Quadro/picture frame: imagem (imageUrl) na url + prompt nos props.
+  if (rec.kind === 'frame') {
+    const sc = rec.sc ?? 1;
+    return {
+      world_id: WORLD_ID, kind: 'frame', asset_id: null, url: rec.imageUrl || null,
+      px: rec.p[0], py: rec.p[1], pz: rec.p[2], ry: rec.ry || 0,
+      sx: sc, sy: sc, sz: sc, props: { prompt: rec.prompt || '' },
+    };
+  }
   const sc = rec.sc ?? 1;
   return {
     world_id: WORLD_ID, kind: 'glb', asset_id: rec.id || null, url: rec.url || null,
@@ -47,6 +56,14 @@ export function rowToRecord(row) {
       kind: 'piece', pieceId: row.asset_id, name: 'w_' + row.id,
       p: [row.px, row.py, row.pz], ry: row.ry || 0,
       sc: row.sx ?? 1, s: [row.sx ?? 1, row.sy ?? 1, row.sz ?? 1],
+      _worldId: row.id,
+    };
+  }
+  if (row.kind === 'frame') {
+    return {
+      kind: 'frame', id: 'w_' + row.id, name: 'w_' + row.id,
+      imageUrl: row.url, prompt: row.props?.prompt || '',
+      p: [row.px, row.py, row.pz], ry: row.ry || 0, sc: row.sx ?? 1,
       _worldId: row.id,
     };
   }
