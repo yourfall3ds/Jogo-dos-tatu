@@ -797,19 +797,11 @@ async function init() {
       : (_remotePlayers.get(d.player_id)?.nickname || cs.state?.players?.get(d.player_id)?.nickname || 'player');
     _showKillFeed(`${killerNick} ☠ ${victimNick}`);
 
-    // ── KillCam: morri eu → replay 3s na camera do assassino ──
-    // Nao dispara se o killer fui eu (suicidio/sem matador) nem se a
-    // DeathCam ja estiver no controle da camera (evita briga de camera).
-    if (d.player_id === myId && d.killer && d.killer !== myId) {
-      try {
-        const kc = window._killCam;
-        if (kc && !(window._deathCam?.isActive?.())) {
-          const killerRP = _remotePlayers.get(d.killer);
-          const killerRoot = killerRP?.root || _remoteMobs.get(d.killer)?.root || null;
-          kc.start(killerNick, killerRoot, 3000, () => {});
-        }
-      } catch (e) { console.error('[KillCam] start:', e); }
-    }
+    // ── KillCam REMOVIDA ──────────────────────────────────────────────
+    // A killcam (replay 3s na câmera do assassino) + DeathCam (câmera
+    // cinematográfica orbital) só atrapalhavam: prendiam a câmera e
+    // impediam o respawn/voltar a jogar. Agora ao morrer: morte rápida →
+    // respawn direto, sem câmera presa. Mantém só o killfeed (acima).
   });
 
   cs.on('respawn', () => { /* state update vem via player.dead → false */ });
@@ -984,8 +976,10 @@ async function init() {
   const pingDisplay = new PingDisplay(cs);
   const deathTimer = new DeathTimer(cs, auth);
   const bloodTrail = new BloodTrail(cs, player);
-  const deathCam = new DeathCam(scene, cs, auth, player);
-  const killCam = new KillCam(scene, cs);
+  // KillCam e DeathCam REMOVIDAS (prendiam a câmera e travavam o respawn).
+  // Stubs no-op pra manter compat com qualquer código que cheque _deathCam/_killCam.
+  const deathCam = { push(){}, enter(){}, exit(){}, update(){}, isActive(){ return false; } };
+  const killCam = { start(){}, stop(){}, isActive(){ return false; } };
   window._killCam = killCam;
   window._chatHud = chatHud;
   window._scoreboard = scoreboard;
@@ -993,6 +987,16 @@ async function init() {
   window._deathTimer = deathTimer;
   window._bloodTrail = bloodTrail;
   window._deathCam = deathCam;
+
+  // ── Minimap circular (canto inferior direito) — funciona no modo normal ──
+  // Reaproveita o Minimap do Battle Royale (mostra players próximos + direção).
+  let _minimap = null;
+  try {
+    const { Minimap } = await import('./game/br/Minimap.js');
+    _minimap = new Minimap(cs, auth, 'normal-minimap');
+    window._minimap = _minimap;
+  } catch (e) { console.error('[Minimap] init:', e); }
+  let _minimapT = 0;
 
   // ── Frentes A-J: Social/Progression/Match/Boss/Quests/Friends/Party/Tutorial ──
   window._authUserId = auth.getUserId();
@@ -1888,23 +1892,21 @@ async function init() {
     try { deathTimer.update(); } catch (e) { console.error('[HUD] deathTimer:', e); }
     // Blood trail (auto sangue ao chão quando ferido)
     try { bloodTrail.update(dt); } catch (e) { console.error('[HUD] bloodTrail:', e); }
-    // Death cam ring buffer + ativação/desativação
-    try { deathCam.push(player); } catch (e) { console.error('[HUD] deathCam:', e); }
+    // ── MORTE / RESPAWN (KillCam e DeathCam REMOVIDAS) ─────────────────
+    // Sem câmera cinematográfica: ao morrer, o server marca dead=true e
+    // auto-respawna em ~5s (dead→false); aqui só limpamos o estado local
+    // e reposicionamos. Sem câmera presa, sem replay, sem tela preta.
     if (cs.connected && cs.state && cs.state.players && typeof cs.state.players.get === 'function') {
       const me = cs.state.players.get(auth.getUserId());
       const isDead = !!me?.dead;
-      if (isDead && !_lastDeadState) {
-        deathCam.enter(_lastKillerId);
-      } else if (!isDead && _lastDeadState) {
+      if (!isDead && _lastDeadState) {
         // ── SERVER RESPAWNOU (dead→false) ──────────────────────────────
-        // 1) Restaura a câmera FPS/TPS e remove o banner da DeathCam.
-        deathCam.exit();
         _lastKillerId = null;
-        // 2) RESPAWN LOCAL DO PLAYER. Sem isto, player._dead fica true pra
-        //    sempre → overlay #death-screen (fullscreen preta) NUNCA sai e
-        //    cobre tudo = tela preta. respawn() limpa _dead, reposiciona,
-        //    sai do knockdown e re-trava o pointer (input.activate()).
-        //    Guarda anti-loop: não reenvia sendRespawn ao server.
+        // RESPAWN LOCAL DO PLAYER. Sem isto, player._dead fica true pra
+        // sempre → overlay #death-screen (fullscreen preta) NUNCA sai e
+        // cobre tudo = tela preta. respawn() limpa _dead, reposiciona,
+        // sai do knockdown e re-trava o pointer (input.activate()).
+        // Guarda anti-loop: não reenvia sendRespawn ao server.
         if (player._dead) {
           try {
             player._serverRespawn = true;
@@ -1927,7 +1929,18 @@ async function init() {
       }
       _lastDeadState = isDead;
     }
-    deathCam.update(dt);
+    // Minimap (modo normal): atualiza a 5Hz. No BATTLE_ROYALE o próprio
+    // BattleRoyaleMode cuida do minimap dele → escondemos este pra não duplicar.
+    if (_minimap) {
+      _minimapT -= dt;
+      if (_minimapT <= 0) {
+        try {
+          if (cs.state?.mode === 'BATTLE_ROYALE') _minimap.hide();
+          else _minimap.update();
+        } catch (_) {}
+        _minimapT = 0.2;
+      }
+    }
     if (_localAura) _localAura.update(dt);
     pvpToggle.update(input);
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);

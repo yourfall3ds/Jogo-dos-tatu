@@ -9,16 +9,25 @@
 // ─────────────────────────────────────────────────────────────────
 
 export class Minimap {
-  constructor(cs, auth) {
+  constructor(cs, auth, elId = 'br-minimap') {
     this.cs = cs; this.auth = auth;
+    this._elId = elId;
     this._build();
     this._size = 180;
     this._scale = 0.5; // 1 unidade mundo = 0.5px minimap → 360u visíveis
   }
 
   _build() {
+    // Reaproveita o elemento se já existir (evita DOM duplicado com mesmo id)
+    const existing = document.getElementById(this._elId);
+    if (existing) {
+      this._el = existing;
+      this._canvas = existing.querySelector('canvas');
+      this._ctx = this._canvas.getContext('2d');
+      return;
+    }
     const el = document.createElement('div');
-    el.id = 'br-minimap';
+    el.id = this._elId;
     el.style.cssText = `
       position:fixed; bottom:14px; right:14px; z-index:88;
       width:180px; height:180px; pointer-events:none; display:none;
@@ -43,10 +52,12 @@ export class Minimap {
   show() { this._el.style.display = 'block'; }
   hide() { this._el.style.display = 'none'; }
 
-  /** Chamado em 5Hz por BattleRoyaleMode/BattleRoyaleHUD */
+  /** Chamado em 5Hz por BattleRoyaleMode/BattleRoyaleHUD (BR) ou pelo render loop (modo normal) */
   update() {
     const st = this.cs?.state;
-    if (!st || st.mode !== 'BATTLE_ROYALE') { this.hide(); return; }
+    // Mostra no BATTLE_ROYALE (com zona) E no modo normal/OPEN_WORLD (sem zona).
+    // Só esconde se não houver estado/conexão.
+    if (!st || !st.players) { this.hide(); return; }
     this.show();
     const me = st.players?.get(this.auth?.getUserId());
     if (!me) return;
