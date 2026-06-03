@@ -217,6 +217,21 @@ export class ServerListUI {
     this._joining = true;
     this._setStatus(`entrando em ${roomInfo.metadata?.name || 'servidor'}…`, '#ffd54a');
 
+    // ── FIX piscada: mostra o loading OPACO cobrindo TUDO no INSTANTE do click,
+    //  ANTES de qualquer await (join de rede / leave / mapa). Assim NUNCA existe
+    //  janela em que a lista some e a cena 3D aparece exposta antes do loading.
+    //  Espera 1 frame pintado antes de iniciar a carga pesada.
+    try {
+      const _loading = window._loadingOverlay;
+      if (_loading) {
+        _loading.show('ENTRANDO NO SERVIDOR',
+          `${roomInfo.metadata?.name || 'servidor'} · conectando…`, true);
+        _loading.setProgress(5, 'conectando…');
+        // garante 1 frame pintado (overlay visivel) antes de bloquear na rede
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }
+    } catch (e) { console.error('[ServerList] loading pre-join:', e); }
+
     try {
       if (this.cs.room) {
         try { await this.cs.leave(); }
@@ -245,6 +260,8 @@ export class ServerListUI {
       }
     } catch (e) {
       console.error('[ServerList] join:', e);
+      // esconde o loading opaco antes de voltar pra lista (erro de join)
+      try { window._loadingOverlay?.hide(); } catch (_) {}
       this._setStatus('erro: ' + (e.message || 'falha ao entrar'), '#f55');
       this._joining = false;
       if (!this._visible) this.show();

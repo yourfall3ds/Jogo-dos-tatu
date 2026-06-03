@@ -149,19 +149,47 @@ export class InputManager {
     // alt-tab, clica fora da janela, etc.
     // Nesse caso precisamos sincronizar nosso estado gameActive.
     document.addEventListener('pointerlockchange', () => {
-      if (!document.pointerLockElement && this.gameActive) {
+      if (document.pointerLockElement === this.canvas) {
+        // Lock CONFIRMADO pelo browser → travou de verdade.
+        this._lockConfirmed = true;
+      } else if (!document.pointerLockElement && this.gameActive) {
         // Lock foi liberado pelo browser → pausa o jogo
+        this._lockConfirmed = false;
         this._internalDeactivate();
       }
+    });
+
+    // ── Pointer lock error ──────────────────────────────────────────
+    // Se o browser rejeitar o lock (gesto considerado não-confiável, engine
+    // ainda focando, alt-tab no meio do gesto), ANTES isso era silenciosamente
+    // descartado MAS gameActive já estava true → mouse do SO ficava livre e
+    // saía pra fora da tela. Agora: loga e marca pra re-tentar no próximo clique.
+    document.addEventListener('pointerlockerror', () => {
+      this._lockConfirmed = false;
+      console.warn('[Input] pointerlockerror — lock rejeitado pelo browser; vai re-tentar no proximo clique.');
     });
   }
 
   // ── Solicita pointer lock no canvas ──────────────────────────────
+  // DEVE ser chamado DENTRO de um gesture síncrono (pointerdown/click/mousedown),
+  // nunca depois de await — senão o browser rejeita o lock como não-confiável.
   _requestLock() {
     try {
-      this.canvas.focus();              // garante foco no elemento
-      this.canvas.requestPointerLock(); // API simples, síncrona, confiável
-    } catch (_) {}
+      this.canvas.focus();              // garante foco no elemento (precisa tabindex no canvas)
+      // requestPointerLock pode retornar undefined (API antiga) ou uma Promise (API nova).
+      const ret = this.canvas.requestPointerLock();
+      if (ret && typeof ret.then === 'function') {
+        ret.then(() => { this._lockConfirmed = true; })
+           .catch(err => {
+             // NotAllowedError: gesto não-confiável / janela sem foco. Re-tenta no próximo clique.
+             this._lockConfirmed = false;
+             console.warn('[Input] requestPointerLock rejeitado:', err?.name || err);
+           });
+      }
+    } catch (e) {
+      this._lockConfirmed = false;
+      console.warn('[Input] requestPointerLock lançou:', e?.name || e);
+    }
   }
 
   // ── Deactivation interna (usada pelo pointerlockchange) ──────────

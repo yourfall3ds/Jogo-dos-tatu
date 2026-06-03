@@ -1146,20 +1146,23 @@ async function init() {
         loading?.setProgress(70, 'preparando shaders');
         await new Promise(r => scene.executeWhenReady(r));
         loading?.setProgress(100, 'pronto');
-        // ── SKYDIVE OPEN_WORLD: nasce a ~80m e CAI ate o chao ──────────
+        // ── SKYDIVE OPEN_WORLD: nasce a ~200m e CAI ate o chao ─────────
         //  Posiciona o player no alto ANTES de soltar a start-screen/click.
         //  Player.update() detecta _isFalling → toca vento (loop) + anim de
         //  queda, e ao aterrissar para o vento + toca o baque.
+        //  ⭐ Ja nasce CAINDO: velY negativo + setVelocity pra baixo, e o
+        //  bloco _isFalling roda a fisica de queda mesmo SEM input (sem ficar
+        //  parado de pe no ar enquanto o overlay 'CLIQUE PARA CAIR' esta na tela).
         try {
-          player.mesh.position.set(0, 80, 0);
-          player.velY = 0; player._vx = 0; player._vz = 0;
-          player._prevY = 80;
+          player.mesh.position.set(0, 200, 0);
+          player.velY = -15; player._vx = 0; player._vz = 0;
+          player._prevY = 200;
           player._isFalling = true;
           if (player._cc) {
-            player._cc.setPosition(new BABYLON.Vector3(0, 80, 0));
-            player._cc.setVelocity(BABYLON.Vector3.Zero());
+            player._cc.setPosition(new BABYLON.Vector3(0, 200, 0));
+            player._cc.setVelocity(new BABYLON.Vector3(0, -15, 0));
           }
-        } catch (e) { console.warn('[Skydive] spawn 80m falhou:', e?.message); }
+        } catch (e) { console.warn('[Skydive] spawn 200m falhou:', e?.message); }
         await new Promise(r => setTimeout(r, 100));
       } else {
         loading?.show('CARREGANDO MAPA', `${mapId} · preparando assets…`, true);
@@ -1273,6 +1276,20 @@ async function init() {
     `;
     document.body.appendChild(el);
     el.addEventListener('pointerdown', () => {
+      // ── Pointer lock PRIMEIRO, síncrono, dentro deste gesture fresco ──
+      // O requestPointerLock SÓ engata se chamado direto num gesto confiável,
+      // ANTES de qualquer await/Promise. Por isso pedimos o lock aqui no topo,
+      // direto no canvas, antes de remover o overlay ou entrar em VR.
+      // input.activate() (via onClick) também pede o lock — chamadas repetidas
+      // no mesmo gesto são idempotentes/inofensivas.
+      try {
+        const cv = document.getElementById('renderCanvas');
+        if (cv) {
+          cv.focus();
+          cv.requestPointerLock?.();
+        }
+      } catch (e) { console.warn('[ClickToPlay] requestPointerLock:', e?.name || e); }
+
       // Quest auto-entra em VR no mesmo gesture
       try {
         const vr = window._vrSystem;
@@ -1585,11 +1602,25 @@ async function init() {
       }
       const ov = $('pause-overlay');
       if (ov?.classList.contains('visible')) {
+        // Pause ja aberto → ESC retoma o jogo (re-trava pointer lock).
         e.preventDefault();
         _resumeFromPause();
+        return;
       }
-      // Se nao tem pause aberto, deixa o browser liberar pointer lock
-      // → input.onDeactivated dispara → _showGamePause()
+      // Pause NAO aberto. Dois caminhos:
+      //  (a) pointer lock ATIVO no canvas → o browser libera o lock ao apertar ESC
+      //      e o pointerlockchange (InputManager) dispara onDeactivated → _showGamePause().
+      //      Deixamos o evento fluir; nao chamamos _showGamePause() aqui pra nao duplicar.
+      //  (b) pointer lock NAO engatou (gesto recusado, ja solto, alt-tab) → nao ha lock
+      //      pra liberar, entao pointerlockchange NUNCA dispara. Sem este fallback o jogo
+      //      nunca pausava. Aqui pausamos DIRETO.
+      const locked = document.pointerLockElement === canvas;
+      if (!locked) {
+        e.preventDefault();
+        window._gameInput?.deactivate();   // limpa gameActive + esconde cursor do jogo
+        setFocusUI(false);
+        _showGamePause();
+      }
     }
   });
 

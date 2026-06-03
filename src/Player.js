@@ -373,8 +373,75 @@ export class Player {
     }
   }
 
+  // ── Queda do céu ANTES do click (sem input) ───────────────────────
+  //  Roda a fisica de queda independente de gameActive: aplica gravidade,
+  //  empurra a velocidade pra baixo no character controller e move o mesh.
+  //  Assim o player NUNCA fica parado de pe no ar enquanto o overlay
+  //  'CLIQUE PARA CAIR' esta na tela — ele JA aparece caindo.
+  _skydiveFall(dt) {
+    // Vento em LOOP + anim de queda (forcadas pra entrar na hora).
+    if (!this._windOn) {
+      this._windOn = true;
+      try { this.sounds?.startLoop?.('wind', 0.6); } catch (_) {}
+    }
+    try {
+      if (this.animCtrl && this.animLib?.has?.('falling')) {
+        this.animCtrl.play('falling', { loop: true, speed: 1.0, fade: 0.18 });
+      } else {
+        this.animator?.play?.('falling');
+      }
+    } catch (_) {}
+
+    // Suporte atual (detecta o chao pra encerrar a queda).
+    if (this._cc) {
+      try {
+        this._support   = this._cc.checkSupport(dt, this._ccDown);
+        this.isGrounded = this._support.supportedState === this._SUPPORTED;
+      } catch (_) { this.isGrounded = false; }
+    } else {
+      this.isGrounded = this._checkGrounded();
+    }
+
+    // Gravidade manual: acelera a velocidade vertical ate a terminal.
+    this.velY -= this.GRAVITY * dt;
+    this.velY  = Math.max(this.velY, -this.MAX_FALL);
+
+    // Aplica a queda no mundo.
+    if (this._cc) {
+      try {
+        this._cc.setVelocity(new BABYLON.Vector3(0, this.velY, 0));
+        this._cc.integrate(dt, this._support, this._charGravity);
+        this.mesh.position.copyFrom(this._cc.getPosition());
+      } catch (_) {
+        this.mesh.position.y += this.velY * dt;
+      }
+    } else {
+      this.mesh.position.y += this.velY * dt;
+    }
+    this._prevY = this.mesh.position.y;
+
+    // Aterrissou → encerra o skydive: para vento + baque.
+    if (this.isGrounded) {
+      this._isFalling = false;
+      this._windOn    = false;
+      if (this.velY < 0) this.velY = 0;
+      try { this.sounds?.stopLoop?.('wind'); } catch (_) {}
+      try { this.sounds?.playNow?.('land', 0.9); } catch (_) {}
+    }
+  }
+
   // ── Update principal ──────────────────────────────────────────────
   update(dt) {
+    // ── SKYDIVE antes do click: CAI mesmo SEM input ──────────────────
+    //  O spawn (main.js) teleporta o player la pro alto e seta _isFalling
+    //  ANTES de soltar o overlay 'CLIQUE PARA CAIR'. Enquanto esse overlay
+    //  esta na tela, gameActive=false e o early-return abaixo congelaria o
+    //  player de pe no ar. Pra ele JA aparecer caindo, rodamos a fisica de
+    //  queda aqui — independente do input — ate aterrissar.
+    if (this._isFalling && !this.input.gameActive && !this._dead) {
+      this._skydiveFall(dt);
+      return;
+    }
     // Só roda após JOGAR. Exceção: MORTO → continua atualizando (queda/anim/
     // câmera) mesmo sem pointer-lock, pra você ver a queda enquanto o cursor
     // fica livre pra clicar Renascer.

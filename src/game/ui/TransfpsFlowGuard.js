@@ -13,8 +13,9 @@ export class LoadingOverlay {
     const el = document.createElement('div');
     el.id = 'loading-overlay';
     el.style.cssText = `
-      position:fixed; inset:0; z-index:480; display:none;
-      background:radial-gradient(circle at center,#0a1230,#02030a);
+      position:fixed; inset:0; z-index:9000; display:none;
+      background:#02030a;
+      background-image:radial-gradient(circle at center,#0a1230,#02030a);
       align-items:center; justify-content:center; flex-direction:column; gap:18px;
       color:#dff5ff; font-family:'Segoe UI',monospace;
     `;
