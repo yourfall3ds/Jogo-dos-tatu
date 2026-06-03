@@ -1352,13 +1352,21 @@ export class ArenaRoom extends Room {
 
   _startBattleRoyale() {
     if (this.state.mode !== 'BATTLE_ROYALE') return;
+    // Guarda: nunca rodar 2x. _matchDirectorTick chamava isto a cada frame
+    // enquanto match_state continuava COUNTDOWN, broadcastando br_takeoff
+    // em loop infinito (10Hz). Agora marcamos started=true + match_state.
+    if (this.state.started) {
+      console.warn('[BR] _startBattleRoyale chamado 2x - ignorado');
+      return;
+    }
     console.log('[BR] Starting battle royale match');
+    this.state.started = true;
+    this.state.started_at = Date.now();
+    this.state.match_state = 'RUNNING'; // sai de COUNTDOWN
     this.state.br_phase = 'TAKEOFF';
-    this.state.br_takeoff_at = Date.now() + 3_000;  // 3s decolagem
-    this.state.br_skydive_at = Date.now() + 6_000;  // 3s depois entra skydive
-    // Inicia zone
+    this.state.br_takeoff_at = Date.now() + 3_000;
+    this.state.br_skydive_at = Date.now() + 6_000;
     this._initBrZone();
-    // Marca todos os players com estado TAKEOFF
     this.state.players.forEach((p) => {
       p.br_state = 'TAKEOFF';
       p.dead = false;

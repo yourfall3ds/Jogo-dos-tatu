@@ -66,24 +66,23 @@ import { DEBUG }               from './utils/debug.js';
 // BroadcastChannel('transfps-auth') e fecha sozinha. Flag global pra
 // init() abortar e nao bootar o jogo dentro do popup.
 window.__transfpsIsOAuthPopup = false;
-try {
-  if (typeof window !== 'undefined') {
-    const _qs = new URLSearchParams(window.location.search || '');
-    const _isPopupCallback =
-      _qs.has('code') ||
-      _qs.get('auth') === 'callback' ||
-      _qs.has('error') ||
-      window.location.hash.includes('access_token=');
-    if (_isPopupCallback) {
-      // Flag IMEDIATA pra impedir o init() de rodar enquanto o exchange
-      // assincrono acontece (handleOAuthCallback agora eh async).
-      window.__transfpsIsOAuthPopup = true;
-      AuthSystem.handleOAuthCallback().catch((e) => {
-        console.warn('[Auth] callback async erro:', e);
-      });
-    }
+if (typeof window !== 'undefined') {
+  const _qs = new URLSearchParams(window.location.search);
+  const _isPopupCallback =
+    _qs.has('code') ||
+    _qs.get('auth') === 'callback' ||
+    _qs.has('error') ||
+    window.location.hash.includes('access_token=');
+  if (_isPopupCallback) {
+    // Flag IMEDIATA pra impedir o init() de rodar enquanto o exchange
+    // assincrono acontece (handleOAuthCallback agora eh async).
+    window.__transfpsIsOAuthPopup = true;
+    AuthSystem.handleOAuthCallback().catch((e) => {
+      console.error('[Auth] callback async erro:', e);
+      throw e;
+    });
   }
-} catch (e) { console.warn('[Auth] callback hook:', e); }
+}
 import { LoginScreen }         from './game/ui/LoginScreen.js';
 import { LobbyUI }             from './game/ui/LobbyUI.js';
 import { ColyseusClient }      from './game/multiplayer/ColyseusClient.js';
@@ -198,7 +197,10 @@ function _ensureBootGuard(reason = 'jogar') {
     _bootGuard = new BootLoadGuard();
     window._bootGuard = _bootGuard;
     _bootGuard.update(_lastSilentPct, _lastSilentLabel || ('preparando ' + reason + '…'));
-  } catch (_) {}
+  } catch (e) {
+    console.error('[BootGuard] criacao falhou:', e);
+    throw e;
+  }
   return _bootGuard;
 }
 
@@ -231,22 +233,30 @@ window._awaitEssentials = _awaitEssentials;
 
 function setLoadingUI(pct, label = '') {
   const p = Math.max(0, Math.min(100, Math.round(pct)));
+  if (pct >= 100) _loadReachedFull = true;
 
-  // Antes do user clicar JOGAR/ENTRAR EM SALA, o load roda em SILÊNCIO.
-  // Guarda só o último valor — nada de tocar em DOM ou BootLoadGuard.
+  // SEMPRE empurra pro dock da start-screen (barra + label + % + botão JOGAR).
+  // Esse dock é o ÚNICO feedback enquanto a start-screen está visível, e
+  // continua atualizando 40→100% durante TIER2 mesmo após o botão habilitar.
+  try { window._ssBootProgress?.(p, label); }
+  catch (e) { console.error('[setLoadingUI] _ssBootProgress:', e); }
+
+  // Antes do user clicar JOGAR/ENTRAR EM SALA, NÃO toca no BootLoadGuard
+  // (overlay full-screen) — só guarda pra mostrar caso ele seja criado depois.
   if (!_uiGateOpen) {
     _lastSilentPct = Math.max(_lastSilentPct, p);
     if (label) _lastSilentLabel = label;
-    if (pct >= 100) _loadReachedFull = true;
     return;
   }
 
-  // Portão aberto: atualiza APENAS o BootLoadGuard. Sem mexer em
-  // start-screen (já está oculta nesse ponto) nem na barra inferior
-  // antiga — assim NADA pisca além do guard quando ele é necessário.
-  if (pct >= 100) _loadReachedFull = true;
-  try { _bootGuard?.update(p, label); } catch (_) {}
-  if (pct >= 100) try { _bootGuard?.done(); } catch (_) {}
+  // Portão aberto (user clicou JOGAR antes de TIER1 terminar): atualiza o
+  // BootLoadGuard overlay também. Quando bater 100%, fecha o guard.
+  try { _bootGuard?.update(p, label); }
+  catch (e) { console.error('[BootGuard] update:', e); throw e; }
+  if (pct >= 100) {
+    try { _bootGuard?.done(); }
+    catch (e) { console.error('[BootGuard] done:', e); throw e; }
+  }
 }
 
 // ── Init ─────────────────────────────────────────────────────────
@@ -427,7 +437,8 @@ async function init() {
 
   // ── AUTH + LOGIN + LOBBY + MULTIPLAYER ─────────────────────────
   const auth = new AuthSystem();
-  try { await auth.init(); } catch (e) { console.warn('[Auth] init falhou:', e.message); }
+  try { await auth.init(); }
+  catch (e) { console.error('[Auth] init FALHOU - jogo nao pode rodar:', e); throw e; }
   window._auth = auth;
 
   // ── ColyseusClient (state-authoritative MP) ───────────────────────
@@ -464,15 +475,15 @@ async function init() {
   // Quando desconecta da sala (close): limpa TODOS os RemotePlayers com fade
   // (evita stub "fantasma" se varios sairem juntos / server cair / etc).
   cs.on('close', () => {
-    _remotePlayers.forEach((rp) => { try { rp.dispose(); } catch (_) {} });
+    _remotePlayers.forEach((rp) => { try { rp.dispose(); } catch (e) { console.error('[CS close] dispose RemotePlayer falhou:', e); } });
     _remotePlayers.clear();
-    _remoteMobs.forEach((m) => { try { m.dispose(); } catch (_) {} });
+    _remoteMobs.forEach((m) => { try { m.dispose(); } catch (e) { console.error('[CS close] dispose RemoteMob falhou:', e); } });
     _remoteMobs.clear();
-    _remoteDrops.forEach((d) => { try { d.dispose(); } catch (_) {} });
+    _remoteDrops.forEach((d) => { try { d.dispose(); } catch (e) { console.error('[CS close] dispose RemoteDrop falhou:', e); } });
     _remoteDrops.clear();
-    _remoteProps.forEach((p) => { try { p.dispose(); } catch (_) {} });
+    _remoteProps.forEach((p) => { try { p.dispose(); } catch (e) { console.error('[CS close] dispose RemoteProp falhou:', e); } });
     _remoteProps.clear();
-    _remoteFx.forEach((f) => { try { f.dispose(); } catch (_) {} });
+    _remoteFx.forEach((f) => { try { f.dispose(); } catch (e) { console.error('[CS close] dispose RemoteFx falhou:', e); } });
     _remoteFx.clear();
   });
   cs.on('player_change', ({ id, field, value, state }) => {
@@ -710,8 +721,8 @@ async function init() {
     ps.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
     ps.manualEmitCount = p.count;
     ps.start();
-    setTimeout(() => { try { ps.stop(); } catch (_) {} }, 80);
-    setTimeout(() => { try { ps.dispose(); } catch (_) {} }, 1500);
+    setTimeout(() => { try { ps.stop(); } catch (e) { console.error('[skillVFX] stop:', e); } }, 80);
+    setTimeout(() => { try { ps.dispose(); } catch (e) { console.error('[skillVFX] dispose:', e); } }, 1500);
   }
 
   // PvP toggle UI
@@ -764,21 +775,35 @@ async function init() {
   // Auto-entra no saguão quando entra em sala mas match ainda não começou
   cs.on('player_add', () => {
     if (cs.state?.mode === 'BATTLE_ROYALE' && cs.state.br_phase === 'LOBBY' && !lobbyHall.isActive()) {
-      try { lobbyHall.enter('spaceStation').catch(()=>{}); } catch (_) {}
+      lobbyHall.enter('spaceStation').catch(e => console.error('[LobbyHall] BR enter:', e));
     }
   });
-  cs.on('lobby_reset', () => { try { lobbyHall.exit(); } catch (_) {} });
-  cs.on('br_takeoff', () => { try { lobbyHall.exit(); } catch (_) {} });
+  cs.on('lobby_reset', () => {
+    try { lobbyHall.exit(); }
+    catch (e) { console.error('[LobbyHall] exit on lobby_reset:', e); throw e; }
+  });
+  cs.on('br_takeoff', () => {
+    try { lobbyHall.exit(); }
+    catch (e) { console.error('[LobbyHall] exit on br_takeoff:', e); throw e; }
+  });
   // Tutorial check ao receber profile
   cs.on('profile_loaded', (p) => {
-    try { social.tutorial.maybeStart(p); } catch (_) {}
+    try { social.tutorial.maybeStart(p); }
+    catch (e) { console.error('[Tutorial] start:', e); throw e; }
   });
   // Update loop em 5Hz pra HUDs que leem state
   let _socialT = 0;
+  let _socialErrLogged = false;
   function _socialTick(dt) {
     _socialT -= dt;
     if (_socialT <= 0) {
-      try { social.update(auth.getUserId()); } catch (_) {}
+      try { social.update(auth.getUserId()); }
+      catch (e) {
+        if (!_socialErrLogged) {
+          console.error('[Social] update:', e);
+          _socialErrLogged = true;
+        }
+      }
       _socialT = 0.2;
     }
   }
@@ -831,7 +856,7 @@ async function init() {
     item.textContent = text;
     f.appendChild(item);
     setTimeout(() => { item.style.opacity = '0'; }, 3000);
-    setTimeout(() => { try { f.removeChild(item); } catch (_) {} }, 3700);
+    setTimeout(() => { if (item.parentNode === f) f.removeChild(item); }, 3700);
   }
 
   const loginScreen = new LoginScreen(auth);
@@ -849,30 +874,40 @@ async function init() {
     // ── Abre portão + espera essenciais com tolerância de 200ms ──
     // Se TIER 1 já estiver pronto (ou ficar em <200ms): entra direto, sem barra.
     // Caso contrário: BootLoadGuard aparece para esse delay extra.
-    try { window._openLoadGate?.('entrar na sala'); } catch (_) {}
-    try { await _awaitEssentials('entrar na sala'); } catch (_) {}
+    try { window._openLoadGate?.('entrar na sala'); }
+    catch (e) { console.error('[Boot] openLoadGate falhou:', e); throw e; }
+    try { await _awaitEssentials('entrar na sala'); }
+    catch (e) { console.error('[Boot] essenciais falharam:', e); throw e; }
 
-    // Carrega o mapa da sala (vem do state)
-    const mapId = cs.state?.map_id || 'default';
+    // Carrega o mapa da sala (vem do state) — server-authoritative
+    const mapId = cs.state?.map_id;
+    if (!mapId) throw new Error('[Lobby] entrou em sala sem map_id no state');
     const loading = window._loadingOverlay;
-    if (mapId && mapId !== 'default') {
-      try {
-        loading?.show('CARREGANDO MAPA', `${mapId} · preparando assets…`, true);
-        loading?.setProgress(10, 'baixando GLBs…');
-        await chibataMaps.load(mapId);
-        loading?.setProgress(80, 'compilando shaders…');
-        await new Promise(r => setTimeout(r, 200));
-        loading?.setProgress(100, 'pronto!');
-        await new Promise(r => setTimeout(r, 150));
-      } catch (e) {
-        console.warn('[map load]', e);
-        loading?.setDetail('erro ao carregar mapa: ' + e.message);
-        await new Promise(r => setTimeout(r, 1500));
-      } finally {
-        loading?.hide();
-      }
+    let mapLoaded = false;
+    try {
+      loading?.show('CARREGANDO MAPA', `${mapId} · preparando assets…`, true);
+      loading?.setProgress(10, 'baixando GLBs…');
+      await chibataMaps.load(mapId);
+      loading?.setProgress(80, 'compilando shaders…');
+      await new Promise(r => setTimeout(r, 200));
+      loading?.setProgress(100, 'pronto!');
+      await new Promise(r => setTimeout(r, 150));
+      mapLoaded = true;
+    } catch (e) {
+      console.error('[Map] falhou - abortando entrada:', e);
+      loading?.setDetail('erro ao carregar mapa: ' + e.message);
+      await new Promise(r => setTimeout(r, 1500));
+    } finally {
+      loading?.hide();
+    }
+    if (!mapLoaded) {
+      // Aborta entrada: nao ativa input nem esconde start-screen, volta pro lobby
+      try { window._lobbyUI?.show?.(); }
+      catch (e) { console.error('[Lobby] show apos map fail:', e); throw e; }
+      return;
     }
     $('start-screen').style.display = 'none';
+    document.body.classList.add('in-game');
     window._gameInput?.activate();
     setFocusUI(true);
     window._musicSystem?.start();
@@ -937,7 +972,13 @@ async function init() {
 
   // ── Sistemas RPG: Stats + Skills + Inventário ────────────────────
   const stats = new PlayerStats();
-  try { stats.load(JSON.parse(localStorage.getItem('digifps_stats') || 'null')); } catch (_) {}
+  {
+    const _statsRaw = localStorage.getItem('digifps_stats');
+    if (_statsRaw) {
+      try { stats.load(JSON.parse(_statsRaw)); }
+      catch (e) { console.error('[Stats] save corrompido (digifps_stats):', e); throw e; }
+    }
+  }
   player.stats = stats;
   player.maxHp = stats.maxHp();
   player.hp = player.maxHp;
@@ -947,15 +988,24 @@ async function init() {
 
   await initItemCatalog();   // popula o catálogo (consumíveis, equips, armas)
   const inventory = new Inventory(player, stats);
-  try { inventory.load(JSON.parse(localStorage.getItem('digifps_inv') || 'null')); } catch (_) {}
+  {
+    const _invRaw = localStorage.getItem('digifps_inv');
+    if (_invRaw) {
+      try { inventory.load(JSON.parse(_invRaw)); }
+      catch (e) { console.error('[Inventory] save corrompido (digifps_inv):', e); throw e; }
+    }
+  }
   inventory.ensureStarterItems();   // começa com as armas no inventário
   player.inventory = inventory;
   // Kit inicial de poções
   if (!inventory.bag.length) { inventory.add('hpSmall', 3); inventory.add('mpPotion', 2); }
 
   // XP ao matar inimigo (hook chamado pelo EnemyManager.onDeath)
+  const XP_TABLE = { rookie: 20, champion: 45, ultimate: 90, mega: 180, boss: 400 };
   player.onEnemyKilled = (enemy) => {
-    const xp = { rookie: 20, champion: 45, ultimate: 90, mega: 180, boss: 400 }[enemy?.def?.tier] ?? 25;
+    const tier = enemy?.def?.tier;
+    const xp = XP_TABLE[tier];
+    if (xp == null) throw new Error('[XP] tier desconhecido: ' + tier);
     stats.addXp(xp);
     // chance de drop de poção, escalada pela Sorte
     if (Math.random() < 0.35 * stats.lootMult()) inventory.add('hpSmall', 1);
@@ -1100,13 +1150,55 @@ async function init() {
     modal.querySelector('#cl-no').onclick = () => modal.remove();
     modal.querySelector('#cl-yes').onclick = async () => {
       modal.remove();
-      // Sai da sala se em uma
-      try { await window._cs?.leave?.(); } catch (_) {}
-      try { await window._cs?.leaveLobby?.(); } catch (_) {}
-      // Esconde pause
+
+      // ── [Nav] Sair da partida → cleanup TOTAL + route por auth ──
+      const auth = window._auth;
+      if (!auth) {
+        console.error('[Nav] _confirmLeaveToMenu: window._auth ausente — abortando rota');
+        return;
+      }
+      console.log('[Nav] saindo da partida → menu');
+
+      // 1) Desativa input do jogo (libera pointer lock, gameActive=false)
+      try { window._gameInput?.deactivate?.(); }
+      catch (e) { console.error('[Nav] falha ao desativar input:', e); return; }
+
+      // 2) Para musica de partida
+      try { window._musicSystem?.stop?.(); }
+      catch (e) { console.error('[Nav] falha ao parar musica:', e); return; }
+
+      // 3) Sai da sala e do lobby colyseus (cs.on('close') ja limpa Remote*)
+      try { await window._cs?.leave?.(); }
+      catch (e) { console.error('[MP] falha ao sair da sala:', e); return; }
+      try { await window._cs?.leaveLobby?.(); }
+      catch (e) { console.error('[MP] falha ao sair do lobby:', e); return; }
+
+      // 4) Esconde TUDO que pertence ao jogo rodando
       $('pause-overlay')?.classList.remove('visible');
-      // Volta pro lobby UI (ou loginscreen se nao logado)
-      try { window._lobbyUI?.show?.(); } catch (_) {}
+      const startScreen = $('start-screen'); if (startScreen) startScreen.style.display = 'none';
+      document.getElementById('kill-feed')?.remove();
+      document.getElementById('match-finish-rich')?.remove();
+      try { window._chatHud?.hide?.(); } catch (_) {}
+      try { window._scoreboard?.hide?.(); } catch (_) {}
+      try { window._rpgHUD?.hide?.(); } catch (_) {}
+      try { window._pingDisplay?.hide?.(); } catch (_) {}
+      try { window._catalogUI?.hide?.(); } catch (_) {}
+      try { window._mapSelectUI?.hide?.(); } catch (_) {}
+      // Remove flag de "jogo ativo" sem reabrir pause-overlay
+      document.body.classList.remove('game-active');
+      document.body.classList.remove('in-game');
+
+      // 5) Routing por estado de auth
+      const logged = auth.isAuthenticated?.() && !auth.isGuest?.();
+      if (logged) {
+        console.log('[Nav] entrou no LobbyUI (logado)');
+        try { window._lobbyUI?.show?.(); }
+        catch (e) { console.error('[Lobby] falha ao mostrar LobbyUI:', e); return; }
+      } else {
+        console.log('[Nav] entrou no LoginScreen (guest/nao-logado)');
+        try { window._loginScreen?.show?.(); }
+        catch (e) { console.error('[Auth] falha ao mostrar LoginScreen:', e); return; }
+      }
     };
   }
 
@@ -1167,7 +1259,13 @@ async function init() {
       cs.sendInput(player);
       _pingTick(dt);
       _socialTick(dt);
-      try { brMode.update(dt, window._gameInput); } catch (_) {}
+      try { brMode.update(dt, window._gameInput); }
+      catch (e) {
+        if (!window.__brErrLogged) {
+          console.error('[BR] update:', e);
+          window.__brErrLogged = true;
+        }
+      }
       for (const rp of _remotePlayers.values()) rp.update(dt, player.camera);
       for (const m of _remoteMobs.values()) m.update(dt, player.camera);
       // Drops: anima + auto-pickup quando player chega perto
@@ -1180,14 +1278,14 @@ async function init() {
         }
       }
     }
-    // HUD multiplayer: atualiza sempre
-    pingDisplay.update();
-    deathTimer.update();
+    // HUD multiplayer: atualiza sempre (try/catch isolado pra um erro nao travar renderloop)
+    try { pingDisplay.update(); } catch (e) { console.error('[HUD] pingDisplay:', e); }
+    try { deathTimer.update(); } catch (e) { console.error('[HUD] deathTimer:', e); }
     // Blood trail (auto sangue ao chão quando ferido)
-    bloodTrail.update(dt);
+    try { bloodTrail.update(dt); } catch (e) { console.error('[HUD] bloodTrail:', e); }
     // Death cam ring buffer + ativação/desativação
-    deathCam.push(player);
-    if (cs.connected && cs.state) {
+    try { deathCam.push(player); } catch (e) { console.error('[HUD] deathCam:', e); }
+    if (cs.connected && cs.state && cs.state.players && typeof cs.state.players.get === 'function') {
       const me = cs.state.players.get(auth.getUserId());
       const isDead = !!me?.dead;
       if (isDead && !_lastDeadState) {
@@ -1365,7 +1463,7 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
         await Promise.all(
           allAnims.map(a =>
             p.animLib.loadExternalAnimations(a.path, a.name, root)
-              .catch(e => console.warn(`⚠️ Falha ao absorver animação [${a.name}]:`, e.message))
+              .catch(e => console.error(`[anim] Falha ao absorver [${a.name}] (${a.path}):`, e))
           )
         );
         
@@ -1408,11 +1506,21 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
   // Loader helper
   const loadOne = async (item, onProgress) => {
     if (item.key.startsWith('_procedural_')) {
-      try { await item.done(); } catch (e) { console.warn('[proc]', item.key, e.message); }
+      try { await item.done(); }
+      catch (e) {
+        console.error('[proc]', item.key, e);
+        if (ESSENTIAL_KEYS.has(item.key)) throw e;
+      }
       return;
     }
     const meshes = await loader.load(item.key);
-    if (meshes) { try { await item.done(meshes); } catch (e) { console.warn('[done]', item.key, e?.message); } }
+    if (meshes) {
+      try { await item.done(meshes); }
+      catch (e) {
+        console.error('[done]', item.key, e);
+        if (ESSENTIAL_KEYS.has(item.key)) throw e;
+      }
+    }
     onProgress?.();
   };
 
@@ -1426,10 +1534,12 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
   setLoadingUI(40, 'pronto pra jogar — carregando extras…');
 
   // ── TIER 1 concluído: libera startGame/lobby para entrar SEM esperar ──
-  try { _essentialReadyResolve?.(); } catch (_) {}
+  try { _essentialReadyResolve?.(); }
+  catch (e) { console.error('[Boot] essentialReadyResolve:', e); throw e; }
   // Se o usuário já abriu o portão (clicou JOGAR antes de TIER1 terminar),
   // o BootLoadGuard existe — fecha ele agora. Caso contrário, fica null.
-  try { _bootGuard?.done(); } catch (_) {}
+  try { _bootGuard?.done(); }
+  catch (e) { console.error('[BootGuard] done apos TIER1:', e); throw e; }
 
   // TIER 2: paralelo em background. Atualiza barra mas não bloqueia.
   let bgDone = 0;
@@ -1440,7 +1550,7 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
       bgDone++;
       const pct = 40 + Math.round((bgDone / bgTotal) * 60);
       setLoadingUI(pct, item.label);
-    }).catch(e => console.warn('[bg]', item.key, e?.message))
+    }).catch(e => console.error('[bg]', item.key, e))
   )).then(async () => {
     await _restoreMachines(scene);
     setLoadingUI(100);
@@ -1466,10 +1576,13 @@ window.startGame = async function () {
   // Abre o portão e espera essenciais com tolerância de 200ms.
   // Se TIER 1 terminar dentro de 200ms → entra DIRETO, zero barra.
   // Se demorar mais → BootLoadGuard aparece nesse momento e fecha sozinho.
-  try { window._openLoadGate?.('jogar'); } catch (_) {}
-  try { await _awaitEssentials('jogar'); } catch (_) {}
+  try { window._openLoadGate?.('jogar'); }
+  catch (e) { console.error('[startGame] openLoadGate falhou:', e); throw e; }
+  try { await _awaitEssentials('jogar'); }
+  catch (e) { console.error('[startGame] boot falhou:', e); throw e; }
 
   $('start-screen').style.display = 'none';
+  document.body.classList.add('in-game');
   // Sai do engine mode caso esteja ativo
   if (_engineMode) window.exitEngineMode();
   window._gameInput?.activate();
@@ -1483,6 +1596,15 @@ window.toggleFocus = function () {
   if (_engineMode) {
     window.exitEngineMode();
     window._gameInput?.activate();
+    return;
+  }
+  // GUARDA: se o jogo NAO foi iniciado (start-screen visivel, login screen
+  // visivel ou lobby visivel), o botao Pausar e no-op. Nao ativa pointer lock.
+  const ss        = $('start-screen');
+  const loginVis  = !!(window._loginScreen?._visible);
+  const lobbyVis  = !!(window._lobbyUI?._visible);
+  const inGame    = document.body.classList.contains('in-game');
+  if (!inGame || (ss && ss.style.display !== 'none') || loginVis || lobbyVis) {
     return;
   }
   const inp = window._gameInput;

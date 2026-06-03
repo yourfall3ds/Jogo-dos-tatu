@@ -51,10 +51,20 @@ export class BattleRoyaleMode {
     // O cliente fica monitorando state em update().
 
     // br_takeoff → cinemática local (eu também sou avatar)
+    // Guard: br_takeoff pode chegar 2x se servidor reenviar. _enterTakeoff
+    // dispara animacoes (BattleBus, loading overlay) que NAO podem reentrar.
+    this._takeoffFired = false;
     this.cs.on('br_takeoff', ({ skydive_at }) => {
+      if (this._takeoffFired) {
+        console.warn('[BR] br_takeoff duplicado ignorado');
+        return;
+      }
+      this._takeoffFired = true;
       console.log('[BR] takeoff em', new Date(skydive_at));
       this._enterTakeoff(skydive_at);
     });
+    // Reset quando volta pro lobby
+    this.cs.on('lobby_reset', () => { this._takeoffFired = false; });
 
     // br_skydive_phase → server liberou skydive, ativo SkydiveController
     this.cs.on('br_skydive_phase', () => {
@@ -83,6 +93,12 @@ export class BattleRoyaleMode {
   }
 
   _enterTakeoff(skydiveAt) {
+    if (this._takeoffActive) {
+      console.warn('[BR] _enterTakeoff reentrante - ignorado');
+      return;
+    }
+    this._takeoffActive = true;
+    setTimeout(() => { this._takeoffActive = false; }, 8000);
     // Coleta avatares: meu player + RemotePlayers
     const avatars = [this.player];
     if (window._remotePlayers) {

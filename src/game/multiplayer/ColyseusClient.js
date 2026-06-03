@@ -83,7 +83,8 @@ export class ColyseusClient {
     }
     // Race-guard: se já tem subscribe em andamento, aguarda
     if (this._lobbyPromise) {
-      try { await this._lobbyPromise; } catch (_) {}
+      try { await this._lobbyPromise; }
+      catch (e) { console.error('[Lobby] subscribe await:', e); throw e; }
       if (this._lobby?.connection?.isOpen) {
         this._lobbyCallback = onRooms;
         if (this._lobbyRooms) onRooms?.(this._lobbyRooms.slice());
@@ -92,7 +93,8 @@ export class ColyseusClient {
     }
     // Limpa lobby antigo se em CLOSING/CLOSED
     if (this._lobby) {
-      try { await this._lobby.leave(false); } catch (_) {}
+      try { await this._lobby.leave(false); }
+      catch (e) { console.error('[Lobby] leave antigo:', e); }
       this._lobby = null;
     }
     this._lobbyCallback = onRooms;
@@ -135,7 +137,8 @@ export class ColyseusClient {
 
   async leaveLobby() {
     if (this._lobby) {
-      try { await this._lobby.leave(); } catch (_) {}
+      try { await this._lobby.leave(); }
+      catch (e) { console.error('[Lobby] leave:', e); }
       this._lobby = null;
       this._lobbyRooms = [];
     }
@@ -144,14 +147,18 @@ export class ColyseusClient {
   /** Cria nova sala arena. */
   async createRoom({ token, nickname, avatar_url, name, map, max_players, password, mode }) {
     if (!this.client) throw new Error('client not initialized');
+    if (!nickname) throw new Error('[CreateRoom] nickname obrigatorio');
+    if (!map) throw new Error('[CreateRoom] map obrigatorio');
+    if (!max_players) throw new Error('[CreateRoom] max_players obrigatorio');
+    if (!mode) throw new Error('[CreateRoom] mode obrigatorio');
     const options = {
       token, nickname, avatar_url,
-      name: name || ('Sala de ' + (nickname || 'Player')),
-      map: map || 'default',
-      maxPlayers: max_players || 8,
-      password: password || null,
-      host_nickname: nickname || '',
-      mode: mode || 'CLASSIC',
+      name: name || `Sala de ${nickname}`,
+      map,
+      maxPlayers: max_players,
+      password: password ?? null,
+      host_nickname: nickname,
+      mode,
     };
     this.room = await this.client.create('arena', options);
     this._bindRoom();
@@ -170,8 +177,10 @@ export class ColyseusClient {
 
   /** Entra em qualquer sala (matchmaking). */
   async quickPlay({ token, nickname, avatar_url, map }) {
+    if (!nickname) throw new Error('[QuickPlay] nickname obrigatorio');
+    if (!map) throw new Error('[QuickPlay] map obrigatorio');
     this.room = await this.client.joinOrCreate('arena', {
-      token, nickname, avatar_url, map: map || 'default',
+      token, nickname, avatar_url, map,
       name: 'QuickPlay', maxPlayers: 8,
     });
     this._bindRoom();
@@ -252,7 +261,11 @@ export class ColyseusClient {
 
   _attachStateListeners() {
     if (!this.room?.state) return;
-    this.nickname = this.room.state.players?.get?.(this.playerId)?.nickname || this.nickname;
+    const serverNick = this.room.state.players?.get?.(this.playerId)?.nickname;
+    if (!serverNick) {
+      throw new Error('[CS] _attachStateListeners sem nickname do server pra playerId=' + this.playerId);
+    }
+    this.nickname = serverNick;
 
     // Usa API getStateCallbacks (@colyseus/schema@3.0)
     const $ = getStateCallbacks(this.room);
@@ -412,11 +425,6 @@ export class ColyseusClient {
   sendMessage(type, payload) {
     this.room?.send(type, payload || {});
   }
-  /** Sai da sala (volta pro lobby). */
-  leave() {
-    try { this.room?.leave?.(); } catch (_) {}
-  }
-
   /** Snapshot da sala (state read-only). */
   get state() { return this.room?.state || null; }
   isHost() {
@@ -429,18 +437,25 @@ export class ColyseusClient {
   setPlayerId(id) { this.playerId = id; }
 
   on(event, cb) {
-    if (!this._listeners[event]) this._listeners[event] = new Set();
+    if (!this._listeners[event]) {
+      throw new Error('[CS] event nao registrado: ' + event);
+    }
     this._listeners[event].add(cb);
     return () => this._listeners[event].delete(cb);
   }
   _notify(event, payload) {
     const set = this._listeners[event]; if (!set) return;
-    for (const cb of set) try { cb(payload); } catch (e) { console.warn('[Colyseus] cb erro:', event, e); }
+    for (const cb of set) {
+      try { cb(payload); }
+      catch (e) { console.error('[Colyseus] cb erro:', event, e); }
+    }
   }
 
+  /** Sai da sala (volta pro lobby). */
   async leave() {
     if (this.room) {
-      try { await this.room.leave(true); } catch (_) {}
+      try { await this.room.leave(true); }
+      catch (e) { console.error('[CS] leave async:', e); }
       this.room = null;
     }
   }

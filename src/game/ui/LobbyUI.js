@@ -11,7 +11,10 @@
 // ─────────────────────────────────────────────────────────────────
 import { MapCatalog } from '../scene/ChibataMapLoader.js';
 
-function _esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function _esc(s) {
+  if (s == null) throw new Error('[_esc] valor null/undefined — dado server-side faltando');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 export class LobbyUI {
   constructor(auth, colyseusClient) {
@@ -157,13 +160,14 @@ export class LobbyUI {
       btn.textContent = '⏳ INICIANDO…';
       btn.style.opacity = '0.7';
       this.cs.sendStartMatch();
-      // Fallback caso countdown não chegue em 5s
+      // Watchdog: server tem 5s pra emitir countdown. Timeout = erro vermelho.
       setTimeout(() => {
         if (btn.disabled && btn.textContent.includes('INICIANDO')) {
+          console.error('[Lobby] server timeout em sendStartMatch (5s)');
           btn.textContent = btn.dataset._origText || '▶ INICIAR PARTIDA';
           btn.disabled = false;
           btn.style.opacity = '1';
-          this._setStatus('servidor não respondeu, tente de novo', '#ffcc66');
+          this._setStatus('erro: servidor nao respondeu, recarregue a pagina', '#f55');
         }
       }, 5000);
     };
@@ -179,6 +183,7 @@ export class LobbyUI {
         this._setStatus(`${rooms.length} sala(s)`, '#7efa9a');
       });
     } catch (e) {
+      console.error('[Lobby] subscribeLobby:', e);
       this._setStatus('erro: ' + e.message, '#f55');
     }
   }
@@ -198,10 +203,14 @@ export class LobbyUI {
         border: 1px solid ${isCurrent ? '#5cf' : 'rgba(120,180,255,0.18)'};
         padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: .15s;
       `;
-      const meta = r.metadata || {};
+      if (!r.metadata) throw new Error('[Lobby] sala sem metadata: ' + r.roomId);
+      const meta = r.metadata;
+      if (!meta.map) throw new Error('[Lobby] sala sem map em metadata: ' + r.roomId);
       const mapInfo = Object.values(MapCatalog).find((m) => m.id === meta.map);
-      const mapName = mapInfo?.name || meta.map || 'default';
-      const name = meta.name || ('Sala ' + r.roomId.slice(0, 6));
+      if (!mapInfo) throw new Error('[Lobby] mapa desconhecido em sala ' + r.roomId + ': ' + meta.map);
+      if (!meta.name) throw new Error('[Lobby] sala sem name: ' + r.roomId);
+      const mapName = mapInfo.name;
+      const name = meta.name;
       const modeIcon = meta.mode === 'BATTLE_ROYALE'
         ? '<span style="color:#ffd54a;background:rgba(255,213,74,0.15);padding:1px 6px;border-radius:3px;font-size:0.65em;margin-left:4px;letter-spacing:1px;">BR</span>'
         : '';
@@ -224,16 +233,19 @@ export class LobbyUI {
 
   async _joinRoom(roomInfo) {
     if (this.cs.room?.id === roomInfo.roomId) return;
-    if (this.cs.room) { try { await this.cs.leave(); } catch (_) {} }
+    if (this.cs.room) {
+      try { await this.cs.leave(); }
+      catch (e) { console.error('[Lobby] _joinRoom leave atual:', e); }
+    }
     let password = null;
     if (roomInfo.metadata?.has_password) {
-      password = prompt('Senha da sala:');
+      password = await this._showPasswordModal();
       if (password == null) return;
     }
     try {
       const session = await this.auth.getSupabase().auth.getSession();
       const token = session.data?.session?.access_token;
-      const avatarUrl = this.auth.profile?.avatar_url || this.auth.user?.user_metadata?.avatar_url || '';
+      const avatarUrl = this.auth.profile?.avatar_url ?? this.auth.user?.user_metadata?.avatar_url ?? null;
       this.cs.setPlayerId(this.auth.getUserId());
       await this.cs.joinRoomById({
         roomId: roomInfo.roomId,
@@ -242,8 +254,49 @@ export class LobbyUI {
       this._refreshRoomView();
       this._setStatus('entrou em ' + (roomInfo.metadata?.name || 'sala'), '#7efa9a');
     } catch (e) {
+      console.error('[Lobby] joinRoom:', e);
       this._setStatus('erro: ' + e.message, '#f55');
     }
+  }
+
+  _showPasswordModal() {
+    return new Promise(resolve => {
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        position:fixed; inset:0; z-index:500; background:rgba(0,0,0,0.85);
+        display:flex; align-items:center; justify-content:center;
+        color:#dff5ff; font-family:'Segoe UI',monospace;
+      `;
+      modal.innerHTML = `
+        <div style="background:linear-gradient(180deg,#0a1a2a,#040810);
+                    border:1px solid rgba(126,239,196,0.5); border-radius:10px;
+                    padding:30px; width:420px; max-width:92vw;">
+          <div style="font:900 16px monospace; letter-spacing:3px; color:#2effb6; margin-bottom:14px;">
+            🔒 SENHA DA SALA
+          </div>
+          <input id="pw-input" type="password" maxlength="60" placeholder="senha"
+                 style="width:100%; padding:10px 14px; background:rgba(0,0,0,0.6);
+                        border:1px solid rgba(126,239,196,0.3); color:#fff;
+                        border-radius:5px; font:inherit; margin-bottom:16px;">
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button id="pw-cancel" style="background:transparent; color:#fff;
+                    border:1px solid rgba(255,255,255,0.2); padding:9px 22px;
+                    border-radius:5px; cursor:pointer; font:700 12px monospace;
+                    letter-spacing:2px;">CANCELAR</button>
+            <button id="pw-ok" style="background:#2effb6; color:#04101a; border:0;
+                    padding:9px 26px; border-radius:5px; cursor:pointer;
+                    font:800 12px monospace; letter-spacing:2px;">ENTRAR</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      const input = modal.querySelector('#pw-input');
+      input.focus();
+      const close = (val) => { modal.remove(); resolve(val); };
+      modal.querySelector('#pw-cancel').onclick = () => close(null);
+      modal.querySelector('#pw-ok').onclick = () => close(input.value);
+      input.onkeydown = (e) => { if (e.key === 'Enter') close(input.value); };
+    });
   }
 
   async _openCreate() {
@@ -251,10 +304,13 @@ export class LobbyUI {
     const config = await this._showCreateModal();
     if (!config) return;
     try {
-      if (this.cs.room) { try { await this.cs.leave(); } catch (_) {} }
+      if (this.cs.room) {
+        try { await this.cs.leave(); }
+        catch (e) { console.error('[Lobby] _openCreate leave:', e); }
+      }
       const session = await this.auth.getSupabase().auth.getSession();
       const token = session.data?.session?.access_token;
-      const avatarUrl = this.auth.profile?.avatar_url || this.auth.user?.user_metadata?.avatar_url || '';
+      const avatarUrl = this.auth.profile?.avatar_url ?? this.auth.user?.user_metadata?.avatar_url ?? null;
       this.cs.setPlayerId(this.auth.getUserId());
       await this.cs.createRoom({
         token, nickname: this.auth.getNickname(), avatar_url: avatarUrl,
@@ -264,6 +320,7 @@ export class LobbyUI {
       this._refreshRoomView();
       this._setStatus(`sala criada (${config.mode})`, '#7efa9a');
     } catch (e) {
+      console.error('[Lobby] _openCreate:', e);
       this._setStatus('erro: ' + e.message, '#f55');
     }
   }
@@ -346,11 +403,30 @@ export class LobbyUI {
       });
       modal.querySelector('#cr-cancel').onclick = () => { modal.remove(); resolve(null); };
       modal.querySelector('#cr-ok').onclick = () => {
-        const name = modal.querySelector('#cr-name').value.trim() || 'Sala';
+        const nameEl = modal.querySelector('#cr-name');
+        const maxEl = modal.querySelector('#cr-max');
+        const name = nameEl.value.trim();
         const map = modal.querySelector('#cr-map').value;
-        const max = Math.max(2, Math.min(60, parseInt(modal.querySelector('#cr-max').value) || 8));
+        const maxParsed = parseInt(maxEl.value);
+        // Validacao visivel: campo invalido fica vermelho, modal nao fecha.
+        let invalid = false;
+        nameEl.style.borderColor = 'rgba(126,239,196,0.3)';
+        maxEl.style.borderColor = 'rgba(126,239,196,0.3)';
+        if (!name) {
+          nameEl.style.borderColor = '#f55';
+          invalid = true;
+        }
+        if (!Number.isFinite(maxParsed) || maxParsed < 2 || maxParsed > 60) {
+          maxEl.style.borderColor = '#f55';
+          invalid = true;
+        }
+        if (!map) {
+          console.error('[CreateModal] map vazio — MapCatalog quebrado?');
+          invalid = true;
+        }
+        if (invalid) return;
         modal.remove();
-        resolve({ name, map, max, mode });
+        resolve({ name, map, max: maxParsed, mode });
       };
     });
   }
@@ -364,13 +440,37 @@ export class LobbyUI {
     this._el.querySelector('#lb-empty').style.display = 'none';
     this._el.querySelector('#lb-room').style.display = 'flex';
 
-    const meta = this.cs.room.metadata || {};
+    if (!this.cs.room.metadata) {
+      console.error('[Lobby] _refreshRoomView: sala sem metadata');
+      return;
+    }
+    const meta = this.cs.room.metadata;
+    if (!meta.name) {
+      console.error('[Lobby] _refreshRoomView: sala sem name em metadata');
+      return;
+    }
+    if (!this.cs.state.map_id) {
+      console.error('[Lobby] _refreshRoomView: state sem map_id');
+      return;
+    }
     const mapInfo = Object.values(MapCatalog).find((m) => m.id === this.cs.state.map_id);
-    this._el.querySelector('#lb-room-title').textContent = meta.name || 'Sala';
-    const playersCount = this.cs.state.players?.size || 0;
+    if (!mapInfo) {
+      console.error('[Lobby] _refreshRoomView: mapa desconhecido:', this.cs.state.map_id);
+      return;
+    }
+    if (this.cs.state.players?.size == null) {
+      console.error('[Lobby] _refreshRoomView: state.players sem size');
+      return;
+    }
+    if (!this.cs.room.maxClients) {
+      console.error('[Lobby] _refreshRoomView: room sem maxClients');
+      return;
+    }
+    this._el.querySelector('#lb-room-title').textContent = meta.name;
+    const playersCount = this.cs.state.players.size;
     this._el.querySelector('#lb-room-meta').textContent =
-      `${mapInfo?.name || this.cs.state.map_id} · ${playersCount}/${this.cs.room.maxClients || '?'} players`;
-    this._el.querySelector('#lb-room-name').textContent = '· em: ' + (meta.name || 'sala');
+      `${mapInfo.name} · ${playersCount}/${this.cs.room.maxClients} players`;
+    this._el.querySelector('#lb-room-name').textContent = '· em: ' + meta.name;
 
     const myId = this.auth.getUserId();
     const playersDiv = this._el.querySelector('#lb-players');
@@ -392,7 +492,8 @@ export class LobbyUI {
       const pvpIcon = p.pvp_on ? ' <span style="color:#ff5050;" title="PvP ON">⚔</span>' : '';
       const hostBadge = p.is_host ? ' <span style="color:#ffcc00;font-size:0.85em;">[host]</span>' : '';
       const meBadge = isMe ? ' <span style="color:#7efa9a;font-size:0.85em;">(você)</span>' : '';
-      row.innerHTML = `${readyIcon} ${_esc(p.nickname || 'player')}${hostBadge}${meBadge}${pvpIcon}`;
+      if (!p.nickname) throw new Error('[Lobby] player sem nickname no state: ' + p.id);
+      row.innerHTML = `${readyIcon} ${_esc(p.nickname)}${hostBadge}${meBadge}${pvpIcon}`;
       playersDiv.appendChild(row);
     });
 
@@ -443,7 +544,8 @@ export class LobbyUI {
     const div = document.createElement('div');
     const isMe = m.from === this.auth.getUserId();
     div.style.cssText = `padding:2px 0;color:${isMe ? '#7efa9a' : '#cdd'};`;
-    div.innerHTML = `<b style="color:${isMe ? '#7efa9a' : '#5cf'};">${_esc(m.nick || 'player')}:</b> ${_esc(m.msg)}`;
+    if (!m.nick) throw new Error('[Chat] mensagem sem nick (from=' + m.from + ')');
+    div.innerHTML = `<b style="color:${isMe ? '#7efa9a' : '#5cf'};">${_esc(m.nick)}:</b> ${_esc(m.msg)}`;
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
   }
@@ -476,10 +578,28 @@ export class LobbyUI {
   }
 
   async _doExit() {
-    if (this.cs.room) {
-      try { await this.cs.leave(); } catch (_) {}
+    // ── [Nav] LobbyUI._doExit → sai da sala (se houver) e roteia pro LoginScreen ──
+    console.log('[Nav] saindo do LobbyUI → LoginScreen');
+
+    // 1) Pre-condicao: auth precisa existir pra decidir rota
+    if (!this.auth) {
+      console.error('[Lobby] _doExit: auth ausente — abortando rota');
+      return;
     }
+
+    // 2) Cleanup: sai da sala se ainda dentro
+    if (this.cs?.room) {
+      try { await this.cs.leave(); }
+      catch (e) { console.error('[MP] _doExit falha ao sair da sala:', e); return; }
+    }
+
+    // 3) Cleanup: esconde a UI do lobby
     this.hide();
+
+    // 4) Transicao: sempre volta pra LoginScreen (estado anterior do lobby)
+    try { window._loginScreen?.show?.(); }
+    catch (e) { console.error('[Auth] _doExit falha ao mostrar LoginScreen:', e); return; }
+    console.log('[Nav] entrou no LoginScreen');
   }
 
   _setStatus(text, color = '#789') {

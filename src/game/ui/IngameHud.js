@@ -297,7 +297,13 @@ export class DeathTimer {
       if (this._visible) this._hide();
       return;
     }
-    const me = this.cs.state.players.get(this.auth.getUserId());
+    // state.players pode ser undefined antes do primeiro schema sync
+    const players = this.cs.state.players;
+    if (!players || typeof players.get !== 'function') {
+      if (this._visible) this._hide();
+      return;
+    }
+    const me = players.get(this.auth.getUserId());
     if (!me?.dead) {
       if (this._visible) this._hide();
       return;

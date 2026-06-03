@@ -157,20 +157,21 @@
        BOTÃO FOCAR / PAUSAR  (sempre visível durante o jogo)
        ═══════════════════════════════════════════════════════════ */
     #focus-btn {
-      display: none;                     /* aparece após JOGAR */
+      display: none;                     /* default: invisivel ate o jogo iniciar */
       position: fixed; top: 12px; right: 14px; z-index: 300;
       background: rgba(0,0,0,.55);
       border: 1.5px solid rgba(255,255,255,.25);
       color: #fff; font-size: 13px; font-weight: 700;
       padding: 6px 13px; border-radius: 8px;
-      cursor: pointer !important;       /* sempre visível mesmo com game-active */
+      cursor: pointer !important;
       letter-spacing: .5px;
       transition: background .15s, border-color .15s;
       pointer-events: all !important;
     }
+    /* So aparece quando a partida esta ATIVA (gameActive=true) */
     body.game-active #focus-btn { display: block; cursor: default !important; }
-    /* quando desfocado, o botão fica mais chamativo */
-    body:not(.game-active) #focus-btn {
+    /* Aparece tambem quando a PARTIDA esta PAUSADA (jogo ja iniciado, overlay aberto) */
+    body.in-game:not(.game-active) #focus-btn {
       display: block;
       background: rgba(255, 200, 0, .85);
       border-color: #ffcc00;
@@ -497,11 +498,17 @@
       0%,100%{ box-shadow: 0 6px 24px rgba(255,170,40,.4), inset 0 1px 0 rgba(255,255,255,.5); }
       50%    { box-shadow: 0 6px 36px rgba(255,200,80,.85), inset 0 1px 0 rgba(255,255,255,.6); }
     }
-    /* enquanto carrega: botão "preenche" conforme o progresso */
-    #start-screen .play-btn.loading {
-      cursor: progress; color: #ccd;
-      background: linear-gradient(135deg, #2a2a4a, #1a1a30);
+    /* enquanto carrega: cinza, cursor not-allowed, preenche conforme progresso */
+    #start-screen .play-btn.loading,
+    #start-screen .play-btn:disabled {
+      cursor: not-allowed; color: #8890a0;
+      background: linear-gradient(135deg, #2a2a3a, #1a1a26);
       box-shadow: none;
+      opacity: 0.55;
+      filter: grayscale(0.4);
+    }
+    #start-screen .play-btn.ready {
+      opacity: 1; filter: none; cursor: pointer;
     }
     #start-screen .play-btn .pb-fill {
       position: absolute; inset: 0; width: 0%;
@@ -682,16 +689,91 @@
         const on = s.classList.toggle('show-controls');
         t.textContent = on ? '▴ Esconder controles' : '▾ Ver controles';
       };
-      // Fallback: se o loading travar, libera o JOGAR após 12s.
-      setTimeout(() => {
-        const play = document.getElementById('ss-play');
-        if (play && play.disabled) {
-          play.disabled = false;
-          play.classList.remove('loading'); play.classList.add('ready');
-          const txt = document.getElementById('ss-play-text');
-          if (txt) txt.textContent = '▶ JOGAR';
+    })();
+
+    // ── Bridge: liga o boot real (main.js) ao dock + botão da start-screen ──
+    // O main.js define window._essentialReady (Promise) e chama
+    // window._ssBootProgress(pct, label) a cada setLoadingUI().
+    (function(){
+      const fill   = document.getElementById('ss-load-fill');
+      const lbl    = document.getElementById('ss-load-label');
+      const pctEl  = document.getElementById('ss-load-pct');
+      const play   = document.getElementById('ss-play');
+      const pbFill = document.getElementById('ss-play-fill');
+      const pbText = document.getElementById('ss-play-text');
+
+      // Estado: o botão só habilita quando TIER1 (essenciais) terminar.
+      // A barra continua mexendo de 40→100% mostrando TIER2 background.
+      let _essentialReady = false;
+      let _lastPct = 0;
+
+      function renderPlay() {
+        if (!play) return;
+        if (_essentialReady) {
+          // Habilita: amarelo brilhante, pulsando.
+          if (play.disabled) {
+            play.disabled = false;
+            play.classList.remove('loading');
+            play.classList.add('ready');
+            if (pbFill) pbFill.style.width = '0%';
+            if (pbText) {
+              pbText.textContent = _lastPct >= 100
+                ? '▶ JOGAR'
+                : `▶ JOGAR  ·  extras ${_lastPct}%`;
+            }
+          } else if (pbText) {
+            pbText.textContent = _lastPct >= 100
+              ? '▶ JOGAR'
+              : `▶ JOGAR  ·  extras ${_lastPct}%`;
+          }
+        } else {
+          // Disabled: cinza + cursor not-allowed + preenche conforme TIER1.
+          if (pbFill) pbFill.style.width = _lastPct + '%';
+          if (pbText) pbText.textContent = `⏳ Carregando…  ${_lastPct}%`;
         }
-      }, 12000);
+      }
+
+      // API que o main.js vai chamar a cada setLoadingUI().
+      window._ssBootProgress = function(pct, label){
+        const p = Math.max(0, Math.min(100, Math.round(pct || 0)));
+        _lastPct = p;
+        if (fill)  fill.style.width = p + '%';
+        if (pctEl) pctEl.textContent = p + '%';
+        if (lbl && label) {
+          lbl.textContent = _essentialReady
+            ? `✓ Pronto pra jogar — ${label}`
+            : `⚙️ ${label}`;
+        }
+        renderPlay();
+      };
+
+      // Quando TIER1 essencial resolver → libera o botão.
+      // (main.js cria a Promise antes desse script rodar? Não — main.js é módulo
+      //  e carrega depois. Por isso a gente espera ela aparecer.)
+      function _wireEssential() {
+        if (window._essentialReady && typeof window._essentialReady.then === 'function') {
+          window._essentialReady.then(() => {
+            _essentialReady = true;
+            renderPlay();
+          });
+          return true;
+        }
+        return false;
+      }
+      if (!_wireEssential()) {
+        const iv = setInterval(() => { if (_wireEssential()) clearInterval(iv); }, 50);
+        // Fail-safe: se em 15s nem a Promise existir nem TIER1 resolver, libera.
+        setTimeout(() => {
+          if (!_essentialReady) {
+            console.warn('[ss-play] fail-safe: liberando JOGAR após 15s sem _essentialReady');
+            _essentialReady = true;
+            renderPlay();
+          }
+        }, 15000);
+      }
+
+      // Render inicial (0% disabled).
+      renderPlay();
     })();
   </script>
 

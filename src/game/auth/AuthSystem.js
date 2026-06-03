@@ -57,36 +57,42 @@ export class AuthSystem {
       .eq('id', this.user.id)
       .maybeSingle();
     if (error) {
-      console.warn('[Auth] erro ao carregar profile:', error.message);
-      return;
+      console.error('[Auth] profile load FALHOU:', error);
+      throw error;
     }
     if (data) {
       this.profile = data;
-      // Expõe pro HUD/jogo
+      this._profileRetries = 0;
+      // Expõe pro HUD/jogo — sem defaults: se vier null, eh schema quebrado.
       if (typeof window !== 'undefined' && window._gamePlayer) {
         const p = window._gamePlayer;
-        p._profileXp = data.xp || 0;
-        p._profileLevel = data.level || 1;
-        p._profileKills = data.total_kills || 0;
-        p._profileDeaths = data.total_deaths || 0;
-        p._profileCoins = data.coins || 0;
+        p._profileXp = data.xp;
+        p._profileLevel = data.level;
+        p._profileKills = data.total_kills;
+        p._profileDeaths = data.total_deaths;
+        p._profileCoins = data.coins;
         // Hidrata PlayerStats local se existir
         if (p.stats?.fromProfile) p.stats.fromProfile(data);
       }
       DEBUG.log(`[Auth] profile carregado: lv${data.level} ${data.xp}xp k${data.total_kills}/d${data.total_deaths} ${data.coins}🪙`);
     } else {
+      this._profileRetries = (this._profileRetries || 0) + 1;
+      if (this._profileRetries > 5) {
+        throw new Error('[Auth] profile nao criado apos 5 retries — trigger transfps.handle_new_user falhou');
+      }
       setTimeout(() => this._loadProfile(), 1500);
     }
   }
 
   /** Retorna stats persistidos pro HUD mostrar. */
   getProfileStats() {
+    if (!this.profile) throw new Error('[Auth] getProfileStats chamado sem profile carregado');
     return {
-      xp: this.profile?.xp || 0,
-      level: this.profile?.level || 1,
-      kills: this.profile?.total_kills || 0,
-      deaths: this.profile?.total_deaths || 0,
-      coins: this.profile?.coins || 0,
+      xp: this.profile.xp,
+      level: this.profile.level,
+      kills: this.profile.total_kills,
+      deaths: this.profile.total_deaths,
+      coins: this.profile.coins,
     };
   }
 
@@ -132,23 +138,24 @@ export class AuthSystem {
       `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no`
     );
     if (!popup) {
-      // Popup blocked: fallback pro redirect normal
-      console.warn('[Auth] popup bloqueado, usando redirect');
-      window.location.href = data.url;
-      return;
+      throw new Error('[Auth] popup bloqueado — habilite popups pra login no Google');
+    }
+    if (!('BroadcastChannel' in window)) {
+      throw new Error('[Auth] browser sem BroadcastChannel — login Google indisponivel');
     }
 
     // Listener via BroadcastChannel (COOP-safe). NAO usa postMessage nem
     // popup.closed polling (ambos disparam warning/bloqueio por COOP do
     // accounts.google.com). Timeout absoluto de 120s.
     return new Promise((resolve, reject) => {
-      const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('transfps-auth') : null;
+      const bc = new BroadcastChannel('transfps-auth');
       let settled = false;
       let timeoutId = null;
 
       const cleanup = () => {
         settled = true;
-        if (bc) { try { bc.close(); } catch (_) {} }
+        try { bc.close(); }
+        catch (e) { console.error('[Auth] bc.close:', e); }
         if (timeoutId) clearTimeout(timeoutId);
       };
 
@@ -184,12 +191,7 @@ export class AuthSystem {
         }
       };
 
-      if (bc) {
-        bc.onmessage = (ev) => handlePayload(ev.data);
-      } else {
-        cleanup();
-        return reject(new Error('BroadcastChannel indisponivel'));
-      }
+      bc.onmessage = (ev) => handlePayload(ev.data);
 
       // Timeout absoluto (sem polling de popup.closed → evita COOP warning)
       timeoutId = setTimeout(() => {
@@ -204,8 +206,8 @@ export class AuthSystem {
    *  ('transfps-auth'). postMessage NAO funciona com COOP do Google. */
   static async handleOAuthCallback() {
     try {
-      const search = window.location.search || '';
-      const hash = window.location.hash || '';
+      const search = window.location.search;
+      const hash = window.location.hash;
       const qs = new URLSearchParams(search);
       const hp = new URLSearchParams(hash.replace(/^#/, '').replace(/^auth-callback&?/, ''));
 
@@ -216,12 +218,15 @@ export class AuthSystem {
       if (!code && !hashAccess && !errParam) return false;
 
       const signal = (payload) => {
-        if (!('BroadcastChannel' in window)) return;
-        try {
-          const bc = new BroadcastChannel('transfps-auth');
-          bc.postMessage(payload);
-          setTimeout(() => { try { bc.close(); } catch (_) {} }, 200);
-        } catch (_) {}
+        if (!('BroadcastChannel' in window)) {
+          throw new Error('[Auth] popup sem BroadcastChannel — impossivel sinalizar opener');
+        }
+        const bc = new BroadcastChannel('transfps-auth');
+        bc.postMessage(payload);
+        setTimeout(() => {
+          try { bc.close(); }
+          catch (e) { console.error('[Auth signal] bc.close:', e); }
+        }, 200);
       };
 
       if (errParam) {
@@ -259,16 +264,9 @@ export class AuthSystem {
       }
       return false;
     } catch (e) {
-      console.warn('[Auth] callback handler erro:', e);
-      return false;
+      console.error('[Auth] callback handler erro:', e);
+      throw e;
     }
-  }
-
-  async signInAnonymously(nickname = 'Player') {
-    // Modo guest local — sem Supabase. Útil pra single player offline.
-    this.user = { id: 'guest', email: null, isGuest: true };
-    this.profile = { id: 'guest', nickname, isGuest: true };
-    this._notify('GUEST');
   }
 
   async signOut() {
@@ -280,23 +278,36 @@ export class AuthSystem {
   }
 
   async updateNickname(nickname) {
-    if (!this._supabase || !this.user || this.user.isGuest) {
-      if (this.profile) this.profile.nickname = nickname;
-      return;
-    }
+    if (!this._supabase) throw new Error('[Auth] updateNickname sem supabase inicializado');
+    if (!this.user) throw new Error('[Auth] updateNickname sem user logado');
     const { error } = await this._supabase.rpc('transfps_set_nickname', {
       p_nickname: nickname,
     });
-    if (error) { console.warn('[Auth] update nickname:', error.message); return; }
+    if (error) {
+      console.error('[Auth] updateNickname RPC:', error);
+      throw error;
+    }
     await this._loadProfile();
   }
 
   isAuthenticated() { return !!this.user; }
-  isGuest() { return this.user?.isGuest === true; }
-  getNickname() { return this.profile?.nickname || 'Player'; }
-  getUserId() { return this.user?.id || null; }
+  isReady() { return !!this.profile; }
+  /** Guest mode removido — sempre false. Mantido pra compat com chamadas antigas. */
+  isGuest() { return false; }
+  getNickname() {
+    if (!this.profile?.nickname) throw new Error('[Auth] getNickname sem profile carregado');
+    return this.profile.nickname;
+  }
+  /** Retorna user id ou null se nao logado. Chamadas que precisam de id
+   *  garantido devem validar antes (isAuthenticated()). */
+  getUserId() { return this.user?.id ?? null; }
   getSupabase() { return this._supabase; }
 
   onAuthChange(cb) { this._listeners.add(cb); return () => this._listeners.delete(cb); }
-  _notify(event) { for (const cb of this._listeners) try { cb(event, this); } catch (_) {} }
+  _notify(event) {
+    for (const cb of this._listeners) {
+      try { cb(event, this); }
+      catch (e) { console.error('[Auth] listener:', e); }
+    }
+  }
 }
