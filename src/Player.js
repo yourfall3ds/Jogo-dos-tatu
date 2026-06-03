@@ -83,6 +83,18 @@ export class Player {
     // Momentum aereo: ao pular sprintando, preserva o embalo no ar (Fortnite/Apex feel)
     this._sprintMomentumLeft = 0;
 
+    // ── Slide (agachar correndo) — momentum estilo Apex ─────────────
+    //  Ctrl/C sprintando + grounded = desliza preservando o embalo.
+    //  Friction decai a velocidade; controle direcional reduzido.
+    this.SLIDE_DUR      = 0.7;   // duração máxima do slide (s)
+    this.SLIDE_BOOST    = 1.3;   // multiplica a velocidade de sprint no início
+    this.SLIDE_FRICTION = 1.8;   // decaimento por segundo da velocidade do slide
+    this._slideT        = 0;     // timer ativo (>0 = deslizando)
+    this._slideDirX     = 0;     // direção travada do slide
+    this._slideDirZ     = 0;
+    this._slideCamDrop  = 0;     // queda da câmera durante o slide (suaviza)
+    this._wasCrouch     = false; // edge-detect do botão de agachar
+
     // ── Dash (double-tap W) ─────────────────────────────────────────
     //  Permite ENCADEAR dashes no ar pra "plainar" estilo The Duel.
     //  airCharges recarrega ao tocar chão. Cooldown curto = fluidez.
@@ -553,6 +565,37 @@ export class Player {
       this._sprintMomentumLeft = 1.0;
     }
 
+    // ── 5.27 SLIDE (agachar correndo) — momentum estilo Apex ─────────
+    //  Ctrl/C: se sprintando + grounded → inicia slide preservando embalo.
+    //  Durante o slide a velocidade decai por friction; controle reduzido.
+    //  Integra com _sprintMomentumLeft: pular durante o slide carrega o
+    //  embalo pro ar (takeoff acima já lê _sprinting, e mantemos vel alta).
+    const crouchNow = canMove && (this.input.isDown('ControlLeft') ||
+                                  this.input.isDown('ControlRight') ||
+                                  this.input.isDown('KeyC'));
+    const crouchPress = crouchNow && !this._wasCrouch;
+    this._wasCrouch = crouchNow;
+
+    // Início: aperta agachar enquanto sprinta no chão e não está deslizando.
+    if (crouchPress && this._sprinting && this.isGrounded && this._slideT <= 0 &&
+        this._dashT <= 0 && this._dodgeT <= 0) {
+      this._slideT = this.SLIDE_DUR;
+      // Direção travada: usa o movimento atual; se parado, a frente da visão.
+      if (moving) { this._slideDirX = moveDir.x; this._slideDirZ = moveDir.z; }
+      else        { this._slideDirX = fwd.x;     this._slideDirZ = fwd.z;     }
+      // Velocidade inicial = sprint * boost (preserva e amplifica o embalo).
+      const slideSpeed = this.SPEED * this.SPRINT_MULT * this.SLIDE_BOOST;
+      this._vx = this._slideDirX * slideSpeed;
+      this._vz = this._slideDirZ * slideSpeed;
+      this.sounds?.playNow?.('dash');   // reusa o som do dash p/ o slide
+    }
+
+    // Termina cedo se soltar o agachar, sair do chão ou começar um dash.
+    const sliding = this._slideT > 0;
+    if (sliding && (!crouchNow || !this.isGrounded || this._dashT > 0)) {
+      this._slideT = 0;
+    }
+
     let spd = this.SPEED;
     if (this._dodgeT > 0) {
       this._dodgeT -= dt;
@@ -573,11 +616,30 @@ export class Player {
       // leve decaimento. É isso que faz o dash IR MAIS LONGE que correr.
       this._vx *= 0.92;
       this._vz *= 0.92;
+    } else if (this._slideT > 0) {
+      // ── SLIDE ATIVO ────────────────────────────────────────────────
+      //  Velocidade na direção travada decaindo por friction (momentum).
+      //  Controle direcional REDUZIDO: o input só inclina levemente a rota
+      //  do slide sem matar o embalo (steer suave, estilo Apex).
+      this._slideT -= dt;
+      const decay = Math.exp(-this.SLIDE_FRICTION * dt);   // friction decay
+      this._vx *= decay;
+      this._vz *= decay;
+      if (moving) {
+        // steer fraco: empurra um pouco a velocidade na direção do input
+        const slideSpeed = Math.hypot(this._vx, this._vz);
+        this._vx = BABYLON.Scalar.Lerp(this._vx, moveDir.x * slideSpeed, 0.06);
+        this._vz = BABYLON.Scalar.Lerp(this._vz, moveDir.z * slideSpeed, 0.06);
+      }
     } else {
       const smooth = this.isGrounded ? 0.30 : 0.10;
       this._vx = BABYLON.Scalar.Lerp(this._vx, moveDir.x * spd, smooth);
       this._vz = BABYLON.Scalar.Lerp(this._vz, moveDir.z * spd, smooth);
     }
+
+    // ── Camera drop do slide: abaixa suave durante, sobe ao terminar ──
+    const slideCamTarget = this._slideT > 0 ? this.HEIGHT * 0.38 : 0;
+    this._slideCamDrop = BABYLON.Scalar.Lerp(this._slideCamDrop, slideCamTarget, Math.min(1, dt * 12));
 
     // ── 5.3 Chute PLANTA o movimento ─────────────────────────────────
     //  Não dá pra correr E chutar com a perna (ficava bugado). Quando
@@ -1354,7 +1416,8 @@ export class Player {
     } else {
       // ── Câmera FPS (padrão) ─────────────────────────────────────
       const eye = this.mesh.position.clone();
-      eye.y += this.HEIGHT / 2 - 0.10 + shakeY;
+      // _slideCamDrop abaixa a câmera durante o slide (sensação de agachar).
+      eye.y += this.HEIGHT / 2 - 0.10 + shakeY - (this._slideCamDrop || 0);
       eye.x += shakeX;
       eye.z += shakeZ;
 

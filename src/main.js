@@ -119,6 +119,7 @@ import { CharacterSelect3D } from './game/br/CharacterSelect3D.js';
 import { LobbyHall } from './game/br/LobbyHall.js';
 import { BloodTrail }          from './game/combat/BloodTrail.js';
 import { DeathCam }            from './game/multiplayer/DeathCam.js';
+import { KillCam }             from './game/ui/KillCam.js';
 import { PvpToggle }           from './game/ui/PvpToggle.js';
 import { LocalAura }           from './game/combat/LocalAura.js';
 import { getConfig }           from './game/auth/SupabaseClient.js';
@@ -751,6 +752,18 @@ async function init() {
     }
   });
 
+  // ── Feedback de DANO local: som "hurt" + flash vermelho ao RECEBER tiro ──
+  cs.on("hit_confirmed", (m) => {
+    try {
+      const myId = window._auth?.getUserId?.();
+      if (m.target_id && m.target_id === myId) {
+        const sm = window._soundManager || window._player?.sounds;
+        if (sm?.playNow) sm.playNow("hurt", 0.9);
+        _showDamageFlash();
+      }
+    } catch (e) { console.error("[DamageFeedback]", e); }
+  });
+
   // ── BulletTracer: linha amarela + impact spark no hit_confirmed ──
   cs.on("hit_confirmed", (m) => {
     try {
@@ -760,6 +773,7 @@ async function init() {
         const tPos = new BABYLON.Vector3(target.x, target.y + 1.5, target.z);
         bulletTracer.spawn(me, tPos);
         bulletTracer.spawnImpact(tPos);
+        bulletTracer.spawnSparks(tPos);
       }
     } catch (e) { console.error("[BulletTracer]", e); }
   });
@@ -779,6 +793,20 @@ async function init() {
     const victimNick = d.player_id === myId ? 'VOCÊ'
       : (_remotePlayers.get(d.player_id)?.nickname || cs.state?.players?.get(d.player_id)?.nickname || 'player');
     _showKillFeed(`${killerNick} ☠ ${victimNick}`);
+
+    // ── KillCam: morri eu → replay 3s na camera do assassino ──
+    // Nao dispara se o killer fui eu (suicidio/sem matador) nem se a
+    // DeathCam ja estiver no controle da camera (evita briga de camera).
+    if (d.player_id === myId && d.killer && d.killer !== myId) {
+      try {
+        const kc = window._killCam;
+        if (kc && !(window._deathCam?.isActive?.())) {
+          const killerRP = _remotePlayers.get(d.killer);
+          const killerRoot = killerRP?.root || _remoteMobs.get(d.killer)?.root || null;
+          kc.start(killerNick, killerRoot, 3000, () => {});
+        }
+      } catch (e) { console.error('[KillCam] start:', e); }
+    }
   });
 
   cs.on('respawn', () => { /* state update vem via player.dead → false */ });
@@ -942,6 +970,8 @@ async function init() {
   const deathTimer = new DeathTimer(cs, auth);
   const bloodTrail = new BloodTrail(cs, player);
   const deathCam = new DeathCam(scene, cs, auth, player);
+  const killCam = new KillCam(scene, cs);
+  window._killCam = killCam;
   window._chatHud = chatHud;
   window._scoreboard = scoreboard;
   window._pingDisplay = pingDisplay;
@@ -1193,6 +1223,19 @@ async function init() {
       el.remove();
       try { onClick && onClick(); } catch (e) { console.error('[ClickToPlay]', e); }
     }, { once: true });
+  }
+
+  // ── Flash vermelho overlay ao RECEBER dano ──
+  function _showDamageFlash() {
+    let f = document.getElementById("dmg-flash");
+    if (!f) {
+      f = document.createElement("div");
+      f.id = "dmg-flash";
+      f.style.cssText = "position:fixed;inset:0;z-index:9000;pointer-events:none;box-shadow:inset 0 0 120px 40px rgba(255,0,0,0.55);opacity:0;transition:opacity 0.1s;";
+      document.body.appendChild(f);
+    }
+    f.style.opacity = "1";
+    setTimeout(() => { f.style.opacity = "0"; }, 140);
   }
 
   // Overlay especifico pra usuarios chegando do Meta Quest browser.

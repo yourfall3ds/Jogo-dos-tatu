@@ -41,6 +41,8 @@ export class WeaponSystem {
     this.maxAmmo   = startW.maxAmmo;
     this.reloading = false;
     this._reloadT  = 0;
+    this._reloadDur = 1.5;     // duração total da recarga atual (p/ cancel)
+    this._chambered = false;   // tinha bala na câmara ao começar a recarga? (tactical = mag+1)
     this.FIRE_RATE = startW.fireRate;
     this._fireT    = 0;
 
@@ -48,6 +50,13 @@ export class WeaponSystem {
     this._recoilPitch = 0; this._recoilVel = 0;
     this._bobT = 0; this._bobAmt = 0;
     this._tiltZ = 0; this._tiltVel = 0;
+
+    // ── Recoil de CÂMERA (kick vertical que decai) ──
+    // Acumula no fire, aplica em camera.rotation.x no update, decay *0.85/frame.
+    // _recoilCamApplied guarda quanto já foi somado à câmera pra remover ao decair
+    // (assim não briga com o look do mouse).
+    this._recoilKick = 0;        // pitch acumulado (rad), decai por frame
+    this._recoilCamApplied = 0;  // quanto desse kick já está somado em camera.rotation.x
 
     this._weaponMeshes = {}; // { id: root } 1ª Pessoa
     this._tpsMeshes    = {}; // { id: root } 3ª Pessoa
@@ -407,6 +416,11 @@ export class WeaponSystem {
     this._flashT = .06;
     this._recoilVel = -8;
 
+    // ── Camera kick (recoil vertical) ──
+    // Acumula em _recoilKick (GRAUS). O Player consome em consumeRecoilPitch()
+    // somando ao pitch da câmera, e decai *0.85/frame. w.recoil opcional por arma.
+    this._recoilKick += (this.getCurrentWeapon().recoil ?? 1.2);
+
     // ── Cores por arma ──────────────────────────────────────────────
     const w = this.getCurrentWeapon();
     const [mr, mg, mb] = w.muzzleColor ?? w.tracerColor ?? [1, 0.8, 0.3];
@@ -431,6 +445,11 @@ export class WeaponSystem {
     // TPS: origem nos olhos do jogador (sem parallaxe do ombro)
     // FPS: origem na câmera
     const dir = this.camera.getDirection(BABYLON.Vector3.Forward());
+    // ── Spread (dispersão) — reduzido ao mirar (ADS) ──────────────────
+    //  Cada arma define w.spread (rad, padrão 0.025). Mirar multiplica por
+    //  w.aimSpreadMult (padrão 0.3 → 70% mais preciso). _aimAmount (0..1) é
+    //  o quanto está mirando agora, interpolado em update().
+    this._applySpread(dir);
     const rayOrigin = this._tpsRayOrigin
       ? this._tpsRayOrigin.add(dir.scale(0.6))
       : this.camera.position.clone();
@@ -645,6 +664,21 @@ export class WeaponSystem {
 
     if (this._root) {
         this._root.rotation.x = BABYLON.Tools.ToRadians(this._recoilPitch * 2);
+    }
+
+    // ── Camera recoil: kick vertical que decai *0.85/frame ──
+    // Remove o que aplicamos no frame anterior (pra não brigar com o mouse-look),
+    // decai o kick, e reaplica o novo valor. Normaliza pra ~60fps.
+    if (this.camera && (this._recoilKick !== 0 || this._recoilCamApplied !== 0)) {
+      // 1) desfaz o aplicado anterior
+      this.camera.rotation.x += this._recoilCamApplied;
+      // 2) decai (0.85 por frame de 60fps, escalado pelo dt real)
+      const decay = Math.pow(0.85, Math.max(0, dt) * 60);
+      this._recoilKick *= decay;
+      if (Math.abs(this._recoilKick) < 1e-4) this._recoilKick = 0;
+      // 3) aplica o novo kick (pra cima → subtrai do pitch)
+      this.camera.rotation.x -= this._recoilKick;
+      this._recoilCamApplied = this._recoilKick;
     }
 
     // ── Mira ADS (FPS): interpola arma entre quadril e mira ──────────

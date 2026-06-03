@@ -266,15 +266,25 @@ export class RemotePlayer {
   }
 
   _applyDead(dead) {
-    // Aplica pose de morte no alvo visivel: avatar GLB se carregado, senao a capsule fallback.
+    if (dead) { this._applyDeadRagdoll(); return; }
+    // Reset: volta avatar/capsule pro estado em pe.
     const target = this._avatarRoot || this.body;
-    if (dead) {
-      try { target.rotation.x = -Math.PI / 2; } catch (_) {}
-      try { this.body.rotation.x = -Math.PI / 2; this.body.position.y = 0.4; } catch (_) {}
-    } else {
-      try { target.rotation.x = 0; } catch (_) {}
-      try { this.body.rotation.x = 0; this.body.position.y = 0.9; } catch (_) {}
-    }
+    try { target.rotation.x = 0; } catch (_) {}
+    try { this.body.rotation.x = 0; this.body.position.y = 0.9; } catch (_) {}
+  }
+
+  _applyDeadRagdoll() {
+    try {
+      if (this._avatarRoot) {
+        this._avatarAnims?.forEach(a => { try { a.stop(); } catch(_){} });
+        const dead = this._avatarAnims?.find(a => /dead|death|fall/i.test(a.name));
+        if (dead) { try { dead.start(false, 1.0); } catch(_){} }
+        else { this._avatarRoot.rotation.x = Math.PI / 2; }
+      } else {
+        // Sem GLB carregado: tomba a capsule fallback.
+        try { this.body.rotation.x = -Math.PI / 2; this.body.position.y = 0.4; } catch (_) {}
+      }
+    } catch (_) {}
   }
 
   _buildAura() {
