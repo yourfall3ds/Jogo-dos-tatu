@@ -32,6 +32,14 @@ export function recordToRow(rec) {
       sx: s[0], sy: s[1], sz: s[2], props: {},
     };
   }
+  // Máquina de Criação (item especial) — sem url; só posição.
+  if (rec.kind === 'machine' || rec.id === 'assetMachine') {
+    return {
+      world_id: WORLD_ID, kind: 'machine', asset_id: 'assetMachine', url: null,
+      px: rec.p[0], py: rec.p[1], pz: rec.p[2], ry: rec.ry || 0,
+      sx: 1, sy: 1, sz: 1, props: {},
+    };
+  }
   // Quadro/picture frame: imagem (imageUrl) na url + prompt nos props.
   if (rec.kind === 'frame') {
     const sc = rec.sc ?? 1;
@@ -64,6 +72,13 @@ export function rowToRecord(row) {
       kind: 'frame', id: 'w_' + row.id, name: 'w_' + row.id,
       imageUrl: row.url, prompt: row.props?.prompt || '',
       p: [row.px, row.py, row.pz], ry: row.ry || 0, sc: row.sx ?? 1,
+      _worldId: row.id,
+    };
+  }
+  if (row.kind === 'machine') {
+    return {
+      kind: 'machine', id: 'assetMachine',
+      p: [row.px, row.py, row.pz], ry: row.ry || 0,
       _worldId: row.id,
     };
   }

@@ -155,6 +155,7 @@ export class BuildMode {
     if (!a || !b) return false;
     const keyOf = (r) => r.kind === 'piece' ? 'p:' + r.pieceId
                        : r.kind === 'frame' ? 'f:' + (r.imageUrl || '')
+                       : (r.kind === 'machine' || r.id === 'assetMachine') ? 'm:'
                        : 'g:' + (r.id || r.url || '');
     const ka = keyOf(a), kb = keyOf(b);
     if (ka !== kb) return false;
@@ -169,6 +170,7 @@ export class BuildMode {
     const entry = worldId && this._worldEntries.get(worldId);
     if (!entry) return;
     try { entry.breakable?.dispose(); } catch (_) {}
+    try { entry.machine?.dispose?.(); } catch (_) {}   // máquina de criação (grupo inteiro)
     try { this._disposeColliderArtifacts(entry.root); } catch (_) {}
     try { entry.root?.dispose(); } catch (_) {}
     const i = this._placed.indexOf(entry);
@@ -191,7 +193,29 @@ export class BuildMode {
    * Reusado por _restorePlaced (local) e pelo mundo compartilhado (Supabase).
    * Não salva — quem chama decide persistência.
    */
+  /**
+   * Instancia uma Máquina de Criação na cena e devolve o entry pra _placed.
+   * No mundo compartilhado o id é derivado do worldId (estável entre reloads,
+   * e a biblioteca da máquina — machine_lib_<id> — fica consistente).
+   */
+  async _spawnMachineAt(pos, worldId = null) {
+    const { AssetMachine } = await import('../items/AssetMachine.js');
+    const machineId = worldId ? ('mac_w_' + worldId)
+                              : ('mac_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5));
+    const machine = new AssetMachine(
+      this.scene, window._meshyPanel, window._gamePlayer, window._gameInput, pos, machineId,
+    );
+    const entry = { record: { kind: 'machine', id: 'assetMachine', p: [pos.x, pos.y, pos.z] }, root: null, machine, worldId };
+    this._placed.push(entry);
+    return entry;
+  }
+
   async _renderRecordToScene(rec) {
+    if (rec.kind === 'machine' || rec.id === 'assetMachine') {
+      return await this._spawnMachineAt(
+        new BABYLON.Vector3(rec.p[0], rec.p[1], rec.p[2]), rec._worldId || null,
+      );
+    }
     if (rec.kind === 'frame') {
       const entry = await this._buildFrameAt(
         new BABYLON.Vector3(rec.p[0], rec.p[1], rec.p[2]),
@@ -996,20 +1020,11 @@ export class BuildMode {
       return;
     }
 
-    // Item especial: Máquina de Criação
+    // Item especial: Máquina de Criação (global no mundo compartilhado)
     if (item.special === 'assetMachine') {
-      const { AssetMachine } = await import('../items/AssetMachine.js');
-      const machineId = 'mac_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
-      new AssetMachine(
-        this.scene,
-        window._meshyPanel,
-        window._gamePlayer,
-        window._gameInput,
-        pos,
-        machineId,
-      );
-      this._placed.push({ record: { id: 'assetMachine', p: [pos.x, pos.y, pos.z] }, root: null });
-      this._save();
+      const entry = await this._spawnMachineAt(pos, null);
+      if (this._sharedWorld) await this._persistPlaced(entry);   // todos veem via Realtime
+      else this._save();
       return;
     }
 
