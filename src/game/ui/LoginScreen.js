@@ -60,12 +60,6 @@ export class LoginScreen {
             </svg>
             Entrar com Google
           </button>
-          <button id="ls-guest" style="
-            padding:11px 20px; background:rgba(255,255,255,.08); color:#cdd;
-            border:1px solid rgba(255,255,255,.15); border-radius:10px;
-            font-size:0.92em; cursor:pointer; transition:.15s;">
-            🐭 Jogar como convidado
-          </button>
         </div>
 
         <!-- Estado: LOGADO -->
@@ -129,7 +123,6 @@ export class LoginScreen {
     this._el = el;
 
     el.querySelector('#ls-google').onclick = () => this._doGoogle();
-    el.querySelector('#ls-guest').onclick  = () => this._doGuest();
     el.querySelector('#ls-continue').onclick = () => this._doContinue(false);
     el.querySelector('#ls-lobby').onclick    = () => this._doContinue(true);
     el.querySelector('#ls-logout').onclick   = () => this._doLogout();
@@ -146,14 +139,13 @@ export class LoginScreen {
   async _doGoogle() {
     this._setStatus('Redirecionando pro Google…', '#ffcc66');
     try { await this.auth.signInWithGoogle(); }
-    catch (e) { this._setStatus('Erro: ' + e.message, '#f55'); }
+    catch (e) {
+      console.error('[Login] Google:', e);
+      this._setStatus('Erro: ' + e.message, '#f55');
+    }
   }
-
-  async _doGuest() {
-    const nick = prompt('Nickname (2-24 chars):', 'Player' + Math.floor(Math.random() * 1000));
-    if (!nick || nick.length < 2 || nick.length > 24) return;
-    await this.auth.signInAnonymously(nick);
-  }
+  // _doGuest removido: produto pessoal exige credenciais 100% Lucas.
+  // Veja feedback_credenciais_pessoais.md.
 
   _doContinue(openLobby) {
     this.hide();
@@ -200,7 +192,7 @@ export class LoginScreen {
       const url = this.auth.profile?.avatar_url || this.auth.user?.user_metadata?.avatar_url;
       if (url) { avatar.src = url; avatar.style.display = 'block'; }
       else avatar.style.display = 'none';
-      this._setStatus(this.auth.isGuest() ? 'modo convidado (sem multiplayer real)' : '', '#789');
+      this._setStatus('', '#789');
     } else {
       anon.style.display = 'flex';
       logged.style.display = 'none';

@@ -63,8 +63,17 @@ export class BattleRoyaleMode {
       console.log('[BR] takeoff em', new Date(skydive_at));
       this._enterTakeoff(skydive_at);
     });
-    // Reset quando volta pro lobby
-    this.cs.on('lobby_reset', () => { this._takeoffFired = false; });
+    // Reset quando volta pro lobby — incluindo _takeoffActive (senao o
+    // timeout de 8s segura o proximo takeoff num re-match rapido) e
+    // _charSelectShown (senao CharSelect3D nao reabre na proxima rodada).
+    // Tambem aborta TakeoffSequence em voo pra evitar RAF apos dispose.
+    this.cs.on('lobby_reset', () => {
+      this._takeoffFired = false;
+      this._takeoffActive = false;
+      this._charSelectShown = false;
+      try { this.takeoff?.abort(); }
+      catch (e) { console.error('[BR] takeoff.abort em lobby_reset:', e); }
+    });
 
     // br_skydive_phase → server liberou skydive, ativo SkydiveController
     this.cs.on('br_skydive_phase', () => {

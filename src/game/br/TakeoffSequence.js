@@ -14,6 +14,8 @@ export class TakeoffSequence {
     this.scene = scene;
     this._lights = [];
     this._trails = [];
+    this._rafs = [];
+    this._aborted = false;
   }
 
   /** Dispara em todos os avatares listados. avatars = [{mesh}] */
@@ -22,8 +24,9 @@ export class TakeoffSequence {
       onComplete?.();
       return;
     }
+    this._aborted = false;
     avatars.forEach((a, i) => {
-      setTimeout(() => this._launchOne(a), i * 80);
+      setTimeout(() => { if (!this._aborted) this._launchOne(a); }, i * 80);
     });
     // Total duration ≈ 600ms last avatar + 1500ms flight = ~2100ms
     const total = avatars.length * 80 + 1800;
@@ -31,6 +34,12 @@ export class TakeoffSequence {
       this._cleanup();
       onComplete?.();
     }, total);
+  }
+
+  /** Aborta cinemática em andamento (chamado em close/dispose da sala). */
+  abort() {
+    this._aborted = true;
+    this._cleanup();
   }
 
   _launchOne(avatar) {
@@ -92,24 +101,35 @@ export class TakeoffSequence {
     const startT = performance.now();
     const duration = 1200;
     const animate = () => {
+      // Guard: aborto externo ou mesh disposed durante voo → encerra silencioso.
+      if (this._aborted) return;
+      if (!mesh || mesh.isDisposed?.() || !mesh.position) return;
       const t = performance.now() - startT;
       const k = Math.min(1, t / duration);
       // Easing: quadratic out (acelera no início, sobe rápido)
       const eased = k * (2 - k);
-      mesh.position.x = BABYLON.Scalar.Lerp(startPos.x, endPos.x, eased);
-      mesh.position.y = BABYLON.Scalar.Lerp(startPos.y, endPos.y, eased);
-      mesh.position.z = BABYLON.Scalar.Lerp(startPos.z, endPos.z, eased);
-      // Avatar encolhe (perspectiva: tá indo longe)
-      const scale = BABYLON.Scalar.Lerp(1, 0.1, eased);
-      if (mesh.scaling) { mesh.scaling.x = mesh.scaling.y = mesh.scaling.z = scale; }
-      if (k < 1) requestAnimationFrame(animate);
-      else {
+      try {
+        mesh.position.x = BABYLON.Scalar.Lerp(startPos.x, endPos.x, eased);
+        mesh.position.y = BABYLON.Scalar.Lerp(startPos.y, endPos.y, eased);
+        mesh.position.z = BABYLON.Scalar.Lerp(startPos.z, endPos.z, eased);
+        // Avatar encolhe (perspectiva: tá indo longe)
+        const scale = BABYLON.Scalar.Lerp(1, 0.1, eased);
+        if (mesh.scaling) { mesh.scaling.x = mesh.scaling.y = mesh.scaling.z = scale; }
+      } catch (e) {
+        console.error('[TakeoffSequence] animate frame:', e);
+        return;
+      }
+      if (k < 1) {
+        const id = requestAnimationFrame(animate);
+        this._rafs.push(id);
+      } else {
         // Esconde mesh
         if (mesh.setEnabled) mesh.setEnabled(false);
         else mesh.isVisible = false;
       }
     };
-    requestAnimationFrame(animate);
+    const id0 = requestAnimationFrame(animate);
+    this._rafs.push(id0);
 
     // ── 4) Som de decolagem (rocket whoosh procedural) ──
     this._playBoostSound();
@@ -151,8 +171,19 @@ export class TakeoffSequence {
   }
 
   _cleanup() {
-    this._lights.forEach(l => { try { l.dispose(); } catch (_) {} });
-    this._trails.forEach(p => { try { p.dispose(); } catch (_) {} });
+    this._rafs.forEach(id => {
+      try { cancelAnimationFrame(id); }
+      catch (e) { console.error('[TakeoffSequence] cancelRAF:', e); }
+    });
+    this._rafs = [];
+    this._lights.forEach(l => {
+      try { l.dispose(); }
+      catch (e) { console.error('[TakeoffSequence] light.dispose:', e); }
+    });
+    this._trails.forEach(p => {
+      try { p.dispose(); }
+      catch (e) { console.error('[TakeoffSequence] trail.dispose:', e); }
+    });
     this._lights = []; this._trails = [];
   }
 }

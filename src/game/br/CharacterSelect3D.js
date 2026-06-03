@@ -247,6 +247,26 @@ export class CharacterSelect3D {
   close() {
     this._open = false;
     this._el.style.display = 'none';
+    // Dispose engine Babylon paralela pra nao drenar GPU enquanto cena
+    // principal roda. Vai ser recriada no proximo open() via _ensurePreviewScene.
+    if (this._previewMesh) {
+      try { this._previewMesh.dispose(false, true); }
+      catch (e) { console.error('[CharacterSelect3D] previewMesh.dispose:', e); }
+      this._previewMesh = null;
+    }
+    if (this._previewScene) {
+      try { this._previewScene.dispose(); }
+      catch (e) { console.error('[CharacterSelect3D] previewScene.dispose:', e); }
+      this._previewScene = null;
+    }
+    if (this._previewEngine) {
+      try { this._previewEngine.stopRenderLoop(); }
+      catch (e) { console.error('[CharacterSelect3D] previewEngine.stopRenderLoop:', e); }
+      try { this._previewEngine.dispose(); }
+      catch (e) { console.error('[CharacterSelect3D] previewEngine.dispose:', e); }
+      this._previewEngine = null;
+    }
+    this._previewCamera = null;
   }
 
   toggle() { this._open ? this.close() : this.open(); }

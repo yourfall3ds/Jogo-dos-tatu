@@ -556,7 +556,10 @@ export class LobbyUI {
     try {
       await navigator.clipboard.writeText(url);
       this._setStatus('🔗 link copiado!', '#7efa9a');
-    } catch (e) { prompt('Copie manualmente:', url); }
+    } catch (e) {
+      console.error('[Lobby] clipboard:', e);
+      this._setStatus('erro ao copiar link — veja console', '#f55');
+    }
   }
 
   /** Match começou — fecha lobby e entra no jogo. */
@@ -610,8 +613,11 @@ export class LobbyUI {
   onEnterGame(cb) { this._onEnterGame = cb; }
 
   show() {
-    if (!this.auth.isAuthenticated() || this.auth.isGuest()) {
-      alert('Multiplayer requer login Google.');
+    if (!this.auth.isAuthenticated()) {
+      // Sem login Google → manda pra LoginScreen
+      console.error('[Lobby] show() sem autenticacao — redirecionando pra login');
+      try { window._loginScreen?.show?.(); }
+      catch (e) { console.error('[Lobby] show LoginScreen:', e); throw e; }
       return;
     }
     this._visible = true;

@@ -62,7 +62,6 @@ export class AuthSystem {
     }
     if (data) {
       this.profile = data;
-      this._profileRetries = 0;
       // Expõe pro HUD/jogo — sem defaults: se vier null, eh schema quebrado.
       if (typeof window !== 'undefined' && window._gamePlayer) {
         const p = window._gamePlayer;
@@ -76,11 +75,10 @@ export class AuthSystem {
       }
       DEBUG.log(`[Auth] profile carregado: lv${data.level} ${data.xp}xp k${data.total_kills}/d${data.total_deaths} ${data.coins}🪙`);
     } else {
-      this._profileRetries = (this._profileRetries || 0) + 1;
-      if (this._profileRetries > 5) {
-        throw new Error('[Auth] profile nao criado apos 5 retries — trigger transfps.handle_new_user falhou');
-      }
-      setTimeout(() => this._loadProfile(), 1500);
+      // Sem fallback: profile null = trigger transfps.handle_new_user falhou.
+      // Erro logado imediato (sem retry silencioso que mascara o problema).
+      console.error('[Auth] profile null — trigger transfps.handle_new_user nao rodou pro user', this.user.id);
+      throw new Error('[Auth] profile nao encontrado — trigger transfps.handle_new_user falhou');
     }
   }
 
