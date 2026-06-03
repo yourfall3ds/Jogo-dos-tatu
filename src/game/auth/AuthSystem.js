@@ -470,8 +470,32 @@ export class AuthSystem {
     }
   }
 
+  /** Modo OFFLINE/TESTE: cria user + profile FALSOS, sem Supabase nem rede.
+   *  Permite testar VR e a IA local (tecla H spawna inimigos) sem login Google.
+   *  Não persiste nada no servidor (CloudSave no-op → cai pro cache localStorage).
+   *  O multiplayer fica desligado (cs nunca conecta nesse fluxo). */
+  async signInOffline(nickname = 'Convidado') {
+    const id = 'offline-' + Math.random().toString(36).slice(2, 10);
+    this.user = {
+      id,
+      email: 'offline@local',
+      user_metadata: { full_name: nickname },
+    };
+    this.profile = {
+      id, nickname, avatar_url: null,
+      total_kills: 0, total_deaths: 0, xp: 0, level: 1, coins: 0,
+    };
+    this._offline = true;
+    this._notify('SIGNED_IN');
+    console.log('[Auth] modo OFFLINE ativo:', id);
+    return id;
+  }
+  /** True se entrou pelo modo offline/teste (sem Supabase). */
+  isOffline() { return !!this._offline; }
+
   async signOut() {
-    if (!this._supabase) return;
+    this._offline = false;
+    if (!this._supabase) { this.user = null; this.profile = null; this._notify('SIGNED_OUT'); return; }
     await this._supabase.auth.signOut();
     this.user = null;
     this.profile = null;

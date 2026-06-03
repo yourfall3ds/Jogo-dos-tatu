@@ -310,7 +310,10 @@ async function init() {
   } catch (_) {}
 
   let engine = null;
-  const forceWebGL = new URLSearchParams(location.search).has('webgl');
+  // forceWebGL agora inclui o FALLBACK_WEBGL (Quest/?webgl). ANTES o Quest
+  // setava FALLBACK_WEBGL=true mas webgpuOK ignorava isso → subia em WebGPU
+  // e o WebXR morria ("WebGPUEngine ativo"). Agora Quest REALMENTE usa WebGL2.
+  const forceWebGL = FALLBACK_WEBGL || new URLSearchParams(location.search).has('webgl');
   const webgpuOK = !forceWebGL && BABYLON.WebGPUEngine && await BABYLON.WebGPUEngine.IsSupportedAsync;
 
   if (webgpuOK) {
@@ -557,8 +560,8 @@ async function init() {
   const vrSystem = new VRSystem(scene, player, cs);
   window._vrSystem = vrSystem;
   vrSystem.init().then(() => {
-    if (vrSystem.isQuest) {
-      console.log("[Main] Quest detectado, mostrando botao VR");
+    if (vrSystem.isQuest || vrSystem.isSupported) {
+      console.log("[Main] WebXR disponivel, mostrando botao VR (Quest:", vrSystem.isQuest, ")");
       _showQuestVRPrompt(vrSystem);
     }
   }).catch(e => console.warn("[VR] init falhou", e?.message));
@@ -1115,6 +1118,8 @@ async function init() {
   loginScreen.onOpenLobby(() => {
     serverListUI.show();
   });
+  // Botão "JOGAR OFFLINE": pula login/MP e cai direto no mundo de teste.
+  loginScreen.onOffline(() => { _enterGameOffline(); });
 
   // onEnterGame agora dispara quando a ServerListUI confirma join na sala.
   // Mesma logica de carregar mapa + ativar input que a LobbyUI tinha.
@@ -1197,6 +1202,44 @@ async function init() {
     $('start-screen').style.display = 'none';
   };
 
+  // ── MODO OFFLINE/TESTE ────────────────────────────────────────────
+  //  Pula login Google e multiplayer: cai direto no mundo aberto local.
+  //  Serve pra testar o VR (Quest) e a IA (tecla H spawna inimigos).
+  const _enterGameOffline = async () => {
+    try { window._openLoadGate?.('modo offline'); } catch (e) { console.error('[Offline] openLoadGate:', e); }
+    try { await _awaitEssentials('modo offline'); } catch (e) { console.error('[Offline] essenciais:', e); }
+
+    const loading = window._loadingOverlay;
+    try {
+      loading?.show('MODO OFFLINE', 'preparando área de teste', true);
+      loading?.setProgress(30, 'criando plano');
+      _ensureOpenWorldGround(scene);
+      loading?.setProgress(70, 'preparando shaders');
+      // A cena já está renderizando (render loop do boot). executeWhenReady pode
+      // nunca disparar no WebGPU (render targets) — corremos com timeout pra não travar.
+      await Promise.race([
+        new Promise(r => scene.executeWhenReady(r)),
+        new Promise(r => setTimeout(r, 1500)),
+      ]);
+      loading?.setProgress(100, 'pronto');
+      await new Promise(r => setTimeout(r, 100));
+    } catch (e) {
+      console.error('[Offline] preparar mundo falhou:', e);
+    } finally {
+      loading?.hide();
+    }
+
+    $('start-screen').style.display = 'none';
+    document.body.classList.add('in-game');
+    _showClickToPlayOverlay(() => {
+      try { window._gameInput?.activate(); } catch (e) { console.error('[Input] activate:', e); }
+      try { setFocusUI(true); } catch (e) { console.error('[UI] setFocusUI:', e); }
+      try { window._musicSystem?.start(); } catch (e) { console.error('[Music] start:', e); }
+      console.log('[Offline] no mundo. Tecla H = spawnar inimigos (IA). 🥽 ENTRAR EM VR no Quest.');
+    });
+  };
+  window._enterGameOffline = _enterGameOffline;
+
   // ── Overlay "CLIQUE PARA JOGAR" — captura gesture fresco pro Pointer Lock ──
   function _showClickToPlayOverlay(onClick) {
     let el = document.getElementById('click-to-play-overlay');
@@ -1258,24 +1301,53 @@ async function init() {
   // Overlay especifico pra usuarios chegando do Meta Quest browser.
   // Mostra botao gigante ENTRAR EM VR (captura user gesture pra requestSession).
   function _showQuestVRPrompt(vrSystem) {
-    let el = document.getElementById("quest-vr-prompt");
-    if (el) el.remove();
-    el = document.createElement("div");
-    el.id = "quest-vr-prompt";
-    el.style.cssText = "position:fixed;top:20px;right:20px;z-index:9998;" +
-      "background:linear-gradient(135deg,#7e3aff,#3a8aff);color:#fff;" +
-      "padding:14px 22px;border-radius:14px;cursor:pointer;" +
-      "font-family:Segoe UI,monospace;font-weight:900;letter-spacing:2px;" +
-      "box-shadow:0 4px 24px rgba(126,58,255,0.6);font-size:0.95em;" +
-      "display:flex;align-items:center;gap:10px;";
-    el.innerHTML = "🥽 ENTRAR EM VR";
-    el.addEventListener("pointerdown", async () => {
-      el.textContent = "🥽 ENTRANDO...";
+    let wrap = document.getElementById("quest-vr-prompt");
+    if (wrap) wrap.remove();
+    wrap = document.createElement("div");
+    wrap.id = "quest-vr-prompt";
+    wrap.style.cssText = "position:fixed;top:20px;right:20px;z-index:9998;" +
+      "display:flex;flex-direction:column;align-items:flex-end;gap:8px;" +
+      "font-family:Segoe UI,monospace;max-width:360px;";
+
+    const btn = document.createElement("div");
+    btn.style.cssText = "background:linear-gradient(135deg,#7e3aff,#3a8aff);color:#fff;" +
+      "padding:14px 22px;border-radius:14px;cursor:pointer;font-weight:900;letter-spacing:2px;" +
+      "box-shadow:0 4px 24px rgba(126,58,255,0.6);font-size:0.95em;";
+    btn.textContent = "🥽 ENTRAR EM VR";
+
+    // Painel de diagnóstico VISÍVEL NA TELA (sem console no Quest).
+    const diag = document.createElement("div");
+    diag.style.cssText = "background:rgba(8,12,24,0.92);color:#bfe;border:1px solid #3a8aff;" +
+      "padding:10px 12px;border-radius:10px;font-size:0.72em;line-height:1.5;letter-spacing:.3px;" +
+      "white-space:pre-line;text-align:left;max-width:340px;";
+
+    const renderDiag = (extra = "") => {
+      const d = vrSystem.getDiagnostics?.() || {};
+      const ok = (b) => b ? "✅" : "❌";
+      diag.textContent =
+        `engine: ${d.engine}  ${d.engine === "Engine" || d.engine === "ThinEngine" ? "(WebGL2 ✅)" : (d.engine === "WebGPUEngine" ? "(WebGPU ❌)" : "")}\n` +
+        `contexto seguro: ${ok(d.secureContext)}\n` +
+        `navigator.xr: ${ok(d.hasXR)}\n` +
+        `é Quest: ${ok(d.isQuest)}\n` +
+        `immersive-vr suportado: ${ok(d.isSupported)}\n` +
+        `pronto p/ entrar: ${ok(d.ready)}` +
+        (d.error ? `\n⚠️ ${d.error}` : "") +
+        (extra ? `\n${extra}` : "");
+    };
+    renderDiag();
+
+    btn.addEventListener("pointerdown", async () => {
+      btn.textContent = "🥽 ENTRANDO...";
+      renderDiag("tentando enterXRAsync…");
       const ok = await vrSystem.enterVR();
-      if (ok) el.remove();
-      else el.textContent = "🥽 ENTRAR EM VR (tente de novo)";
+      if (ok) { wrap.remove(); return; }
+      btn.textContent = "🥽 ENTRAR EM VR (tente de novo)";
+      renderDiag("❌ não entrou — veja o motivo acima.");
     });
-    document.body.appendChild(el);
+
+    wrap.appendChild(btn);
+    wrap.appendChild(diag);
+    document.body.appendChild(wrap);
   }
 
   // OPEN_WORLD CLEAN: plano vazio 200x200 com material liso + colisao

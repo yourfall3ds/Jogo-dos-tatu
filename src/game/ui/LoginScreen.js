@@ -60,6 +60,17 @@ export class LoginScreen {
             </svg>
             Entrar com Google
           </button>
+
+          <!-- Modo offline/teste (sem login, sem rede) — testa VR + IA local -->
+          <button id="ls-offline" style="
+            display:flex; align-items:center; justify-content:center; gap:8px;
+            padding:11px 20px; background:#11243a; color:#7ec8ff;
+            border:1px solid rgba(80,160,255,0.45); border-radius:10px;
+            font-size:0.9em; font-weight:700; cursor:pointer;
+            transition:transform .15s, box-shadow .15s;
+            box-shadow:0 4px 14px rgba(40,120,255,0.18);">
+            🎮 JOGAR OFFLINE (teste VR / IA)
+          </button>
         </div>
 
         <!-- Estado: LOGADO -->
@@ -117,6 +128,7 @@ export class LoginScreen {
     this._el = el;
 
     el.querySelector('#ls-google').onclick = () => this._doGoogle();
+    el.querySelector('#ls-offline').onclick = () => this._doOffline();
     el.querySelector('#ls-lobby').onclick    = () => this._doContinue(true);
     el.querySelector('#ls-logout').onclick   = () => this._doLogout();
     el.querySelector('#ls-edit-nick').onclick = () => this._openNickEdit();
@@ -188,6 +200,26 @@ export class LoginScreen {
   // _doGuest removido: produto pessoal exige credenciais 100% Lucas.
   // Veja feedback_credenciais_pessoais.md.
 
+  /** Entra em modo offline/teste: sem login Google, sem rede. Vai direto pro
+   *  mundo aberto pra testar VR (Quest) e a IA local (tecla H spawna inimigos). */
+  async _doOffline() {
+    const btn = this._el?.querySelector('#ls-offline');
+    if (btn?.disabled) return;
+    if (btn) { btn.disabled = true; btn.style.cursor = 'wait'; btn.style.opacity = '0.7'; }
+    this._setStatus('Iniciando modo offline…', '#7ec8ff');
+    try {
+      await this.auth.signInOffline();
+      this._setStatus('✓ Offline — entrando…', '#7efa9a');
+      this.hide();
+      if (this._onOffline) this._onOffline();
+      else if (this._onContinue) this._onContinue();
+    } catch (e) {
+      console.error('[Login] offline:', e);
+      this._setStatus('Erro: ' + e.message, '#f55');
+      if (btn) { btn.disabled = false; btn.style.cursor = 'pointer'; btn.style.opacity = '1'; }
+    }
+  }
+
   _doContinue(openLobby) {
     this.hide();
     if (openLobby && this._onOpenLobby) this._onOpenLobby();
@@ -247,6 +279,7 @@ export class LoginScreen {
 
   onContinue(cb) { this._onContinue = cb; }
   onOpenLobby(cb) { this._onOpenLobby = cb; }
+  onOffline(cb) { this._onOffline = cb; }
   show() { this._visible = true; this._el.style.display = 'flex'; this._refresh(); }
   hide() { this._visible = false; this._el.style.display = 'none'; }
 }

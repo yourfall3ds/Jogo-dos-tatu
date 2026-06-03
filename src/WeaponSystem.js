@@ -82,6 +82,14 @@ export class WeaponSystem {
     this.onWeaponSwitched = null;
     this._tpsRayOrigin = null;
 
+    // ── VR: arma na mão, mira pelo controle ──────────────────────────
+    //  Setado pelo VRSystem. Quando _vrMode é true, o tiro sai da boca da
+    //  arma (na mão) na direção pra onde o controle aponta, e o update()
+    //  não mexe na câmera XR (recoil/ADS de viewmodel são desligados).
+    this._vrMode = false;
+    this._vrAimOrigin = null;   // BABYLON.Vector3 — origem do ray do controle
+    this._vrAimDir = null;      // BABYLON.Vector3 — direção do ray do controle
+
     // Inicialização assíncrona dos stats via LocalDB
     this._init();
   }
@@ -469,15 +477,24 @@ export class WeaponSystem {
     // ── Direção e origem do ray ───────────────────────────────────────
     // TPS: origem nos olhos do jogador (sem parallaxe do ombro)
     // FPS: origem na câmera
-    const dir = this.camera.getDirection(BABYLON.Vector3.Forward());
-    // ── Spread (dispersão) — reduzido ao mirar (ADS) ──────────────────
-    //  Cada arma define w.spread (rad, padrão 0.025). Mirar multiplica por
-    //  w.aimSpreadMult (padrão 0.3 → 70% mais preciso). _aimAmount (0..1) é
-    //  o quanto está mirando agora, interpolado em update().
-    this._applySpread(dir);
-    const rayOrigin = this._tpsRayOrigin
-      ? this._tpsRayOrigin.add(dir.scale(0.6))
-      : this.camera.position.clone();
+    // VR: direção/origem vêm do controle (mira pra onde aponta a mão).
+    // Senão: direção da câmera (FPS/TPS).
+    let dir, rayOrigin;
+    if (this._vrMode && this._vrAimDir) {
+      dir = this._vrAimDir.clone();
+      this._applySpread(dir);
+      rayOrigin = (this._vrAimOrigin || this.camera.position).clone();
+    } else {
+      dir = this.camera.getDirection(BABYLON.Vector3.Forward());
+      // ── Spread (dispersão) — reduzido ao mirar (ADS) ──────────────────
+      //  Cada arma define w.spread (rad, padrão 0.025). Mirar multiplica por
+      //  w.aimSpreadMult (padrão 0.3 → 70% mais preciso). _aimAmount (0..1) é
+      //  o quanto está mirando agora, interpolado em update().
+      this._applySpread(dir);
+      rayOrigin = this._tpsRayOrigin
+        ? this._tpsRayOrigin.add(dir.scale(0.6))
+        : this.camera.position.clone();
+    }
 
     const ray = new BABYLON.Ray(rayOrigin, dir, 300);
 
@@ -694,7 +711,7 @@ export class WeaponSystem {
     // ── Camera recoil: kick vertical que decai *0.85/frame ──
     // Remove o que aplicamos no frame anterior (pra não brigar com o mouse-look),
     // decai o kick, e reaplica o novo valor. Normaliza pra ~60fps.
-    if (this.camera && (this._recoilKick !== 0 || this._recoilCamApplied !== 0)) {
+    if (!this._vrMode && this.camera && (this._recoilKick !== 0 || this._recoilCamApplied !== 0)) {
       // 1) desfaz o aplicado anterior
       this.camera.rotation.x += this._recoilCamApplied;
       // 2) decai (0.85 por frame de 60fps, escalado pelo dt real)
@@ -711,8 +728,10 @@ export class WeaponSystem {
     const aimTarget = this._aimTarget ?? 0;
     this._aimAmount = (this._aimAmount ?? 0) + (aimTarget - (this._aimAmount ?? 0)) * Math.min(1, dt * 12);
     if (Math.abs(this._aimAmount - aimTarget) < 0.001) this._aimAmount = aimTarget;
-    // Reaplica posição da arma FPS atual com o aimAmount interpolado
-    if (this._glbRoot) {
+    // Reaplica posição da arma FPS atual com o aimAmount interpolado.
+    // Em VR a arma está presa na mão (offset próprio) — não reaplica o
+    // offset de câmera, senão a arma "voa" pra frente do controle.
+    if (!this._vrMode && this._glbRoot) {
       const w = this.getCurrentWeapon();
       if (w && w.applyToMesh) w.applyToMesh(this._glbRoot, false, this._aimAmount);
     }
