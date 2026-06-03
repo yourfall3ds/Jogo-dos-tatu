@@ -554,6 +554,12 @@ export class ArenaRoom extends Room {
       outcome,
     }).catch(() => {});
 
+    // ── CLEANUP DE ESTADO POR-PLAYER (anti-leak sala 24/7) ──
+    // Só executa em saída DEFINITIVA: se havia grace de reconexão (!consented),
+    // este ponto só é alcançado depois do allowReconnection() expirar/falhar (catch acima).
+    // Mobs (_cooldowns é keyed por mobId) NÃO entram aqui.
+    this._purgePlayerState(pid);
+
     // Se host saiu, transfere
     const wasHost = (pid === this.state.host_id);
     this.state.players.delete(pid);
@@ -573,19 +579,102 @@ export class ArenaRoom extends Room {
     }
   }
 
+  /**
+   * Remove TODO o estado por-player dos Maps internos pra evitar vazamento
+   * de memória numa sala 24/7 (OPEN_WORLD). Chamado SÓ em saída definitiva.
+   * Maps com chave composta `${pid}:...` são varridos por prefixo; Maps com
+   * chave = pid são deletados direto. _cooldowns (keyed por mobId) é ignorado.
+   */
+  _purgePlayerState(pid) {
+    if (!pid) return;
+    const prefix = `${pid}:`;
+    // Maps de chave composta `${pid}:${algo}` → varre e deleta por prefixo/igualdade
+    for (const m of [this._atkCooldowns, this._skillCooldowns]) {
+      if (!m) continue;
+      for (const key of m.keys()) {
+        if (key === pid || (typeof key === 'string' && key.startsWith(prefix))) {
+          m.delete(key);
+        }
+      }
+    }
+    // Maps de chave = pid → delete direto
+    this._kills?.delete(pid);
+    this._lastInputAt?.delete(pid);
+    this._msgRate?.delete(pid);
+    // B10: limpa canais de rate-limit (chave `${pid} ${channel}`)
+    if (this._msgRateCh) {
+      const chPrefix = `${pid} `;
+      for (const key of this._msgRateCh.keys()) {
+        if (typeof key === 'string' && key.startsWith(chPrefix)) this._msgRateCh.delete(key);
+      }
+    }
+    this._fireSoundCd?.delete(pid);
+    this._spawnRate?.delete(pid);
+  }
+
   // ── Inputs ──────────────────────────────────────────────────
+  /**
+   * B10: rate-limit por player POR CANAL. MSG_RATE_MAX msgs por MSG_RATE_WINDOW
+   * em cada canal (input / hit_player / fire_sound / hit_object …). Janela
+   * deslizante simples. Retorna false quando o player estourou o limite naquele
+   * canal (handler deve DROPAR a msg, sem derrubar a conexão).
+   *
+   * Por que POR CANAL e não um contador único: input legítimo roda a ~20Hz e
+   * fire_sound a ~18Hz; um teto global de 30/s somando todos os canais barraria
+   * o player honesto. Cada canal tem seu próprio orçamento de 30/s — folgado
+   * pro tráfego legítimo, mas corta flood (ex.: 1000 hit_player/s de cheater).
+   * Mapa separado (_msgRateCh) pra não colidir com o _msgRate usado por _onSpawnFx.
+   */
+  _checkMsgRate(pid, channel = 'global') {
+    if (!pid) return false;
+    if (!this._msgRateCh) this._msgRateCh = new Map();
+    const key = pid + ' ' + channel;
+    const now = Date.now();
+    let rate = this._msgRateCh.get(key);
+    if (!rate) { rate = { count: 0, windowStart: now }; this._msgRateCh.set(key, rate); }
+    if (now - rate.windowStart > this.MSG_RATE_WINDOW) {
+      rate.count = 0;
+      rate.windowStart = now;
+    }
+    rate.count++;
+    return rate.count <= this.MSG_RATE_MAX;
+  }
+
   _onInput(client, payload) {
     const pid = client.userData?.playerId;
     const p = this.state.players.get(pid);
     if (!p || p.dead) return;
+    // B10: rate-limit por canal (input vem a ~20Hz legítimo; 30/s dá folga + barra flood)
+    if (!this._checkMsgRate(pid, 'input')) return;
     // Trust limitado: cliente envia posição (server-auth real exigiria simular),
     // mas server-side filtra deltas absurdos.
     const nx = +payload.x, ny = +payload.y, nz = +payload.z;
     if (!Number.isFinite(nx) || !Number.isFinite(ny) || !Number.isFinite(nz)) return;
-    // Anti-teleport (max 50u/tick — generoso pra dash)
+    // ── Anti-teleport (server-side física-aware) ────────────────────────────
+    // SPEED=11, sprint ~19.25u/s, mas DASH_FORCE=52u/s → ~2.6u/tick@20Hz. Com
+    // hitch de rede (1 envio carrega ~150-200ms de física) o dash legítimo chega
+    // a ~8-10u/tick. 12 cobre dash+hitch SEM travar a mobilidade (6 dashes), MAS
+    // ainda barra os 50u/tick antigos (=1000u/s, teleport/speedhack puro).
+    const MAX_HORIZ_PER_TICK = 12; // u por mensagem de input (dash 52u/s + hitch)
     const dx = nx - p.x, dz = nz - p.z;
     const d = Math.sqrt(dx * dx + dz * dz);
-    if (d > 50) return; // rejeita
+    if (d > MAX_HORIZ_PER_TICK) return; // REJEITA: mantém p.x/p.z anteriores
+
+    // ── Validação de Y (altura) ─────────────────────────────────────────────
+    // Spawn cai de y=200; chão ~0. Teto absoluto e piso absoluto barram
+    // out-of-bounds vertical. Queda (vy negativo grande) é LEGÍTIMA → permite
+    // descida ampla, mas SUBIDA instantânea grande é impossível (sem fly-hack).
+    const Y_FLOOR = -50, Y_CEIL = 300;
+    if (ny < Y_FLOOR || ny > Y_CEIL) return; // REJEITA: fora dos limites do mundo
+    const dy = ny - p.y;
+    // Dash pra cima = JUMP_FORCE*2 (~31u/s) → ~1.55u/tick@20Hz; com hitch de rede
+    // (1 envio pode carregar ~150ms de física) o pico chega a ~4.6u. 10 dá margem
+    // pra não travar pulo/dash legítimo, mas ainda barra fly-hack (subida contínua).
+    const MAX_RISE_PER_TICK = 10;  // subida máx por tick (pulo/dash vertical + hitch)
+    const MAX_FALL_PER_TICK = 60;  // queda livre do drop (y=200) é rápida → folgado
+    if (dy > MAX_RISE_PER_TICK) return;   // REJEITA: subida impossível (fly-hack)
+    if (dy < -MAX_FALL_PER_TICK) return;  // REJEITA: queda instantânea absurda
+
     p.x = nx; p.y = ny; p.z = nz;
     if (Number.isFinite(+payload.ry)) p.ry = +payload.ry;
     if (Number.isFinite(+payload.vy)) p.vy = +payload.vy;
@@ -603,6 +692,9 @@ export class ArenaRoom extends Room {
     const pid = client.userData?.playerId;
     const p = this.state.players.get(pid);
     if (!p || p.dead) return;
+    // B10: rate-limit por canal (além do throttle de 55ms abaixo) — barra flood
+    // de fire_sound. ~18/s legítimo cabe folgado em 30/s.
+    if (!this._checkMsgRate(pid, 'fire_sound')) return;
     if (!this._fireSoundCd) this._fireSoundCd = new Map();
     const now = Date.now();
     const last = this._fireSoundCd.get(pid) || 0;
@@ -626,6 +718,9 @@ export class ArenaRoom extends Room {
 
   _onHitPlayer(client, payload) {
     const pid = client.userData?.playerId;
+    // B10: rate-limit por canal (hits legítimos são gated por cooldown de arma;
+    // 30/s corta flood de hit_player de cheater sem afetar combo honesto).
+    if (!this._checkMsgRate(pid, 'hit_player')) return;
     const attacker = this.state.players.get(pid);
     const target = this.state.players.get(String(payload.to || ''));
     if (!attacker || !target) return;
@@ -653,6 +748,40 @@ export class ArenaRoom extends Room {
       from_x: attacker.x, from_y: attacker.y, from_z: attacker.z,
       weapon: weaponId, dmg: v.dmg,
     });
+
+    // ── A7+B2: KNOCKBACK PvP REPLICADO ───────────────────────────────────
+    // Server NÃO simula física: só calcula o VETOR (direção atacante→alvo no
+    // plano XZ) + força (pela arma) + stun curto, e broadcasta. O cliente-alvo
+    // soma em _vx/_vz (igual wall-kick) e os demais veem via RemotePlayer.playHit.
+    // Antes o empurrão era só preditivo-cosmético no atacante → alvo nunca sentia.
+    {
+      const w = v.weapon || getWeapon(weaponId);
+      let kdx = (target.x ?? 0) - (attacker.x ?? 0);
+      let kdz = (target.z ?? 0) - (attacker.z ?? 0);
+      let klen = Math.sqrt(kdx * kdx + kdz * kdz);
+      if (klen < 1e-3) {
+        // Atacante praticamente em cima do alvo: empurra na direção do facing dele.
+        const ryRad = (Number.isFinite(attacker.ry) ? attacker.ry : 0) * Math.PI / 180;
+        kdx = Math.sin(ryRad); kdz = Math.cos(ryRad); klen = 1;
+      }
+      kdx /= klen; kdz /= klen;
+      // Força por tipo de arma (server-auth): melee/punho empurra menos, armas
+      // grandes e tiro empurram mais. Crit (dmg alto) reforça.
+      const KB_BY_KIND = { melee: 7, sword: 11, whip: 9, gun: 6, ranged: 6 };
+      let force = KB_BY_KIND[w?.kind] ?? 7;
+      if (v.dmg >= 80) force *= 1.5;        // golpe pesado/crit empurra mais
+      else if (v.dmg >= 50) force *= 1.25;
+      // Stun curto proporcional ao peso do golpe.
+      const stunMs = v.dmg >= 80 ? 250 : (w?.kind === 'sword' ? 200 : 150);
+      this.broadcast('player_knockback', {
+        to: target.id,
+        from: attacker.id,
+        dirX: kdx, dirZ: kdz,
+        force,
+        stunMs,
+        crit: v.dmg >= 80,
+      });
+    }
 
     if (target.hp <= 0) {
       target.dead = true;
@@ -684,6 +813,7 @@ export class ArenaRoom extends Room {
       now: Date.now(),
       cooldowns: this._atkCooldowns,
       pvpRequired: false, // mobs sempre podem ser atacados
+      requireAngle: false, // PvE: não barrar por cone (mantém comportamento antigo; Y-check segue ativo)
     });
     if (!v.ok) {
       if (v.reason !== 'cooldown') {
@@ -1319,6 +1449,7 @@ export class ArenaRoom extends Room {
       attacker, target: boss, weaponId,
       now: Date.now(), cooldowns: this._atkCooldowns,
       pvpRequired: false,
+      requireAngle: false, // PvE: boss é alvo gigante; cone não se aplica (Y-check segue ativo)
     });
     if (!v.ok) return true; // tratado mas rejeitado
     boss.hp = Math.max(0, boss.hp - v.dmg);
@@ -1747,12 +1878,29 @@ export class ArenaRoom extends Room {
   }
 
   _onHitObject(client, payload) {
-    const p = this.state.players.get(client.userData?.playerId);
+    const pid = client.userData?.playerId;
+    const p = this.state.players.get(pid);
     if (!p || p.dead) return;
+    // B10: rate-limit por canal (dropa msgs acima do limite)
+    if (!this._checkMsgRate(pid, 'hit_object')) return;
     const id = String(payload?.id || "");
     const w = this.state.world_objects.get(id);
     if (!w) return;
-    const dmg = Math.min(50, Math.max(1, parseInt(payload?.dmg) || 10));
+    // A12: dano SERVER-AUTH derivado da arma equipada (cliente NÃO manda dmg).
+    const weaponId = String(payload?.weapon || p.weapon || 'unarmed').slice(0, 32);
+    const weapon = getWeapon(weaponId);
+    // Range check (XZ) — igual _onHitProp.
+    const odx = (p.x ?? 0) - w.x;
+    const odz = (p.z ?? 0) - w.z;
+    const odist = Math.sqrt(odx * odx + odz * odz);
+    if (odist > weapon.range + 1.0) return;
+    // Cooldown por (player, arma) — mesma tabela do PvP/prop.
+    const cdKey = `${p.id}:${weaponId}`;
+    const lastAt = this._atkCooldowns.get(cdKey) || 0;
+    const now = Date.now();
+    if (now - lastAt < weapon.cdMs) return;
+    this._atkCooldowns.set(cdKey, now);
+    const dmg = weapon.dmg;
     w.hp = Math.max(0, w.hp - dmg);
     this.broadcast("world_object_hit", { id, hp: w.hp, max_hp: w.max_hp });
     if (w.hp === 0) {

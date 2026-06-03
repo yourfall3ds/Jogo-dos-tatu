@@ -63,6 +63,8 @@ export class ColyseusClient {
       'br_player_died': new Set(),
       'player_skydive': new Set(),
       'remote_fire': new Set(),
+      // A7+B2: knockback PvP replicado pelo server
+      'player_knockback': new Set(),
     };
     this.ping = 0;
     this._lastInputSent = 0;
@@ -230,6 +232,7 @@ export class ColyseusClient {
     this.room.onMessage('world_object_destroyed', (m) => this._notify('world_object_destroyed', m));
     // Som posicional de tiro/golpe do parceiro (rebroadcast do server)
     this.room.onMessage('remote_fire', (m) => this._notify('remote_fire', m));
+    this.room.onMessage('player_knockback', (m) => this._notify('player_knockback', m));
     // Frentes B/C
     this.room.onMessage('match_countdown', (m) => this._notify('match_countdown', m));
     this.room.onMessage('match_finished', (m) => this._notify('match_finished', m));
@@ -515,6 +518,10 @@ export class ColyseusClient {
   }
   /** Snapshot da sala (state read-only). */
   get state() { return this.room?.state || null; }
+  /** Estado do MEU player no schema (autoritativo do server) ou null. */
+  getMyState() { return this.room?.state?.players?.get(this.playerId) || null; }
+  /** Saldo de coins AUTORITATIVO do server (coin + gem*3 já somados). */
+  getMyCoins() { const me = this.getMyState(); return me?.coins ?? null; }
   isHost() {
     const me = this.room?.state?.players?.get(this.playerId);
     return !!me?.is_host;

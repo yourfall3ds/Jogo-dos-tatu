@@ -74,6 +74,7 @@ export class Player {
     this._dmgShakeMag = 0;
     this._kbVx        = 0;   // knockback velocity X
     this._kbVz        = 0;   // knockback velocity Z
+    this._pvpStunT    = 0;   // A7+B2: stun de knockback PvP (segundos) — trava input
 
     // ── Esquiva (Dodge) ─────────────────────────────────────────────
     this._dodgeT      = 0;
@@ -540,7 +541,10 @@ export class Player {
     this.wallJump.update(dt, this.mesh.position, this.isGrounded);
 
     // ── 5. Movimento horizontal ──────────────────────────────────────
-    const canMove = this.stateMachine ? this.stateMachine.canMove() : !this._dead;
+    // A7+B2: durante o stun de knockback PvP o input de locomoção é travado
+    // (o _kbVx/_kbVz ainda empurra o corpo). Stun curto (150-250ms).
+    const canMove = (this._pvpStunT > 0) ? false
+      : (this.stateMachine ? this.stateMachine.canMove() : !this._dead);
     const yawRad = BABYLON.Tools.ToRadians(this.yaw);
     const fwd    = new BABYLON.Vector3( Math.sin(yawRad), 0,  Math.cos(yawRad));
     const right  = new BABYLON.Vector3( Math.cos(yawRad), 0, -Math.sin(yawRad));
@@ -1226,6 +1230,7 @@ export class Player {
     this._hitFlashT    = Math.max(0, this._hitFlashT - dt);
     this._damageFlashT = Math.max(0, this._damageFlashT - dt);
     this._hitStunT     = Math.max(0, (this._hitStunT || 0) - dt);
+    this._pvpStunT     = Math.max(0, (this._pvpStunT || 0) - dt);
   }
 
   // ── Seta o modelo 3D do personagem com animator ───────────────────
@@ -1406,6 +1411,48 @@ export class Player {
 
     if (this.hp <= 0 && !this._dead) {
       this._startDeath('enemy');
+    }
+  }
+
+  /**
+   * A7+B2: KNOCKBACK PvP REPLICADO (server-auth).
+   *
+   * O servidor calcula o VETOR de empurrão (player_knockback) e manda pra cá.
+   * Aqui SÓ aplicamos o empurrão na física local (soma em _kbVx/_kbVz, igual
+   * o wall-kick) + um stun curto que trava o input de locomoção. NÃO mexemos
+   * no HP — quem manda na vida é o server via applyServerHp. Assim o alvo
+   * SENTE o golpe de outro player (antes era só cosmético no atacante).
+   *
+   * @param {number} dirX   componente X da direção do empurrão (já normalizada-ish)
+   * @param {number} dirZ   componente Z da direção do empurrão
+   * @param {number} force  magnitude do empurrão (server: 6-16+)
+   * @param {number} stunMs duração do stun em ms (150-250)
+   * @param {boolean} crit  golpe pesado → arremessa um pouco pra cima
+   */
+  applyKnockback(dirX, dirZ, force = 7, stunMs = 150, crit = false) {
+    if (this._dead) return;
+    let dx = +dirX || 0, dz = +dirZ || 0;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return;
+    dx /= len; dz /= len;
+    const f = Math.max(0, +force || 0);
+    // Soma na velocidade de knockback (decai sozinha no update via kbDrag).
+    this._kbVx += dx * f;
+    this._kbVz += dz * f;
+    // Golpe pesado arremessa levemente pra cima se estiver no chão.
+    if (crit && this.isGrounded) this.velY = Math.max(this.velY, 4);
+    // Stun curto trava locomoção (canMove). Clamp 80-400ms por segurança.
+    const stunS = Math.min(0.4, Math.max(0.08, (+stunMs || 150) / 1000));
+    this._pvpStunT = Math.max(this._pvpStunT, stunS);
+    // Feedback visual de reação (reusa hitstun de animação).
+    this._damageFlashT = Math.max(this._damageFlashT, 0.45);
+    if (this.animCtrl && this.animLib) {
+      const react = this.animLib.has('hit_face') ? 'hit_face'
+                  : (this.animLib.has('hit_face_2') ? 'hit_face_2' : null);
+      if (react) {
+        this._hitStunT = Math.max(this._hitStunT, 0.30);
+        try { this.animCtrl.play(react, { loop: false, speed: 1.3, fade: 0.06 }); } catch (_) {}
+      }
     }
   }
 

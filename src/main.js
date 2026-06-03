@@ -710,12 +710,23 @@ async function init() {
           window._dmgNumbers?.spawn(player.mesh.position, '+MP' + m.value, { color: '#5599ff' });
           break;
         case 'coin':
-          // Acumula localmente (futuro: server-side em PlayerState.coins)
-          player._coins = (player._coins || 0) + m.value;
+          // Saldo AUTORITATIVO: o server já somou em PlayerState.coins (schema
+          // replicado). Reflete o valor do server em vez de acumular local —
+          // assim o HUD nunca diverge do que é persistido no Supabase.
+          {
+            const srvCoins = cs.getMyCoins?.();
+            player._coins = (srvCoins != null) ? srvCoins : ((player._coins || 0) + m.value);
+          }
           window._dmgNumbers?.spawn(player.mesh.position, '+' + m.value + '🪙', { color: '#ffcc22' });
           break;
         case 'gem':
-          player._gems = (player._gems || 0) + m.value;
+          // Gem é convertido em coins no server (gem = 3x coin) e somado em
+          // PlayerState.coins. Não existe saldo de gems separado no server, então
+          // o cliente espelha o coins autoritativo (evita contagem fantasma).
+          {
+            const srvCoins = cs.getMyCoins?.();
+            if (srvCoins != null) player._coins = srvCoins;
+          }
           window._dmgNumbers?.spawn(player.mesh.position, '+💎' + m.value, { color: '#5cf' });
           break;
       }
@@ -949,6 +960,34 @@ async function init() {
         } catch (_) {}
       }).catch(() => {});
     } catch (e) { console.error('[remote_fire]', e); }
+  });
+
+  // ── A7+B2: KNOCKBACK PvP REPLICADO ──────────────────────────────────────
+  //  O server (player_knockback) manda o VETOR de empurrão do golpe PvP.
+  //  Se o alvo sou EU → aplico no player local (somar em _vx/_vz via
+  //  applyKnockback, igual wall-kick) + stun curto. Senão → o RemotePlayer do
+  //  alvo reage visualmente (playHit empurra/flinch). Antes o empurrão era só
+  //  cosmético no atacante e o alvo nunca sentia.
+  cs.on('player_knockback', (m) => {
+    try {
+      const myId = auth.getUserId();
+      const dirX = +m?.dirX || 0;
+      const dirZ = +m?.dirZ || 0;
+      const force = +m?.force || 7;
+      const stunMs = +m?.stunMs || 150;
+      const crit = m?.crit === true;
+      if (m?.to === myId) {
+        // Eu fui empurrado: física local + stun travando input.
+        player.applyKnockback?.(dirX, dirZ, force, stunMs, crit);
+      } else {
+        // Outro player foi empurrado: reação visual no avatar remoto.
+        const rp = _remotePlayers.get(m?.to);
+        if (rp?.playHit) {
+          const dirVec = new BABYLON.Vector3(dirX, 0, dirZ);
+          rp.playHit(dirVec, force, crit ? 1 : 0);
+        }
+      }
+    } catch (e) { console.error('[player_knockback]', e); }
   });
 
   // ── XP/LEVEL UP (server-authoritative) ──

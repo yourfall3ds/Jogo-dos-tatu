@@ -47,6 +47,18 @@ export function getWeapon(id) {
   return WEAPONS[id] || FALLBACK;
 }
 
+// Meia-abertura do cone frontal (graus) por tipo de arma. O alvo precisa estar
+// DENTRO desse cone (ângulo entre o forward do atacante e a direção atacante→alvo).
+// Cone TOTAL = 2× esses valores. Melee ~120° total (60° de meia-abertura),
+// armas de fogo bem mais largas (mira fina é client-side; só barramos 360 puro).
+const HALF_CONE_DEG = {
+  melee: 60,   // 120° total
+  sword: 70,   // 140° total — swings têm arco maior
+  whip:  75,   // 150° total — chibata varre
+  gun:   80,   // 160° total — frouxo, só corta tiro pelas costas/aimbot 360
+};
+const DEFAULT_HALF_CONE_DEG = 60;
+
 /**
  * Valida hit do cliente. Retorna { ok, reason, dmg } — servidor aplica dmg
  * só se ok=true.
@@ -56,8 +68,13 @@ export function getWeapon(id) {
  *  weaponId: string
  *  now:      Date.now()
  *  cooldowns: Map<string, number>  // key `${playerId}:${weaponId}` → lastUseAt
+ *  requireAngle: bool  // valida cone frontal usando attacker.ry (default true).
+ *                      // Passe false só onde o atacante não tem facing confiável.
+ *
+ *  attacker.ry: yaw do atacante em GRAUS (forward = (sin ry°, cos ry°)).
+ *  attacker.y / target.y: altura — usado pra barrar acerto através de andares.
  */
-export function validateHit({ attacker, target, weaponId, now, cooldowns, pvpRequired = false }) {
+export function validateHit({ attacker, target, weaponId, now, cooldowns, pvpRequired = false, requireAngle = true }) {
   if (!attacker || !target) return { ok: false, reason: 'no_actor' };
   if (target.hp <= 0) return { ok: false, reason: 'already_dead' };
   if (attacker.dead) return { ok: false, reason: 'attacker_dead' };
@@ -76,13 +93,50 @@ export function validateHit({ attacker, target, weaponId, now, cooldowns, pvpReq
     return { ok: false, reason: 'cooldown', remaining: w.cdMs - (now - lastAt) };
   }
 
-  // Range (XZ apenas — pula altura)
+  // Range horizontal (XZ)
   const dx = (target.x ?? 0) - (attacker.x ?? 0);
   const dz = (target.z ?? 0) - (attacker.z ?? 0);
   const dist = Math.sqrt(dx * dx + dz * dz);
   // Tolerância: range + 1u pra cobrir interp client-side
   if (dist > w.range + 1.0) {
     return { ok: false, reason: 'out_of_range', dist: dist.toFixed(2), max: w.range };
+  }
+
+  // ── A2: checagem de ALTURA (eixo Y) ────────────────────────────────
+  // Sem isso, dá pra acertar de cima de um prédio / através do andar.
+  // |dy| precisa caber no alcance vertical da arma. Pra arma de fogo o range é
+  // enorme (60-80u) então o teto vertical fica generoso de propósito (mira
+  // vertical é client-side); pra melee fica curto = não atravessa laje.
+  const ay = attacker.y ?? 0;
+  const ty = target.y ?? 0;
+  const dy = Math.abs(ty - ay);
+  const isGun = w.kind === 'gun';
+  // Melee/sword/whip: |dy| <= range + folga p/ pulo/altura do alvo.
+  // Gun: teto vertical proporcional mas limitado (não precisa do range cheio).
+  const maxDy = isGun ? Math.min(w.range, 20) : (w.range + 2.0);
+  if (dy > maxDy) {
+    return { ok: false, reason: 'out_of_range_y', dy: dy.toFixed(2), maxDy };
+  }
+
+  // ── A6: checagem de ÂNGULO (cone frontal) ──────────────────────────
+  // O alvo precisa estar à FRENTE do atacante — barra aimbot melee 360 (acertar
+  // de costas). Só roda se requireAngle e se attacker.ry for finito e o alvo não
+  // estiver praticamente em cima do atacante (dist horizontal mínima).
+  if (requireAngle && Number.isFinite(attacker.ry) && dist > 0.25) {
+    const ryRad = (attacker.ry * Math.PI) / 180; // ry vem em GRAUS
+    // forward do atacante (mesma convenção do client/mob: (sin, cos))
+    const fx = Math.sin(ryRad);
+    const fz = Math.cos(ryRad);
+    // direção atacante→alvo normalizada (no plano XZ)
+    const nx = dx / dist;
+    const nz = dz / dist;
+    const dot = fx * nx + fz * nz;          // cos do ângulo entre forward e alvo
+    const halfDeg = HALF_CONE_DEG[w.kind] ?? DEFAULT_HALF_CONE_DEG;
+    const cosHalf = Math.cos((halfDeg * Math.PI) / 180);
+    if (dot < cosHalf) {
+      const angDeg = (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI;
+      return { ok: false, reason: 'bad_angle', angle: angDeg.toFixed(1), maxAngle: halfDeg };
+    }
   }
 
   // OK — registra cooldown e devolve dmg autoritativo
