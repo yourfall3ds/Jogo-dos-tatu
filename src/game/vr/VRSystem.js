@@ -1,10 +1,9 @@
 // VRSystem — integração WebXR completa para Meta Quest 2/3 (Touch Plus).
 //
-// Filosofia: REAPROVEITA toda a simulação existente do jogo (character
-// controller Havok, gravidade, pulo, sprint, colisão, sync multiplayer).
-// Os controles do Quest apenas ALIMENTAM o mesmo input que o teclado/mouse
-// alimentam — o player.update(dt) faz o resto. A câmera XR (cabeça) SEGUE o
-// player.mesh; a arma fica presa na mão direita e mira pelo controle.
+// Filosofia: a LOCOMOÇÃO é da feature nativa do Babylon (move a câmera XR via
+// reference space — reparentar a câmera não funciona). O CORPO do personagem
+// SEGUE a câmera (1ª pessoa). Avatar encarnado: corpo visível, cabeça oculta,
+// braços com IK seguindo os controles. Arma presa no controle, mira por ele.
 //
 // API:
 //   const vr = new VRSystem(scene, player, cs);
@@ -14,14 +13,12 @@
 //   vr.isSupported;    // bool: WebXR immersive-vr suportado
 //
 // Mapa de controles (Quest 3 Touch Plus):
-//   Analógico esq.        → andar (W/A/S/D relativo à cabeça); empurrar tudo = correr
-//   Analógico dir. (X)    → girar a câmera (SMOOTH/contínuo, proporcional)
+//   Analógico ESQ.        → andar (relativo à cabeça)
+//   Analógico DIR.        → girar a câmera (smooth)
 //   Gatilho dir.          → atirar (segura = automático)
-//   Botão A (dir.)        → pular
+//   Botão A / Grip        → pular
 //   Botão B (dir.)        → recarregar
-//   Grip (qualquer mão)   → pular (alternativo)
-//   Botão X (esq.)        → arma anterior
-//   Botão Y (esq.)        → próxima arma
+//   Botão X / Y (esq.)    → trocar de arma
 
 export class VRSystem {
   constructor(scene, player, cs) {
@@ -30,7 +27,7 @@ export class VRSystem {
     this.cs = cs;
     this.xr = null;
     this.xrCamera = null;
-    this.rig = null;                 // nó-pai da câmera XR → movemos ele p/ seguir o player
+    this._movement = null;           // feature nativa de locomoção (move a câmera XR)
     this.leftController = null;
     this.rightController = null;
     this.rightGrip = null;           // nó do grip da mão direita (onde a arma encaixa)
@@ -40,21 +37,8 @@ export class VRSystem {
     this.isSupported = false;
     this.lastError = null;       // último motivo de falha (mostrado na tela do Quest)
 
-    // Cache dos eixos dos analógicos (atualizado por observable, lido no tick)
-    this._leftAxes = { x: 0, y: 0 };
-    this._rightAxes = { x: 0, y: 0 };
     this._fireHeld = false;
-    this._turnSpeed = 2.2;           // rad/s na deflexão total (~126°/s) — giro SMOOTH contínuo
-    this._rigYaw = 0;                // rotação acumulada do rig (yaw da virada)
     this._tickBound = null;
-
-    // Empunhadura da arma na mão: gira a arma no eixo vertical pra apontar
-    // pra frente (o modelo vem apontando pro lado). Ajustável se ficar torta.
-    this._gunYaw = Math.PI / 2;      // +90° (cano pra frente; flip o sinal se virar pro lado errado)
-
-    // IK dos braços (mãos do personagem seguem os controles) — encarnar avatar.
-    this._ikR = null; this._ikL = null;
-    this._headNode = null;
   }
 
   _detectQuest() {
@@ -102,14 +86,44 @@ export class VRSystem {
         return;
       }
 
-      // Rig: nó-pai da câmera XR. Movendo-o, a cabeça inteira segue o player,
-      // enquanto o headset continua aplicando o movimento real da cabeça por cima.
-      this.rig = new BABYLON.TransformNode("vrRig", this.scene);
+      const fm = this.xr.baseExperience.featuresManager;
 
       // Desliga o laser de seleção (atrapalha num shooter; menus usam DOM).
+      try { fm?.disableFeature?.(BABYLON.WebXRFeatureName.POINTER_SELECTION); } catch (_) {}
+
+      // ⭐ LOCOMOÇÃO NATIVA do Babylon (move a câmera XR CORRETAMENTE via reference
+      //  space — reparentar a câmera não funciona, ela ignora o pai). Stick esq =
+      //  andar (relativo à cabeça); stick dir = girar SMOOTH. O corpo segue a
+      //  câmera (1ª pessoa) no _tick.
       try {
-        this.xr.baseExperience.featuresManager?.disableFeature?.(BABYLON.WebXRFeatureName.POINTER_SELECTION);
-      } catch (_) {}
+        const DZ = 0.25;  // zona morta (mata drift)
+        this._movement = fm?.enableFeature(BABYLON.WebXRFeatureName.MOVEMENT, "latest", {
+          xrInput: this.xr.input,
+          movementSpeed: 0.06,
+          rotationSpeed: 0.20,           // giro contínuo (smooth, não snap)
+          movementOrientationFollowsViewerPose: true,
+          // Força ESQUERDO = andar, DIREITO = girar a câmera (estava invertido).
+          customRegistrationConfigurations: [
+            {
+              allowedComponentTypes: ["thumbstick"],
+              forceHandedness: "left",
+              axisChangedHandler: (axes, state) => {
+                state.moveX = Math.abs(axes.x) > DZ ? axes.x : 0;
+                state.moveY = Math.abs(axes.y) > DZ ? axes.y : 0;
+              },
+            },
+            {
+              allowedComponentTypes: ["thumbstick"],
+              forceHandedness: "right",
+              axisChangedHandler: (axes, state) => {
+                state.rotateX = Math.abs(axes.x) > DZ ? axes.x : 0;
+                state.rotateY = Math.abs(axes.y) > DZ ? axes.y : 0;
+              },
+            },
+          ],
+        });
+        console.log("[VR] feature de movimento nativa ligada:", !!this._movement);
+      } catch (e) { console.warn("[VR] feature de movimento falhou:", e?.message); }
 
       this._wireSession();
       this._wireControllers();
@@ -171,25 +185,25 @@ export class VRSystem {
         try { window._gfx?.disableForVR?.(); } catch (_) {}
         try { this.player?._fxaa?.dispose?.(); this.player._fxaa = null; } catch (_) {}
 
+        // ⚡ Mais leve pro Quest: desliga sombras e reduz a resolução de render.
+        try { this.scene.shadowsEnabled = false; } catch (_) {}
+        try {
+          const eng = this.scene.getEngine?.();
+          this._savedScaling = eng?.getHardwareScalingLevel?.() ?? 1;
+          eng?.setHardwareScalingLevel?.(1.3);   // ~77% da resolução → bem mais leve
+        } catch (_) {}
+
         // Câmera XR controlada pelo headset → desativa o _updateCamera manual.
         try { this.player._vrControlsCamera = true; } catch (_) {}
         // Garante que a lógica de jogo roda mesmo sem pointer-lock (impossível no HMD).
         try { this.player.input.gameActive = true; document.body.classList.add("game-active"); } catch (_) {}
 
-        // Prende a câmera XR ao rig e zera a posição inicial sobre o player.
-        try {
-          this.xrCamera.parent = this.rig;
-          this._rigYaw = 0;
-          this.rig.rotation.set(0, 0, 0);
-          const p = this.player.mesh.position;
-          this.rig.position.set(p.x, p.y - this.player.HEIGHT / 2, p.z);
-        } catch (_) {}
+        // 1ª pessoa: o CORPO (player.mesh) segue a CÂMERA XR a cada frame (_tick).
+        //  A locomoção move a câmera (feature nativa); o personagem fica embaixo
+        //  dela com a cabeça na câmera. NÃO reparentamos a câmera (ela ignora o pai).
 
-        // Arma vai pra mão direita (presa ao controle).
-        this._attachWeaponToHand();
-
-        // Encarna o avatar: mostra o corpo, esconde a cabeça, e liga o IK dos
-        // braços pra as mãos do personagem seguirem os controles (1ª pessoa).
+        // Encarna o avatar: corpo visível, cabeça oculta, arma na mão (TPS) e IK
+        // dos braços seguindo os controles.
         this._setupVRAvatar();
 
         // Painel de boas-vindas VR (mostra os controles; também prova que o
@@ -207,13 +221,13 @@ export class VRSystem {
         console.log("[VR] SESSION ENCERRADA");
         try { document.body.classList.remove("vr-active"); } catch (_) {}
         try { this.player._vrControlsCamera = false; } catch (_) {}
-        // Religa o pós-processamento ao sair do VR.
+        // Religa o pós-processamento e a qualidade ao sair do VR.
         try { window._gfx?.enableAfterVR?.(); } catch (_) {}
+        try { this.scene.shadowsEnabled = true; } catch (_) {}
+        try { this.scene.getEngine?.()?.setHardwareScalingLevel?.(this._savedScaling ?? 1); } catch (_) {}
         this._hideVRMenu();
         // Desfaz o avatar VR (mostra cabeça de volta, desliga IK, esconde corpo).
         this._teardownVRAvatar();
-        // Solta a câmera do rig e devolve a arma pra câmera FPS.
-        try { if (this.xrCamera) this.xrCamera.parent = null; } catch (_) {}
         this._detachWeaponFromHand();
         // Zera as teclas que o VR pode ter deixado pressionadas.
         try {
@@ -239,9 +253,10 @@ export class VRSystem {
           this.rightController = controller;
           this.rightGrip = controller.grip || controller.pointer || null;
           this.rightPointer = controller.pointer || controller.grip || null;
-          // Se a sessão já está ativa quando o controle conecta, encaixa a arma.
-          if (this.inSession) this._attachWeaponToHand();
         }
+        // (Re)liga o IK quando um controle conecta — os alvos das mãos se
+        // prendem ao grip que acabou de aparecer.
+        if (this.inSession) this._setupArmIK();
         console.log("[VR] controle", hand, "pronto");
         this._bindControllerInputs(mc, hand);
       });
@@ -276,13 +291,8 @@ export class VRSystem {
         });
       }
 
-      // ── Analógicos: cacheia eixos (aplicados no tick) ───────────────
-      if (thumb) {
-        thumb.onAxisValueChangedObservable.add((v) => {
-          if (hand === "left")  this._leftAxes  = { x: v.x, y: v.y };
-          else                  this._rightAxes = { x: v.x, y: v.y };
-        });
-      }
+      // Analógicos: locomoção (andar/correr) + giro são da FEATURE nativa de
+      // movimento do Babylon (ligada no init). Não tratamos aqui pra não duplicar.
 
       // ── Botões de face (A/B na direita, X/Y na esquerda) ────────────
       const aOrX = mc.getComponent("a-button") || mc.getComponent("x-button");
@@ -311,96 +321,60 @@ export class VRSystem {
   _tick() {
     if (!this.inSession || !this.xrCamera || !this.player?.mesh) return;
     const k = this.player.input.keys;
-    if (!k) return;
+    if (k) k.KeyW = k.KeyS = k.KeyA = k.KeyD = k.ShiftLeft = false;  // locomoção é da feature, não WASD
 
-    // 1) Direção da cabeça vira o "frente" da locomoção (anda pra onde olha).
+    // 1) O CORPO segue a CÂMERA → 1ª PESSOA. A feature move a câmera XR; aqui
+    //    plantamos o personagem com a CABEÇA na câmera (cabeça oculta), corpo
+    //    pendurado embaixo. Usamos globalPosition (posição REAL no mundo, já com
+    //    a locomoção) — ler getAbsolutePosition dava posição errada → "boneco solto".
+    let cam = null;
+    try { cam = this.xrCamera.globalPosition; } catch (_) {}
+    if (cam) {
+      const m = this.player.mesh;
+      m.position.set(cam.x, cam.y - this.player.HEIGHT / 2 + (this._bodyYOffset || 0), cam.z);
+      if (this.player._cc) {
+        try { this.player._cc.setPosition(m.position); this.player._cc.setVelocity(BABYLON.Vector3.Zero()); } catch (_) {}
+      }
+    }
+
+    // 2) Direção da cabeça → facing do corpo e mira (anda/atira pra onde olha).
     try {
       const f = this.xrCamera.getDirection(BABYLON.Axis.Z);
       this.player.yaw = Math.atan2(f.x, f.z) * 180 / Math.PI;
     } catch (_) {}
 
-    // Painel VR aberto → PAUSA locomoção/tiro (lê os controles, gatilho começa).
-    //  Mantém a câmera seguindo o player (passo 6) pra cena ficar visível.
+    // Painel VR aberto → pausa o tiro (gatilho fecha o painel).
     if (this._vrMenuActive) {
-      k.KeyW = k.KeyS = k.KeyA = k.KeyD = k.ShiftLeft = false;
-      this._followFP();
-      // auto-dismiss de segurança (caso o mapeamento do gatilho varie no controle)
       this._vrMenuT = (this._vrMenuT || 0) + ((this.scene.getEngine?.()?.getDeltaTime?.() || 16) / 1000);
       if (this._vrMenuT > 15) this._hideVRMenu();
       return;
     }
 
-    // 2) Analógico esquerdo → WASD + correr. Deadzone maior mata o "drift"
-    //    (controle parado mandando valor pequeno → personagem andava sozinho).
-    const lx = this._leftAxes.x, ly = this._leftAxes.y;
-    const dead = 0.35;
-    const mag = Math.hypot(lx, ly);
-    if (mag < dead) {
-      k.KeyW = k.KeyS = k.KeyA = k.KeyD = k.ShiftLeft = false;   // zona morta → parado
-    } else {
-      k.KeyW = ly < -dead;
-      k.KeyS = ly >  dead;
-      k.KeyA = lx < -dead;
-      k.KeyD = lx >  dead;
-      k.ShiftLeft = mag > 0.9;   // empurrar o analógico até o fim = correr
-    }
+    // 3) Tiro automático enquanto segura o gatilho.
+    if (this._fireHeld && this.player.weapon?.getCurrentWeapon?.()?.automatic) this._fire();
 
-    // 3) Analógico direito → giro SMOOTH (contínuo, proporcional à deflexão).
-    //    Sem snap/passos: gira enquanto o stick estiver inclinado, na velocidade
-    //    proporcional a quanto você empurra. dt vem do engine pra ser estável.
-    const rx = this._rightAxes.x;
-    const turnDead = 0.15;
-    if (Math.abs(rx) > turnDead) {
-      const dt = Math.min((this.scene.getEngine?.()?.getDeltaTime?.() || 16) / 1000, 0.05);
-      const amt = (Math.abs(rx) - turnDead) / (1 - turnDead);   // 0..1 após a deadzone
-      this._rigYaw += Math.sign(rx) * amt * this._turnSpeed * dt;
-    }
-
-    // 4) Tiro automático enquanto segura o gatilho.
-    if (this._fireHeld && this.player.weapon?.getCurrentWeapon?.()?.automatic) {
-      this._fire();
-    }
-
-    // 5) Atualiza o raio de mira da arma (origem + direção do controle direito).
+    // 4) Raio de mira da arma (direção do controle direito).
     this._updateAimRay();
 
-    // 5.5) Avatar VR: mãos do personagem seguem os controles (IK) + cabeça oculta.
+    // 5) Avatar: mãos do personagem seguem os controles (IK) + cabeça oculta.
     this._updateVRAvatar();
-
-    // 6) Câmera em 1ª pessoa (trava sobre o personagem).
-    this._followFP();
-  }
-
-  // Posiciona o rig (e a câmera XR) em 1ª PESSOA, travado SOBRE o personagem.
-  //  Cancela o deslocamento físico do headset na sala (XZ) a cada frame — senão
-  //  o offset te joga pro lado e parece 3ª pessoa, e o giro orbita um ponto ao
-  //  lado. O Y (altura/agachar) fica livre pra você olhar/abaixar naturalmente.
-  _followFP() {
-    const p = this.player.mesh.position;
-    this.rig.rotation.y = this._rigYaw;
-    this.rig.position.set(p.x, p.y - this.player.HEIGHT / 2, p.z);
-    try {
-      this.rig.computeWorldMatrix(true);
-      this.xrCamera.computeWorldMatrix(true);
-      const cw = this.xrCamera.getAbsolutePosition();
-      this.rig.position.x += p.x - cw.x;   // alinha a câmera ao personagem (horizontal)
-      this.rig.position.z += p.z - cw.z;
-    } catch (_) {}
   }
 
   // ───────────────────────────────────────────────────────────────────
-  //  Avatar VR — encarnar o personagem em 1ª pessoa
-  //   • mostra o corpo, esconde a cabeça (não tampa a visão)
-  //   • IK de 2 ossos por braço → as mãos seguem os controles
-  //  Tudo defensivo: se o IK falhar, fica só corpo + arma no controle.
+  //  Avatar VR — VOCÊ É o personagem em 1ª pessoa
+  //   • corpo VISÍVEL (você vê seus braços/tronco), cabeça oculta
+  //   • arma na MÃO via sistema TPS (orientação já calibrada no PC)
+  //   • IK de 2 ossos por braço → mãos do personagem seguem os controles
   // ───────────────────────────────────────────────────────────────────
   _setupVRAvatar() {
     const p = this.player;
     try {
-      p._tpsMode = false;                 // câmera é a XR (1ª pessoa), não a TPS
-      p.animator?.setVisible?.(true);     // mostra o corpo do personagem
+      p._tpsMode = true;                  // usa o TPS: arma encaixa no osso da mão (orientação tunada)
+      p.animator?.setVisible?.(true);     // mostra o corpo
+      p._updateWeaponVisibility?.();      // anexa a arma TPS na mão direita
+      if (p.weapon) p.weapon._vrMode = true;  // tiro mira pelo controle, sem mexer na câmera XR
       this._hideHead(true);               // some com a cabeça (senão tampa a visão)
-    } catch (e) { console.error("[VR avatar] mostrar corpo", e); }
+    } catch (e) { console.error("[VR avatar]", e); }
     this._setupArmIK();
   }
 
@@ -416,28 +390,20 @@ export class VRSystem {
   _setupArmIK() {
     this._ikR = this._ikL = null;
     try {
-      if (!BABYLON.BoneIKController) { console.warn("[VR avatar] BoneIKController indisponível"); return; }
+      if (!BABYLON.BoneIKController) return;
       const skinned = this.scene.meshes.find(m => m.skeleton && m.skeleton.bones?.some(b => b.name === "RightForeArm"));
       const skel = skinned?.skeleton;
       if (!skel) { console.warn("[VR avatar] sem skeleton p/ IK"); return; }
       const rFore = skel.bones.find(b => b.name === "RightForeArm");
       const lFore = skel.bones.find(b => b.name === "LeftForeArm");
-
       const mk = (name, parent) => { const t = new BABYLON.TransformNode(name, this.scene); if (parent) t.parent = parent; return t; };
-      // Alvos das mãos = nós presos aos controles.
       this._rHandTarget = mk("vrRHandTarget", this.rightGrip || this.rightPointer);
       this._lHandTarget = mk("vrLHandTarget", this.leftController?.grip || this.leftController?.pointer);
-      // Pole (cotovelo): pra fora, pra trás e pra baixo de cada ombro.
       this._rPole = mk("vrRPole", this.player.mesh); this._rPole.position.set(1.4, 0.2, -0.8);
       this._lPole = mk("vrLPole", this.player.mesh); this._lPole.position.set(-1.4, 0.2, -0.8);
-
-      if (rFore && this._rHandTarget) {
-        this._ikR = new BABYLON.BoneIKController(skinned, rFore, { targetMesh: this._rHandTarget, poleTargetMesh: this._rPole, slerpAmount: 0.7 });
-      }
-      if (lFore && this._lHandTarget) {
-        this._ikL = new BABYLON.BoneIKController(skinned, lFore, { targetMesh: this._lHandTarget, poleTargetMesh: this._lPole, slerpAmount: 0.7 });
-      }
-      console.log("[VR avatar] IK de braços ligado:", { right: !!this._ikR, left: !!this._ikL });
+      if (rFore && this._rHandTarget) this._ikR = new BABYLON.BoneIKController(skinned, rFore, { targetMesh: this._rHandTarget, poleTargetMesh: this._rPole, slerpAmount: 0.7 });
+      if (lFore && this._lHandTarget) this._ikL = new BABYLON.BoneIKController(skinned, lFore, { targetMesh: this._lHandTarget, poleTargetMesh: this._lPole, slerpAmount: 0.7 });
+      console.log("[VR avatar] IK ligado:", { right: !!this._ikR, left: !!this._ikL });
     } catch (e) { console.error("[VR avatar] setupArmIK", e); this._ikR = this._ikL = null; }
   }
 
@@ -452,20 +418,19 @@ export class VRSystem {
     this._ikR = this._ikL = null;
     [this._rHandTarget, this._lHandTarget, this._rPole, this._lPole].forEach(n => { try { n?.dispose?.(); } catch (_) {} });
     this._rHandTarget = this._lHandTarget = this._rPole = this._lPole = null;
-    try { this.player?.animator?.setVisible?.(false); } catch (_) {}
+    try { this.player._tpsMode = false; this.player?.animator?.setVisible?.(false); } catch (_) {}
   }
 
-  // Mira: bala sai da boca da arma na direção pra onde o controle aponta.
+  // Mira: bala sai da boca da arma na direção pra onde o CONTROLE direito aponta.
   _updateAimRay() {
     const w = this.player.weapon;
-    const ptr = this.rightPointer;
+    const ptr = this.rightPointer || this.rightGrip;
     if (!w || !ptr) return;
     try {
       const dir = ptr.getDirection(BABYLON.Axis.Z);
       w._vrAimDir = dir;
-      // Origem: boca da arma se existir, senão um pouco à frente do controle.
       const muzzle = w._muzzlePoint?.parent ? w._muzzlePoint.getAbsolutePosition() : null;
-      w._vrAimOrigin = muzzle || ptr.getAbsolutePosition().add(dir.scale(0.15));
+      w._vrAimOrigin = muzzle || ptr.getAbsolutePosition().add(dir.scale(0.2));
     } catch (_) {}
   }
 
@@ -519,12 +484,16 @@ export class VRSystem {
       plane.position.set(0, 0, 1.6);   // 1.6m à frente dos olhos
       this._vrMenu = plane;
       this._vrMenuActive = true;
+      // Pausa locomoção/giro enquanto o painel está aberto.
+      try { if (this._movement) { this._movement.movementEnabled = false; this._movement.rotationEnabled = false; } } catch (_) {}
       console.log("[VR] painel de boas-vindas exibido");
     } catch (e) { console.error("[VR] showVRMenu", e); }
   }
 
   _hideVRMenu() {
     this._vrMenuActive = false;
+    // Religa a locomoção ao fechar o painel.
+    try { if (this._movement) { this._movement.movementEnabled = true; this._movement.rotationEnabled = true; } } catch (_) {}
     try {
       this._vrMenu?.material?.diffuseTexture?.dispose?.();
       this._vrMenu?.material?.dispose?.();
@@ -546,37 +515,6 @@ export class VRSystem {
   // ───────────────────────────────────────────────────────────────────
   //  Arma na mão
   // ───────────────────────────────────────────────────────────────────
-  _attachWeaponToHand() {
-    const w = this.player?.weapon;
-    const hand = this.rightGrip || this.rightPointer;
-    if (!w?._root || !hand) return;
-    try {
-      w._vrMode = true;
-      w._root.parent = hand;
-      w._root.rotationQuaternion = null;
-      w._root.position.set(0, 0, 0);
-      w._root.rotation.set(0, 0, 0);
-      w._root.setEnabled(true);
-
-      const cur = w.getCurrentWeapon?.();
-      const mesh = cur && w._weaponMeshes?.[cur.id];
-      if (mesh) {
-        mesh.parent = w._root;
-        mesh.rotationQuaternion = null;
-        // Empunhadura genérica: arma à frente da mão, girada pra apontar pra frente
-        // (o modelo vem deitado pro lado → _gunYaw corrige no eixo vertical).
-        mesh.position.set(0, -0.02, 0.06);
-        mesh.rotation.set(0, this._gunYaw, 0);
-        mesh.scaling.setAll(cur.viewmodelScale ?? 0.5);
-        mesh.setEnabled(true);
-        mesh.getChildMeshes().forEach(m => { m.setEnabled(true); m.isVisible = true; m.isPickable = false; });
-        w._glbRoot = mesh;
-        if (w._muzzlePoint) w._muzzlePoint.parent = mesh;
-      }
-      console.log("[VR] arma encaixada na mão:", cur?.id);
-    } catch (e) { console.error("[VR] attachWeaponToHand", e); }
-  }
-
   _detachWeaponFromHand() {
     const w = this.player?.weapon;
     if (!w?._root) return;
@@ -629,7 +567,9 @@ export class VRSystem {
     const idx = ((w.currentWeaponIndex || 0) + dir + n) % n;
     try {
       Promise.resolve(w.switchWeapon(idx)).then(() => {
-        this._attachWeaponToHand();   // re-encaixa na mão (switchWeapon reparenta na câmera)
+        // switchWeapon já reanexa a arma TPS na mão (onWeaponSwitched →
+        // _updateWeaponVisibility). Só garantimos o modo VR e o haptic.
+        if (w) w._vrMode = true;
         this._pulse(this.leftController, 0.3, 40);
       });
     } catch (_) {}
