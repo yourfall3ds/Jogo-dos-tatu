@@ -152,12 +152,17 @@ localStorage continua como **cache offline** (escreve local + Supabase; lê Supa
   - **PIVOT de arquitetura** (autorizado pelo dono): em vez do servidor Colyseus, o mundo é **cliente-escreve + Supabase Realtime** — mais simples, testável sem redeploy da VPS, e 100% no Supabase. RLS do `world_objects` liberado pra mundo **colaborativo total** (qualquer autenticado constrói/modifica/destrói qualquer objeto), Realtime ligado.
   - `src/game/data/WorldObjects.js`: CRUD + Realtime (insert/update/delete ao vivo) + mapeamento linha↔registro do BuildMode.
   - `BuildMode`: ao logar carrega o mundo global do Supabase e assina Realtime (vê builds dos outros na hora); ao colocar persiste; undo/apagar-chão remove do mundo; dedupe do próprio echo. Sem login → fallback local (offline).
-  - ⚠️ **Limitação conhecida**: assets **da biblioteca embutida** (caminhos relativos) sincronizam e carregam pra todos. Assets **gerados no Meshy** usam blob/URL local → NÃO carregam pra outros players até terem **hosting público** (depende da F4). Por isso comecem o mundo com itens da biblioteca.
+  - ✅ **Resolvido na F4**: assets gerados no Meshy agora são hospedados no Supabase Storage (URL pública) ao salvar → carregam pra todos no mundo. Assets da biblioteca embutida sempre funcionaram.
 - **F3 — Destruição sandbox** — **CÓDIGO PRONTO** (pendente teste in-game):
   - `src/game/build/Breakable.js`: hp em GOLPES (escala com tamanho), rachaduras progressivas (material escurece + brasa avermelhada cresce + squash no hit), **regenera** se parar de bater (~2.2s), e ao quebrar **dropa o próprio asset recolocável** pro inventário (`inventory.addBuildable`).
   - `BuildMode._attachBreakable`: todo asset GLB colocado/carregado vira quebrável; `_onObjectBroken` dropa + `WorldObjects.markBroken` (some pra todos via Realtime) + remove local.
   - `CombatSystem`: golpe de melee em malha `m._breakable` chama `.hit()` (dedupe por golpe).
   - Quebrado persiste como `broken=true` (não recarrega). ⚠️ Teste real exige login + colocar objeto + bater nele.
+- **F4 — Hosting de assets gerados + prefs duráveis** — **CÓDIGO PRONTO**:
+  - Bucket Storage `transfps-assets` (público; upload por autenticado) — migration `transfps_assets_storage_bucket`.
+  - `src/game/data/AssetHosting.js`: `uploadFromUrl()` sobe o GLB e retorna URL pública. `MeshyPanel._saveToCatalog` sobe ao salvar e grava a URL pública no asset. `BuildMode._resolveLoadable` carrega URL pública do Storage direto (sem proxy).
+  - **Skin/classe durável**: `CharacterSelect3D` grava/lê `class_id` em `transfps.settings` (via `CloudSave`), além do localStorage.
+  - Decisões: prefs de **aparelho** (volume, sangue, console, anim-editor) ficam locais de propósito (por-dispositivo). `game_config` (armas/itens) continua escrita só admin/servidor (editores são ferramentas de dev).
 
 ---
 

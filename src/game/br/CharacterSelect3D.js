@@ -11,6 +11,8 @@
 //  Reusa CharacterSwapper que o projeto já tem.
 // ─────────────────────────────────────────────────────────────────
 
+import { CloudSave } from '../data/CloudSave.js';
+
 function _esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 const CLASSES = [
@@ -28,6 +30,8 @@ export class CharacterSelect3D {
     this._open = false;
     this._selectedId = parseInt(localStorage.getItem('transfps_class_id') || '0');
     this._onConfirm = null;
+    // Skin durável na nuvem (sincroniza entre dispositivos); cai pro local.
+    this._hydrateCloudClass();
     // Sub-scene pra viewport
     this._previewCanvas = null;
     this._previewEngine = null;
@@ -220,10 +224,21 @@ export class CharacterSelect3D {
     }
   }
 
+  async _hydrateCloudClass() {
+    try {
+      const id = await CloudSave.getSetting('class_id', null);
+      if (id != null && Number.isFinite(+id)) {
+        this._selectedId = +id;
+        localStorage.setItem('transfps_class_id', String(this._selectedId));
+      }
+    } catch (_) {}
+  }
+
   _confirm() {
     const cls = CLASSES.find(c => c.id === this._selectedId);
     if (!cls) return;
     localStorage.setItem('transfps_class_id', String(this._selectedId));
+    CloudSave.setSetting('class_id', this._selectedId);   // skin durável na nuvem
     // Notifica servidor
     try { this.cs?.sendMessage?.('br_class_select', { class_id: this._selectedId }); } catch (_) {}
     // Troca o model no player de fato

@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────
 import { MeshyClient } from './MeshyClient.js';
 import { LocalDB } from '../data/LocalDB.js';
+import { AssetHosting } from '../data/AssetHosting.js';
 import { AssetWishlist, wishlistAllItems } from './AssetWishlist.js';
 import { AssetGroups, BUILTIN_GROUPS } from '../data/AssetGroups.js';
 
@@ -902,9 +903,18 @@ export class MeshyPanel {
     const groupId = this._el.querySelector('#meshy-group-sel')?.value || null;
     const id = name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36);
 
+    // Hospeda o GLB no Storage público p/ TODOS os players carregarem no mundo
+    // compartilhado (cai pro caminho local se deslogado/offline).
+    let hostedUrl = this._state.glbUrl;
+    try {
+      this._status('☁️ hospedando asset…');
+      const pub = await AssetHosting.uploadFromUrl(this._state.glbUrl, `${id}.glb`);
+      if (pub) hostedUrl = pub;
+    } catch (_) {}
+
     const asset = {
       id, name,
-      glbUrl:    this._state.glbUrl,
+      glbUrl:    hostedUrl,
       imageUrl:  this._state.imageUrl || null,
       groupId:   groupId || null,
       createdAt: Date.now(),
@@ -914,7 +924,7 @@ export class MeshyPanel {
     // Compat: também salva em generated_assets para BuildMode legado
     let list = [];
     try { list = await LocalDB.get('generated_assets', []); } catch (_) {}
-    list.push({ id, name, glbUrl: this._state.glbUrl });
+    list.push({ id, name, glbUrl: hostedUrl });
     await LocalDB.save('generated_assets', list);
     this.buildMode?._load?.();
 

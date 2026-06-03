@@ -452,6 +452,11 @@ export class BuildMode {
    */
   async _resolveLoadable(url) {
     if (!url) return null;
+    // Supabase Storage público (CORS liberado) → carrega DIRETO, sem proxy local.
+    // É o que faz os assets gerados aparecerem pra TODOS no mundo compartilhado.
+    if (/^https?:/.test(url) && url.includes('/storage/v1/object/public/')) {
+      return { folder: '', file: url, extHint: '.glb' };
+    }
     // Externa (http/https) que não seja asset local → proxy → blob
     if (/^https?:/.test(url)) {
       try {
