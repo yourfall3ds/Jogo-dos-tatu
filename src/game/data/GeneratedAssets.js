@@ -13,6 +13,7 @@
 //  AssetGroups/LocalDB).
 // ─────────────────────────────────────────────────────────────────
 import { getSupabase } from '../auth/SupabaseClient.js';
+import { AssetHosting } from './AssetHosting.js';
 
 async function _uid() {
   try {
@@ -59,18 +60,31 @@ export const GeneratedAssets = {
   async add(asset) {
     const uid = await _uid();
     if (!uid || !asset?.id) return null;
-    // só sincroniza se o GLB for acessível por OUTROS (Storage público / url
-    //  absoluta). blob:/data: são locais → não adianta pôr no catálogo global.
-    const url = asset.glbUrl || '';
-    if (/^(blob:|data:)/.test(url)) return null;
+    // O GLB precisa ser acessível por OUTROS (Storage público). Se vier como
+    // blob:/data:/local, SOBE pro Storage agora e usa a URL pública — assim o
+    // asset gerado SEMPRE fica global (não some na tela dos outros).
+    let glbUrl = asset.glbUrl || '';
+    if (glbUrl && !AssetHosting.isPublicUrl(glbUrl)) {
+      const pub = await AssetHosting.uploadFromUrl(glbUrl, `${asset.id}.glb`);
+      if (pub) glbUrl = pub;
+    }
+    // Sem URL compartilhável (upload falhou / sem login) → não adianta registrar.
+    if (!glbUrl || /^(blob:|data:)/.test(glbUrl)) {
+      console.warn('[GeneratedAssets] add: GLB sem URL pública (upload falhou?) — não registrado global:', asset.id);
+      return null;
+    }
+    // Imagem/thumbnail: só persiste se for URL pública (blob/data são locais e
+    // o uploader é específico de GLB — não força content-type errado num PNG).
+    let imageUrl = asset.imageUrl || '';
+    if (/^(blob:|data:)/.test(imageUrl)) imageUrl = '';
     try {
       const supa = await getSupabase();
       const { error } = await supa.schema('transfps').from('generated_assets').upsert({
         id:        asset.id,
         owner_id:  uid,
         name:      asset.name || null,
-        glb_url:   asset.glbUrl || null,
-        image_url: asset.imageUrl || null,
+        glb_url:   glbUrl || null,
+        image_url: imageUrl || null,
         group_id:  asset.groupId || null,
       }, { onConflict: 'id' });
       if (error) throw error;
