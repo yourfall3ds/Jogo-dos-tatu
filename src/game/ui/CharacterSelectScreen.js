@@ -409,7 +409,11 @@ export class CharacterSelectScreen {
   _playSound(id) {
     try {
       const sm = window._gamePlayer?.sounds || window._soundManager;
-      if (sm?.playNow && id) sm.playNow(id, 0.95);
+      if (!sm?.playNow || !id) return;
+      // Voz dos personagens ALTA. Spray-Bnookker fala o nome: +35% (1.3).
+      // Os outros (ui_select/whoosh) tambem altos pra dar impacto.
+      const vol = id === 'spray_bnookker' ? 1.3 : 1.0;
+      sm.playNow(id, vol);
     } catch (e) { console.warn('[CharSelectScreen] sound:', e); }
   }
 
@@ -442,13 +446,27 @@ export class CharacterSelectScreen {
 
       let root = meshes.find(m => !m.parent && m.getChildren?.().length > 0) || meshes[0];
 
-      // re-fit por bbox → ~1.8m, pé no chão, centrado.
-      const bb = root.getHierarchyBoundingVectors();
+      // re-fit por bbox → altura-alvo FIXA, pé no chão, centrado.
+      // CRÍTICO: forçar computeWorldMatrix(true) em TODA a hierarquia ANTES de
+      // medir — senão o bbox vem com escala errada (o FUBÁ vinha gigante porque
+      // getHierarchyBoundingVectors mediu antes das matrizes assentarem).
+      try {
+        root.scaling.set(1, 1, 1); root.position.set(0, 0, 0);
+        meshes.forEach(m => { try { m.computeWorldMatrix(true); } catch (_) {} });
+        root.computeWorldMatrix(true);
+      } catch (_) {}
+      const bb = root.getHierarchyBoundingVectors(true);
       const size = bb.max.subtract(bb.min);
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const scale = 1.8 / Math.max(0.1, maxDim);
+      // Usa SÓ a altura (Y) como referência — humanóide em pé deve ter ~1.8m de
+      // ALTURA, independente de braços abertos (que inflariam o maxDim e
+      // encolheriam o boneco). Clamp pra nunca explodir.
+      const heightY = Math.max(0.1, size.y);
+      let scale = 1.8 / heightY;
+      if (!Number.isFinite(scale) || scale <= 0) scale = 1;
+      scale = Math.max(0.001, Math.min(scale, 100));
       root.scaling.set(scale, scale, scale);
-      root.position.set(0, -bb.min.y * scale, 0);
+      const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;
+      root.position.set(-cx * scale, -bb.min.y * scale, -cz * scale);
       root.rotation = new BABYLON.Vector3(0, 0, 0);
       this._previewMesh = root;
 

@@ -1558,9 +1558,12 @@ async function init() {
     // Congela o material apos config: evita recompile/flicker no WebGPU.
     if (g.material && g.material.freeze) g.material.freeze();
     console.log("[OpenWorld] plano vazio criado");
-    // Liga o streaming de biomas (mapão). O update() no render loop carrega
-    // os biomas conforme o player se aproxima. Idempotente (enable repetido ok).
-    try { window._biomeWorld?.enable(); } catch (e) { console.error('[BiomeWorld] enable:', e); }
+    // BiomeWorld (mapão de vários mapas empilhados) DESLIGADO a pedido do dono:
+    // o servidor BRASIL agora é UM mapa único — a arena inicial do TransFPS
+    // (rampas/cilindros/torres do SkillMapExtras) + o chão. Os vários mapas
+    // sobrepostos causavam tela preta/artefatos. Pra religar o mapão no futuro:
+    // descomentar a linha abaixo.
+    // try { window._biomeWorld?.enable(); } catch (e) { console.error('[BiomeWorld] enable:', e); }
     return g;
   }
   // Plugamos AMBAS as UIs no mesmo handler — a ServerListUI eh o caminho

@@ -44,17 +44,26 @@ export class GraphicsEnhancer {
     //  mantém MSAA 4x.
     pl.samples = window._webgpu ? 1 : 4;
     pl.fxaaEnabled = true;          // AA principal (cobre a falta de MSAA no WebGPU)
-    pl.bloomEnabled = true;
-    pl.bloomThreshold = 1.0;       // só brilho REAL (>1) floresce — chão claro não estoura
-    pl.bloomWeight = 0.30;        // calibrado no painel F8
-    pl.bloomKernel = 48;
-    pl.bloomScale = 0.5;
-    pl.imageProcessingEnabled = true;
-    pl.sharpenEnabled = true;
-    pl.sharpen.edgeAmount = 0.20;
-    pl.grainEnabled = true;
-    pl.grain.intensity = 4;
-    pl.grain.animated = true;
+    // ⚠️ BLOOM/SHARPEN/GRAIN DESLIGADOS no WebGPU. O bloom cria o render pass
+    // "PostProcessRTT-highlights" (extração de áreas brilhantes) que injeta
+    // varyings extras no fragment shader → com PBR pesado o total passa de 16
+    // ("fragment input 17 > 16") → RenderPipeline inválido → TELA PRETA cheia de
+    // artefatos ao olhar pra cena (spam de GPUValidationError todo frame). ESTE
+    // era o culpado real (não o GlowLayer). No WebGL2 o bloom continua. Mantemos
+    // FXAA + tonemapping/imageProcessing (leves, sem highlights pass).
+    const _heavyFX = !window._webgpu;
+    pl.bloomEnabled = _heavyFX;
+    if (_heavyFX) {
+      pl.bloomThreshold = 1.0;     // só brilho REAL (>1) floresce
+      pl.bloomWeight = 0.30;
+      pl.bloomKernel = 48;
+      pl.bloomScale = 0.5;
+    }
+    pl.imageProcessingEnabled = true;   // tonemapping ACES + exposure (leve, ok no WebGPU)
+    pl.sharpenEnabled = _heavyFX;
+    if (_heavyFX) pl.sharpen.edgeAmount = 0.20;
+    pl.grainEnabled = _heavyFX;
+    if (_heavyFX) { pl.grain.intensity = 4; pl.grain.animated = true; }
     this.pipeline = pl;
 
     // ── SSAO2: oclusão de ambiente (profundidade nos contatos) ───────
@@ -117,7 +126,7 @@ export class GraphicsEnhancer {
     // nitidez: render na resolução nativa
     try { this.engine.setHardwareScalingLevel(1 / (window.devicePixelRatio || 1) <= 0.5 ? 0.5 : 1); } catch (_) {}
 
-    console.log(`[GFX] ✨ pós-processamento ligado (Bloom+ACES+FXAA+Glow+CA${this.ssao ? '+SSAO' : ''})`);
+    console.log(`[GFX] ✨ pós-processamento: ${window._webgpu ? 'ACES+FXAA (WebGPU: bloom/glow OFF)' : 'Bloom+ACES+FXAA+Glow+CA'}${this.ssao ? '+SSAO' : ''}`);
   }
 
   // ── VR: desliga TODO pós-processamento pesado ────────────────────
