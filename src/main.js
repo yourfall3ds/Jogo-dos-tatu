@@ -61,6 +61,7 @@ import { MusicSystem }         from './game/audio/MusicSystem.js';
 import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
 import { AuthSystem }          from './game/auth/AuthSystem.js';
 import { DEBUG }               from './utils/debug.js';
+import { VRSystem }            from './game/vr/VRSystem.js';
 
 // OAuth callback handler — roda ANTES do init normal.
 // Se essa janela for o popup de login (tem ?code= [PKCE] ou #access_token=
@@ -295,7 +296,17 @@ async function init() {
   //     se o WebGPU falhar, mostra aviso claro em vez de cair disfarçado.
   //     Quando o WebGPU estiver aprovado, mude pra TRUE (cai pro WebGL2 só
   //     em navegador sem suporte). Força WebGL2 a qualquer hora com ?webgl
-  const FALLBACK_WEBGL = false;   // ← teste solo de WebGPU. depois: true
+  let FALLBACK_WEBGL = false;   // ← teste solo de WebGPU. depois: true
+  // Força WebGL2 no Quest browser (WebXR nao funciona com WebGPUEngine)
+  try {
+    const _isQuestUA = /OculusBrowser|Quest|Meta Quest/i.test(navigator.userAgent || "");
+    if (_isQuestUA) {
+      FALLBACK_WEBGL = true;
+      console.log("[Boot] Quest UA detectado, forçando WebGL2 pra suportar WebXR");
+    }
+    // Ou via URL ?webgl
+    if (location.search.includes("webgl")) FALLBACK_WEBGL = true;
+  } catch (_) {}
 
   let engine = null;
   const forceWebGL = new URLSearchParams(location.search).has('webgl');
@@ -540,6 +551,16 @@ async function init() {
   cs.connect(TRANSFPS_CS_URL);
   window._cs = cs;
   cs.setPlayerId(auth.getUserId());
+
+  // ── VR (WebXR): suporte a Meta Quest browser ──────────────────────
+  const vrSystem = new VRSystem(scene, player, cs);
+  window._vrSystem = vrSystem;
+  vrSystem.init().then(() => {
+    if (vrSystem.isQuest) {
+      console.log("[Main] Quest detectado, mostrando botao VR");
+      _showQuestVRPrompt(vrSystem);
+    }
+  }).catch(e => console.warn("[VR] init falhou", e?.message));
 
   const _remotePlayers = new Map();  // playerId → RemotePlayer
   const _remoteMobs = new Map();     // mobId → RemoteMob
@@ -1101,9 +1122,39 @@ async function init() {
     `;
     document.body.appendChild(el);
     el.addEventListener('pointerdown', () => {
+      // Quest auto-entra em VR no mesmo gesture
+      try {
+        const vr = window._vrSystem;
+        if (vr && vr.isQuest && vr.isSupported && !vr.inSession) {
+          vr.enterVR().catch(e => console.warn("[VR auto] enter falhou", e?.message));
+        }
+      } catch (_) {}
       el.remove();
       try { onClick && onClick(); } catch (e) { console.error('[ClickToPlay]', e); }
     }, { once: true });
+  }
+
+  // Overlay especifico pra usuarios chegando do Meta Quest browser.
+  // Mostra botao gigante ENTRAR EM VR (captura user gesture pra requestSession).
+  function _showQuestVRPrompt(vrSystem) {
+    let el = document.getElementById("quest-vr-prompt");
+    if (el) el.remove();
+    el = document.createElement("div");
+    el.id = "quest-vr-prompt";
+    el.style.cssText = "position:fixed;top:20px;right:20px;z-index:9998;" +
+      "background:linear-gradient(135deg,#7e3aff,#3a8aff);color:#fff;" +
+      "padding:14px 22px;border-radius:14px;cursor:pointer;" +
+      "font-family:Segoe UI,monospace;font-weight:900;letter-spacing:2px;" +
+      "box-shadow:0 4px 24px rgba(126,58,255,0.6);font-size:0.95em;" +
+      "display:flex;align-items:center;gap:10px;";
+    el.innerHTML = "🥽 ENTRAR EM VR";
+    el.addEventListener("pointerdown", async () => {
+      el.textContent = "🥽 ENTRANDO...";
+      const ok = await vrSystem.enterVR();
+      if (ok) el.remove();
+      else el.textContent = "🥽 ENTRAR EM VR (tente de novo)";
+    });
+    document.body.appendChild(el);
   }
 
   // OPEN_WORLD CLEAN: plano vazio 200x200 com material liso + colisao

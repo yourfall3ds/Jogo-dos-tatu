@@ -1252,6 +1252,8 @@ export class Player {
 
   // ── Camera via setTarget (mais confiável que .rotation) ───────────
   _updateCamera() {
+    // VR ativo: WebXRDefaultExperience controla câmera; pula update manual
+    if (this._vrControlsCamera) return;
     const yR = BABYLON.Tools.ToRadians(this.yaw);
     const pR = BABYLON.Tools.ToRadians(this.pitch);
 
