@@ -74,4 +74,43 @@ export class LocalDB {
   static async save(collection, data) { return LocalDB.set(collection, data); }
   static async load(collection, defaultData = {}) { return LocalDB.get(collection, defaultData); }
   static async remove(collection) { return LocalDB.del(collection); }
+
+  // ── Stubs/aliases legacy retrocompat ──
+  // (mantem API antiga viva pra BuildMode, ItemCatalog, AssetMachine, etc)
+  static isProd() {
+    try {
+      const h = (typeof location !== "undefined") ? (location.hostname || "") : "";
+      return !(h === "localhost" || h === "127.0.0.1" || h.endsWith(".local") || h === "");
+    } catch (_) { return true; }
+  }
+  static isDev() { return !LocalDB.isProd(); }
+  static getSync(collection, defaultData = {}) {
+    try {
+      const raw = localStorage.getItem(LS_PREFIX + collection);
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return defaultData;
+  }
+  static setSync(collection, data) {
+    try { localStorage.setItem(LS_PREFIX + collection, JSON.stringify(data)); } catch (_) {}
+  }
+  static keys() {
+    try {
+      const out = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(LS_PREFIX)) out.push(k.slice(LS_PREFIX.length));
+      }
+      return out;
+    } catch (_) { return []; }
+  }
+  static has(collection) {
+    try { return localStorage.getItem(LS_PREFIX + collection) !== null; } catch { return false; }
+  }
+  static async clear() {
+    try {
+      const ks = LocalDB.keys();
+      ks.forEach(k => { try { localStorage.removeItem(LS_PREFIX + k); } catch (_) {} });
+    } catch (_) {}
+  }
 }
