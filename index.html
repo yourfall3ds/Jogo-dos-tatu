@@ -713,7 +713,15 @@
     const ssText = document.getElementById('ss-text');
     let online   = null;
 
+    // Detecta prod: config-server local só roda em dev (localhost/127.0.0.1).
+    // Em prod (app.overpixel.online), esse check só polui o console.
+    const _isProd = !(location.hostname === 'localhost' || location.hostname === '127.0.0.1');
     async function checkServer() {
+      if (_isProd) {
+        // Prod: marca como online silenciosamente, sem fetch.
+        setOnline(true, false);
+        return;
+      }
       try {
         const resp = await fetch('http://127.0.0.1:3099/health', { signal: AbortSignal.timeout(1500) });
         const data = await resp.json();
@@ -754,9 +762,9 @@
       if (changed) console[ok ? 'info' : 'warn']('[server-status]', ok ? 'online ✅' : 'offline ❌');
     }
 
-    // Primeira verificação imediata + poll a cada 5s
+    // Primeira verificação imediata + poll a cada 5s (só em dev)
     checkServer();
-    setInterval(checkServer, 5000);
+    if (!_isProd) setInterval(checkServer, 5000);
   })();
   </script>
 </body>

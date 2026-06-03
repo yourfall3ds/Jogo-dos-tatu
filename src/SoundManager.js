@@ -75,7 +75,7 @@ export class SoundManager {
       punch_strong    : 'assets/Sound FX/socos/soco fortisimo.wav',
       punch_hit       : 'assets/Sound FX/socos/soco quando acerta.wav',
       punch_crit      : 'assets/Sound FX/socos/soco critico.wav',
-      punch_supercrit : 'assets/Sound FX/socos/soco Super critico.wav',
+      punch_supercrit : 'assets/Sound FX/socos/soco Super critico que manda longe.wav',
       kick_light      : 'assets/Sound FX/chutes/chute.wav',
       kick_med        : 'assets/Sound FX/chutes/chute medio.wav',
       kick_strong     : 'assets/Sound FX/chutes/chute forte.wav',

@@ -1223,34 +1223,66 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     // O personagem agora é carregado via 'playerUnarmed' acima para suportar o novo sistema de combate.
   ];
 
-  for (let i = 0; i < queue.length; i++) {
-    const item = queue[i];
-    setLoadingUI(Math.round((i / queue.length) * 100), item.label);
+  // ── Boot tiered: essenciais bloqueiam UI, resto roda em background ──
+  // TIER 1 (bloqueante): playerUnarmed (sistema de combate/anim) + pistol (arma default).
+  // Sem isso o player nem aparece — então UI fica trancada.
+  // TIER 2 (background paralelo): resto das armas, props, decoração.
+  // UI desbloqueia em ~35% e o usuário pode jogar enquanto carrega.
+  const ESSENTIAL_KEYS = new Set(['playerUnarmed', 'pistol']);
+  const essentials = queue.filter(it => ESSENTIAL_KEYS.has(it.key));
+  const background = queue.filter(it => !ESSENTIAL_KEYS.has(it.key));
+
+  // Loader helper
+  const loadOne = async (item, onProgress) => {
     if (item.key.startsWith('_procedural_')) {
-      // Construção procedural — sem download, chama done() direto
       try { await item.done(); } catch (e) { console.warn('[proc]', item.key, e.message); }
-      continue;
+      return;
     }
     const meshes = await loader.load(item.key);
-    if (meshes) await item.done(meshes);
+    if (meshes) { try { await item.done(meshes); } catch (e) { console.warn('[done]', item.key, e?.message); } }
+    onProgress?.();
+  };
+
+  // TIER 1: sequencial (deps internas)
+  let essentialDone = 0;
+  for (const item of essentials) {
+    setLoadingUI(Math.round((essentialDone / essentials.length) * 35), item.label);
+    await loadOne(item);
+    essentialDone++;
   }
-  // Restaura máquinas salvas
-  await _restoreMachines(scene);
+  setLoadingUI(40, 'pronto pra jogar — carregando extras…');
 
-  setLoadingUI(100);
+  // Libera UI: BootLoadGuard pode sumir agora
+  try { window._bootGuard?.done(); } catch (_) {}
 
-  // Aplica transforms salvos do SceneEditor sobre os GLBs recém carregados
-  window._sceneEditor?.applyAllSaved();
+  // TIER 2: paralelo em background. Atualiza barra mas não bloqueia.
+  let bgDone = 0;
+  const bgTotal = background.length;
+  // Promise.all não-awaited — roda em segundo plano
+  Promise.all(background.map(item =>
+    loadOne(item, () => {
+      bgDone++;
+      const pct = 40 + Math.round((bgDone / bgTotal) * 60);
+      setLoadingUI(pct, item.label);
+    }).catch(e => console.warn('[bg]', item.key, e?.message))
+  )).then(async () => {
+    await _restoreMachines(scene);
+    setLoadingUI(100);
+    // Aplica transforms salvos do SceneEditor sobre os GLBs recém carregados
+    window._sceneEditor?.applyAllSaved();
 
-  // Sombras: garante que TODA superfície (chão, paredes, plataformas) receba
-  //  a sombra do sol — corrige luzes FX consumindo slots e maxLights baixo.
-  try { gfx.fixSceneShadows(); } catch (_) {}
-  setTimeout(() => { try { gfx.fixSceneShadows(); } catch (_) {} }, 400);
+    // Sombras: garante que TODA superfície (chão, paredes, plataformas) receba
+    //  a sombra do sol — corrige luzes FX consumindo slots e maxLights baixo.
+    try { gfx.fixSceneShadows(); } catch (_) {}
+    setTimeout(() => { try { gfx.fixSceneShadows(); } catch (_) {} }, 400);
 
-  // POR ÚLTIMO: garante a arma na mão. Roda DEPOIS do applyAllSaved (que
-  //  podia jogar o viewmodel no chão ao casar nome genérico __root__).
-  try { player._updateWeaponVisibility?.(); } catch (_) {}
-  setTimeout(() => { try { player._updateWeaponVisibility?.(); } catch (_) {} }, 300);
+    // POR ÚLTIMO: garante a arma na mão. Roda DEPOIS do applyAllSaved (que
+    //  podia jogar o viewmodel no chão ao casar nome genérico __root__).
+    try { player._updateWeaponVisibility?.(); } catch (_) {}
+    setTimeout(() => { try { player._updateWeaponVisibility?.(); } catch (_) {} }, 300);
+
+    console.log('🎮 [Boot] Todos os assets carregados em background.');
+  });
 }
 
 // ════════════════════════════════════════════════════════════════
