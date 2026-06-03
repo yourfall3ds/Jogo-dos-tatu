@@ -44,7 +44,10 @@ export class DayNightCycle {
     this.moon.intensity = 0;
     this.moon.diffuse = new BABYLON.Color3(0.6, 0.7, 1.0);
     this.moon.specular = new BABYLON.Color3(0.3, 0.4, 0.6);
-    this.moon.shadowEnabled = true;
+    // Começa DESLIGADA: o jogo inicia de dia (t=0.30). Só o sol gera sombra
+    //  ao boot → 1 par de varyings de sombra no PBR (evita overflow WebGPU >16).
+    //  _apply() liga/desliga moon vs sun mutuamente conforme o astro dominante.
+    this.moon.shadowEnabled = false;
 
     // ── Sombra da LUA ────────────────────────────────────────────────
     //  A sombra do SOL some abaixo do horizonte → à noite o mapa ficava
@@ -246,17 +249,33 @@ export class DayNightCycle {
     }
 
     // ── Sombra da LUA: liga só quando a lua domina (noite) ────────────
+    //  CRÍTICO (WebGPU): cada luz com shadowEnabled+gerador ATIVO declara
+    //  um par de varyings (vPositionFromLight[i]+vDepthMetric[i]) no shader
+    //  PBR — INDEPENDENTE da renderList estar vazia. WebGPU só permite 16
+    //  inter-stage outputs; com sol+lua sempre ligados + varyings do PBR
+    //  pesado, qualquer 3ª fonte estoura o limite → shader não compila →
+    //  material quebrado / tela preta. Solução: sun e moon shadowEnabled
+    //  MUTUAMENTE EXCLUSIVOS — no máximo UMA luz-sombra existe por vez.
     if (this.moonShadowGen && this.shadowGen?.getShadowMap) {
       const sunSM  = this.shadowGen.getShadowMap();
       const moonSM = this.moonShadowGen.getShadowMap();
       const moonActive = moonF > 0.05 && moonF >= dayF;   // lua é o astro dominante
       if (moonActive) {
+        // NOITE: só a lua gera sombra. Desliga o varying do sol.
+        this.moon.shadowEnabled = true;
+        this.sun.shadowEnabled = false;
         // compartilha os MESMOS casters do sol (fica em sincronia automática)
         if (moonSM.renderList !== sunSM.renderList) moonSM.renderList = sunSM.renderList;
         // sombra mais marcada quando a lua está alta
         this.moonShadowGen.setDarkness(0.45 + (1 - moonF) * 0.4);
-      } else if (moonSM.renderList && moonSM.renderList.length) {
-        moonSM.renderList = [];   // de dia: nada a renderizar → custo ~zero
+      } else {
+        // DIA: só o sol gera sombra. Desliga o varying da lua (não basta
+        //  esvaziar a renderList — o varying continua declarado no shader).
+        this.sun.shadowEnabled = true;
+        this.moon.shadowEnabled = false;
+        if (moonSM.renderList && moonSM.renderList.length) {
+          moonSM.renderList = [];   // de dia: nada a renderizar → custo ~zero
+        }
       }
     }
 

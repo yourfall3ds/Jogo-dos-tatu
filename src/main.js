@@ -1080,9 +1080,12 @@ async function init() {
   window._pingTick = _pingTick;
 
   // Hook respawn local → notifica servidor
+  // GUARDA ANTI-LOOP: quando o respawn foi DISPARADO pelo servidor (dead→false),
+  // NÃO reenvia sendRespawn() — senão server→client→server entra em loop infinito.
   const _origRespawn = player.onRespawn;
   player.onRespawn = () => {
     if (_origRespawn) _origRespawn();
+    if (player._serverRespawn) { player._serverRespawn = false; return; }
     if (cs.connected) cs.sendRespawn();
   };
 
@@ -1893,8 +1896,34 @@ async function init() {
       if (isDead && !_lastDeadState) {
         deathCam.enter(_lastKillerId);
       } else if (!isDead && _lastDeadState) {
+        // ── SERVER RESPAWNOU (dead→false) ──────────────────────────────
+        // 1) Restaura a câmera FPS/TPS e remove o banner da DeathCam.
         deathCam.exit();
         _lastKillerId = null;
+        // 2) RESPAWN LOCAL DO PLAYER. Sem isto, player._dead fica true pra
+        //    sempre → overlay #death-screen (fullscreen preta) NUNCA sai e
+        //    cobre tudo = tela preta. respawn() limpa _dead, reposiciona,
+        //    sai do knockdown e re-trava o pointer (input.activate()).
+        //    Guarda anti-loop: não reenvia sendRespawn ao server.
+        if (player._dead) {
+          try {
+            player._serverRespawn = true;
+            // Reposiciona na posição que o server mandou (se disponível),
+            // senão respawn() usa o spawn padrão (0, 2.5, 0).
+            const sx = me?.x, sy = me?.y, sz = me?.z;
+            player.respawn();
+            if (player.mesh && Number.isFinite(sx) && Number.isFinite(sz)) {
+              const py = Number.isFinite(sy) ? sy : player.mesh.position.y;
+              player.mesh.position.set(sx, py, sz);
+              if (player._cc) {
+                try { player._cc.setPosition(new BABYLON.Vector3(sx, py, sz)); } catch (_) {}
+              }
+            }
+          } catch (e) {
+            console.error('[respawn] server dead→false falhou:', e);
+            player._serverRespawn = false;
+          }
+        }
       }
       _lastDeadState = isDead;
     }

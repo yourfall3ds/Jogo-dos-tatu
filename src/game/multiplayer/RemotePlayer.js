@@ -49,24 +49,37 @@ function _esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '
 //  'idle' -> Idle_5 = PULO, e 'moving'/'armed'/... -> nenhum match =
 //  avatar congelado). Aqui cada anim_state aponta pro NOME REAL do clipe.
 // ─────────────────────────────────────────────────────────────────
+//  FIX coerencia: clipes do GLB usados pelos NOMES REAIS (sem includes() cego):
+//    Idle_5           -> parado/idle REAL
+//    Walking          -> andar
+//    Running          -> correr
+//    Running_Reload   -> correr recarregando
+//    Regular_Jump     -> pulo / queda
+//    Run_and_Shoot    -> acao neutra de combate (melee generico)
+//    Archery_Shot_1   -> tiro de arco (ranged)
+//    Roll_Dodge_1     -> esquiva
+//    Parkour_Vault_with_Roll -> roll/morte
+//  NUNCA mapear combate pra Jump_Down_from_Wall (pular da parede como golpe = ridiculo).
 const REMOTE_ANIM_MAP = {
-  // ── estados do server (PlayerStateMachine.state) ──
-  idle      : 'Jump_Down_from_Wall',          // parado de verdade
-  unarmed   : 'Jump_Down_from_Wall',          // sem arma = parado
-  armed     : 'Jump_Down_from_Wall',          // arma equipada, parado
-  sword     : 'Jump_Down_from_Wall',          // espada equipada, parado
-  moving    : 'Walk_Backward_While_Shooting', // andar de verdade
-  shooting  : 'Archery_Shot_1',               // tiro de arco
-  attacking : 'Run_and_Shoot',                // ataque melee/genérico (clipe de ação)
-  punch     : 'Run_and_Shoot',                // soco -> ação (GLB não tem soco real)
-  melee     : 'Run_and_Shoot',                // golpe melee genérico (overlay de ataque)
-  sword_atk : 'Archery_Shot_1',               // golpe de espada -> clipe de ação (overlay)
+  // ── estados do server (PlayerStateMachine.state) — locomocao ──
+  idle      : 'Idle_5',                        // parado de verdade
+  unarmed   : 'Idle_5',                        // sem arma = parado
+  armed     : 'Idle_5',                        // arma equipada, parado
+  sword     : 'Idle_5',                        // espada equipada, parado (NAO pular da parede)
+  moving    : 'Walking',                       // andar de verdade
+  walking   : 'Walking',
+  // ── combate (overlay transiente via remote_fire) ──
+  shooting  : 'Archery_Shot_1',               // tiro de arco (ranged)
+  attacking : 'Run_and_Shoot',                // ataque melee/genérico (acao neutra)
+  punch     : 'Run_and_Shoot',                // soco -> acao neutra (GLB não tem soco real)
+  melee     : 'Run_and_Shoot',                // golpe melee genérico
+  sword_atk : 'Run_and_Shoot',                // golpe de espada -> acao neutra (NAO clipe de arco)
   stunned   : 'Parkour_Vault_with_Roll',      // atordoado -> roll/queda
   knockdown : 'Parkour_Vault_with_Roll',      // nocaute/morte -> roll
   dodging   : 'Roll_Dodge_1',                 // esquiva
 
   // ── aliases p/ nomes "limpos" (PlayerAnimator local / futuro server) ──
-  walk      : 'Walk_Backward_While_Shooting',
+  walk      : 'Walking',
   walk_aim  : 'Walk_Forward_with_Bow_Aimed',
   walk_back : 'Walk_Backward_with_Bow_Aimed',
   run       : 'Running',
@@ -75,8 +88,8 @@ const REMOTE_ANIM_MAP = {
   run_reload: 'Running_Reload',
   reload    : 'Running_Reload',
   jump      : 'Regular_Jump',
-  falling   : 'Jump_Over_Obstacle_2',
-  fall      : 'Jump_Over_Obstacle_2',
+  falling   : 'Regular_Jump',
+  fall      : 'Regular_Jump',
   wall_ready: 'Climb_Stairs',
   wall_jump : 'Regular_Jump',
   roll      : 'Parkour_Vault_with_Roll',
@@ -91,7 +104,8 @@ const REMOTE_ANIM_MAP = {
   stun      : 'Parkour_Vault_with_Roll',
 };
 
-const REMOTE_DEFAULT_ANIM = 'Jump_Down_from_Wall'; // fallback = idle REAL
+const REMOTE_DEFAULT_ANIM = 'Idle_5'; // fallback = idle REAL (NUNCA mira de arco parada)
+const REMOTE_BLEND_SPEED  = 0.09;     // crossfade suave entre clipes (sem pose-snap)
 
 /**
  * Resolve um anim_state cru (do server) para a AnimationGroup REAL do GLB.
@@ -330,25 +344,48 @@ export class RemotePlayer {
     // Já está tocando esse clipe → não reinicia (evita "tremor" de restart).
     if (this._curAnim === next && next.isPlaying) return;
 
-    // PARA todas as outras anims (out-of-if): garante que a anterior NUNCA
-    // fica rodando empilhada. Era exatamente isso que congelava o remoto.
+    this._enableBlending(anims);
+
+    // PARA todas as outras anims: garante que a anterior NUNCA fica rodando
+    // empilhada (sem 2 anims sobrepostas). Com enableBlending ativo, o Babylon
+    // ja faz a rampa de peso ao iniciar a nova, dando crossfade suave (sem snap).
     for (const a of anims) {
       if (a === next) continue;
       try { a.stop(); } catch (_) {}
     }
 
     try {
-      // Crossfade simples: inicia com peso baixo e sobe (se a engine suportar).
+      // loop=true, weight 1.0, speedRatio 1.0 (coerente). O enableBlending faz a
+      // transicao ponderada 0->1 ao longo de ~1/blendingSpeed frames.
       next.start(true, 1.0, next.from, next.to, false);
-      if (next.setWeightForAllAnimatables) {
-        try { next.setWeightForAllAnimatables(1.0); } catch (_) {}
-      }
     } catch (_) {
       try { next.start(true, 1.0); } catch (_) {}
     }
 
     this._curAnim = next;
     this._curAnimState = rawState;
+  }
+
+  /** Habilita blending (crossfade) em todos os AnimationGroups do avatar remoto,
+   *  uma unica vez. Sem isso, cada troca de clipe e um "pose-snap" (teleporte de
+   *  pose) que parece o avatar alucinando. */
+  _enableBlending(anims) {
+    if (this._blendingEnabled || !anims?.length) return;
+    for (const ag of anims) {
+      try {
+        ag.enableBlending(REMOTE_BLEND_SPEED);
+        if (ag.blendingSpeed !== undefined) ag.blendingSpeed = REMOTE_BLEND_SPEED;
+        const targeted = ag.targetedAnimations || [];
+        for (const ta of targeted) {
+          const anim = ta.animation;
+          if (anim) {
+            anim.enableBlending = true;
+            anim.blendingSpeed = REMOTE_BLEND_SPEED;
+          }
+        }
+      } catch (_) {}
+    }
+    this._blendingEnabled = true;
   }
 
   /**
@@ -376,7 +413,10 @@ export class RemotePlayer {
     // locomoção recebido pela rede (ou idle REAL).
     const restoreTo = this._curAnimState || this.state?.anim_state || 'idle';
 
-    // PARA todas as outras anims pra o clipe de ataque ficar sozinho.
+    this._enableBlending(anims);
+
+    // PARA todas as outras anims pra o clipe de ataque ficar sozinho (sem
+    // sobreposicao). O blending faz a entrada/saida do golpe ser suave.
     for (const a of anims) {
       if (a === clip) continue;
       try { a.stop(); } catch (_) {}
@@ -384,9 +424,6 @@ export class RemotePlayer {
 
     try {
       clip.start(false, 1.0, clip.from, clip.to, false); // loop=false (toca uma vez)
-      if (clip.setWeightForAllAnimatables) {
-        try { clip.setWeightForAllAnimatables(1.0); } catch (_) {}
-      }
     } catch (_) {
       try { clip.start(false, 1.0); } catch (_) {}
     }

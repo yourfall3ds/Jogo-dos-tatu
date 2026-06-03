@@ -128,8 +128,10 @@ export class InputManager {
       const _placing = window._buildMode?._state === 'placing';
       if (!this.gameActive && !_placing) return;
       if (e.target?.id === 'focus-btn') return;
-      // Re-adquire lock se perdido (chamado dentro de handler de clique = gesto válido)
-      if (!document.pointerLockElement) this._requestLock();
+      // Re-adquire lock se perdido. mousedown = gesto FRESCO e confiável →
+      // fromGesture=true ignora o cooldown e pede o lock direto. É exatamente
+      // aqui que um _pendingLock armado (ESC/respawn) é consumido.
+      if (!document.pointerLockElement) this._requestLock(true);
       // Conta os cliques (não só um boolean) → mashing rápido não perde
       // cliques no mesmo frame; o combo encadeia todos.
       if (e.button === 0) { this._clicked = true;      this._clicks      = (this._clicks      || 0) + 1; this._leftHeld  = true; }
@@ -187,51 +189,86 @@ export class InputManager {
     // descartado MAS gameActive já estava true → mouse do SO ficava livre e
     // saía pra fora da tela. Agora: loga e marca pra re-tentar no próximo clique.
     document.addEventListener('pointerlockerror', () => {
+      // Inofensivo: o próximo mousedown real (handler acima) re-adquire o lock.
+      // Marca _pendingLock pra deixar explícito que falta o gesto do jogador.
       this._lockConfirmed = false;
-      console.warn('[Input] pointerlockerror — lock rejeitado pelo browser; vai re-tentar no proximo clique.');
+      this._pendingLock = true;
+      console.debug('[Input] pointerlockerror — re-lock adiado pro proximo clique.');
     });
   }
 
   // ── Solicita pointer lock no canvas ──────────────────────────────
   // DEVE ser chamado DENTRO de um gesture síncrono (pointerdown/click/mousedown),
   // nunca depois de await — senão o browser rejeita o lock como não-confiável.
-  _requestLock() {
+  //
+  // @param {boolean} fromGesture  true quando chamado DIRETO de um handler de
+  //   mousedown/pointerdown real (gesto fresco). Quando false (resume via ESC,
+  //   respawn da lógica de jogo) aplica o GUARD de cooldown: o Chrome impõe
+  //   ~1.25s de bloqueio de re-lock após o unlock, e re-tentar dentro dessa
+  //   janela (ou sem gesto) dispara SecurityError. Nesse caso NÃO chamamos
+  //   requestPointerLock — só armamos _pendingLock, que o próximo mousedown
+  //   real consome. Sem loop de re-tentativa, sem ruído de erro.
+  _requestLock(fromGesture = false) {
+    // GUARD de cooldown / non-gesture: evita o SecurityError na origem.
+    if (!fromGesture) {
+      const sinceUnlock = performance.now() - (this._lastUnlockAt || 0);
+      if (sinceUnlock < 1300) {
+        // Dentro do cooldown do browser pós-unlock → não tenta agora.
+        // O próximo clique real do jogador (mousedown handler) re-adquire.
+        this._pendingLock = true;
+        console.debug('[Input] re-lock adiado (cooldown pós-unlock); aguardando clique.');
+        return;
+      }
+    }
+    this._pendingLock = false;
     try {
       this.canvas.focus();              // garante foco no elemento (precisa tabindex no canvas)
       // requestPointerLock pode retornar undefined (API antiga) ou uma Promise (API nova).
       const ret = this.canvas.requestPointerLock();
       if (ret && typeof ret.then === 'function') {
-        ret.then(() => { this._lockConfirmed = true; })
+        ret.then(() => { this._lockConfirmed = true; this._pendingLock = false; })
            .catch(err => {
-             // NotAllowedError: gesto não-confiável / janela sem foco. Re-tenta no próximo clique.
+             // NotAllowedError/SecurityError: gesto não-confiável ou cooldown.
+             // NÃO entra em loop — só re-tenta no próximo mousedown real.
              this._lockConfirmed = false;
-             console.warn('[Input] requestPointerLock rejeitado:', err?.name || err);
+             this._pendingLock = true;
+             console.debug('[Input] requestPointerLock adiado:', err?.name || err);
            });
       }
     } catch (e) {
       this._lockConfirmed = false;
-      console.warn('[Input] requestPointerLock lançou:', e?.name || e);
+      this._pendingLock = true;
+      console.debug('[Input] requestPointerLock adiado:', e?.name || e);
     }
   }
 
   // ── Deactivation interna (usada pelo pointerlockchange) ──────────
   _internalDeactivate() {
     this.gameActive = false;
+    this._lastUnlockAt = performance.now();   // marca unlock → arma cooldown de re-lock
     document.body.classList.remove('game-active');
     this._mouseX = 0; this._mouseY = 0; this._clicked = false;
     this.onDeactivated?.();   // notifica main.js para atualizar a UI
   }
 
-  /** Liga — gameActive=true, esconde cursor, pede pointer lock */
-  activate() {
+  /**
+   * Liga — gameActive=true, esconde cursor, pede pointer lock.
+   * @param {boolean} fromGesture  Passe true SÓ quando activate() for chamado
+   *   direto de um handler de gesto real (pointerdown do overlay click-to-play).
+   *   Para resume via ESC ou respawn da lógica de jogo, deixe false: aí o GUARD
+   *   de cooldown adia o lock e o próximo mousedown real o consome — sem
+   *   SecurityError. (No 1º boot _lastUnlockAt=0, então o guard passa de boa.)
+   */
+  activate(fromGesture = false) {
     this.gameActive = true;
     document.body.classList.add('game-active');
-    this._requestLock();
+    this._requestLock(fromGesture);
   }
 
   /** Pausa manualmente — mostra cursor, libera pointer lock */
   deactivate() {
     this.gameActive = false;
+    this._lastUnlockAt = performance.now();   // marca unlock → arma cooldown de re-lock
     document.body.classList.remove('game-active');
     try { document.exitPointerLock?.(); } catch (_) {}
     this._mouseX = 0; this._mouseY = 0; this._clicked = false;
