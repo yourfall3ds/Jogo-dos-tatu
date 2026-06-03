@@ -106,6 +106,11 @@ export class SoundManager {
       pickup_item     : 'assets/Sound FX/senzu/mordendo uma fruta.wav',
       // CHIBATADA — som de impacto da arma Chibata (whip)
       chibatada       : 'assets/Sound FX/CHIBATADA.mp3',
+      // ── Tela de seleção de personagem ──
+      //  spray_bnookker fala o nome do personagem (.m4a). ui_select = whoosh
+      //  genérico (reusa swing) tocado ao escolher os demais personagens.
+      spray_bnookker  : 'assets/Sound FX/spraybnookker.m4a',
+      ui_select       : 'assets/Sound FX/ataque/ataque 2.wav',
       // Dash (sintetizado em runtime se faltar — fallback no WaterSystem é diferente)
       dash            : 'assets/Sound FX/voos e rushs/jump.wav',
     };

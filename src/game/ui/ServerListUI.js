@@ -214,6 +214,28 @@ export class ServerListUI {
 
   async _joinServer(roomInfo) {
     if (this._joining) return;
+
+    // ── Tela de seleção de personagem ANTES do join real ──
+    //  "Entrar" abre a CharacterSelectScreen; o "JOGAR" dela chama de volta
+    //  o fluxo de join/spawn (this._doJoinFlow) com o avatar escolhido.
+    //  Mantém o fluxo original 100% — só insere a tela no meio.
+    const css = window._charSelectScreen;
+    if (css && !this._inCharSelect) {
+      this._inCharSelect = true;
+      css.show(async (character) => {
+        this._inCharSelect = false;
+        // guarda o avatar escolhido pra aplicar via CharacterSwapper após o spawn
+        this._pendingAvatar = character || null;
+        await this._doJoinFlow(roomInfo);
+      });
+      return;
+    }
+    this._inCharSelect = false;
+    await this._doJoinFlow(roomInfo);
+  }
+
+  async _doJoinFlow(roomInfo) {
+    if (this._joining) return;
     this._joining = true;
     this._setStatus(`entrando em ${roomInfo.metadata?.name || 'servidor'}…`, '#ffd54a');
 
@@ -257,6 +279,25 @@ export class ServerListUI {
 
       if (this._onEnterGame) {
         await this._onEnterGame(this.cs.room);
+      }
+
+      // ── Aplica o avatar escolhido na CharacterSelectScreen ──
+      //  O player já existe na cena (spawn feito no _onEnterGame). O swap
+      //  opera no player REAL via CharacterSwapper. Avatar do rato (ABELHA)
+      //  é o padrão do jogo → só troca se for outro.
+      if (this._pendingAvatar) {
+        const av = this._pendingAvatar;
+        this._pendingAvatar = null;
+        try {
+          const swapper = window._charSwapper;
+          const defaultUrl = 'assets/characters/player.glb';
+          if (swapper && av.url && av.url !== defaultUrl) {
+            // não bloqueia o spawn — troca em background.
+            swapper.swap(av.url).then(r => {
+              if (r?.warning) console.warn('[ServerList] swap avatar:', r.warning);
+            }).catch(e => console.error('[ServerList] swap avatar:', e));
+          }
+        } catch (e) { console.error('[ServerList] apply avatar:', e); }
       }
     } catch (e) {
       console.error('[ServerList] join:', e);

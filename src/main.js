@@ -118,6 +118,7 @@ import { BootLoadGuard } from './game/ui/BootLoadGuard.js';
 import { attachTransfpsFlowGuard } from './game/ui/TransfpsFlowGuard.js';
 import { BattleRoyaleMode } from './game/br/BattleRoyaleMode.js';
 import { CharacterSelect3D } from './game/br/CharacterSelect3D.js';
+import { CharacterSelectScreen } from './game/ui/CharacterSelectScreen.js';
 import { LobbyHall } from './game/br/LobbyHall.js';
 import { BloodTrail }          from './game/combat/BloodTrail.js';
 import { DeathCam }            from './game/multiplayer/DeathCam.js';
@@ -1576,6 +1577,11 @@ async function init() {
   window._charSwapper = charSwapper;
   // Injeta swapper no CharSelect3D (foi criado antes)
   if (charSelect3D) charSelect3D.swapper = charSwapper;
+  // ── Tela de seleção de personagem (entra entre "Entrar" e o spawn) ──
+  //  A ServerListUI abre window._charSelectScreen ao clicar Entrar; o JOGAR
+  //  dela continua o fluxo de join/spawn aplicando o avatar via charSwapper.
+  const charSelectScreen = new CharacterSelectScreen({ cs, swapper: charSwapper });
+  window._charSelectScreen = charSelectScreen;
   //  API de debug/experimento: troca o player por qualquer GLB e mostra a
   //  taxa de compatibilidade de rig (quantas anims casaram).
   window.setPlayerModel = async (url) => {
