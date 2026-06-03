@@ -201,7 +201,17 @@ export class ColyseusClient {
     // ⚠️ MpGuard ATIVO — bloqueia spawns locais a partir de AGORA.
     MpGuard.enterRoom(this.room.roomId);
     // Aguarda primeiro state sync antes de attachar listeners de schema (.onAdd, .listen)
-    this.room.onStateChange.once(() => this._attachStateListeners());
+    this.room.onStateChange.once(() => {
+      this._attachStateListeners();
+      // SKIN/CLASSE: reenvia a classe salva (localStorage espelha o Supabase
+      // settings via CloudSave) ao entrar, pro avatar certo aparecer pros
+      // outros AO VIVO sem precisar reabrir a seleção. Handler já existe no
+      // servidor (br_class_select) — zero redeploy.
+      try {
+        const saved = parseInt(localStorage.getItem('transfps_class_id') || '0');
+        if (Number.isFinite(saved)) this.sendMessage('br_class_select', { class_id: saved });
+      } catch (_) {}
+    });
     // Listener GERAL de qualquer patch no state — re-emite 'state_change' pra UI re-renderizar.
     // Isso eh CRITICO pro Lobby: map_id/host_id/mode/br_phase chegam em deltas posteriores ao
     // welcome. Sem isso, _refreshRoomView fica preso no early-return de map_id e a sala

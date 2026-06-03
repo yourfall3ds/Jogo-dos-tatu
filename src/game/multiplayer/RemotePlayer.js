@@ -25,6 +25,21 @@ function _colorFor(id) {
 function _esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 // ─────────────────────────────────────────────────────────────────
+//  Modelo por CLASSE (skin). O class_id já trafega no PlayerState (e vive
+//  no Supabase settings via CloudSave) — quando o player escolhe outra
+//  classe/skin, todos veem o avatar trocar AO VIVO, sem redeploy do servidor.
+//  Espelha CharacterSelect3D.CLASSES. Mantém scale/foot do player.glb como
+//  default (calibração validada); novas classes podem sobrescrever.
+// ─────────────────────────────────────────────────────────────────
+const REMOTE_CLASS_MODELS = {
+  0: { url: 'assets/characters/player.glb',    scale: 1.164, height: 1.8 },
+  1: { url: 'assets/characters/azurefin.glb',  scale: 1.164, height: 1.8 },
+};
+function _classModel(classId) {
+  return REMOTE_CLASS_MODELS[classId | 0] || REMOTE_CLASS_MODELS[0];
+}
+
+// ─────────────────────────────────────────────────────────────────
 //  Mapa de animação remota  (anim_state do server -> clipe REAL do GLB)
 //
 //  O server manda PlayerStateMachine.state:
@@ -310,6 +325,10 @@ export class RemotePlayer {
       case 'held_item':
         // Player remoto trocou de arma / item na mão → re-anexa o mesh TPS.
         try { this._attachWeaponFromState(); } catch (e) { console.warn('[RemotePlayer] weapon swap fail', e?.message); }
+        break;
+      case 'class_id':
+        // Player remoto trocou de CLASSE/skin → recarrega o avatar ao vivo.
+        try { this._swapClassModel(); } catch (e) { console.warn('[RemotePlayer] class swap fail', e?.message); }
         break;
     }
     // FRENTE 7 (FIX): troca animacao quando anim_state muda.
@@ -745,9 +764,40 @@ export class RemotePlayer {
     setTimeout(() => { if (!this._disposed) this.disposeNow(); }, FADE_MS + 600);
   }
 
+  /**
+   * Troca o modelo do avatar quando o class_id muda (skin ao vivo). Descarta
+   * o GLB atual + suas animações + a arma anexada e recarrega pelo novo modelo.
+   */
+  _swapClassModel() {
+    const newId = this.state?.class_id | 0;
+    if (newId === (this._loadedClassId | 0)) return;       // já é esse modelo
+    if (this._swappingClass) return;                        // evita reentrada
+    this._swappingClass = true;
+    try {
+      // descarta arma anexada (clone TPS) — o socket vive num osso do avatar
+      // antigo, então zera a ref pra ser recriada no novo rig.
+      try { this._detachWeapon?.(); } catch (_) {}
+      try { this._weaponSocket?.dispose(); } catch (_) {}
+      this._weaponSocket = null;
+      this._weaponId = null;
+      // descarta as animationGroups do avatar antigo
+      for (const a of (this._avatarAnims || [])) { try { a.dispose(); } catch (_) {} }
+      this._avatarAnims = [];
+      // descarta a árvore do GLB antigo
+      try { this._avatarRoot?.dispose(false, true); } catch (_) {}
+      this._avatarRoot = null;
+      this._glbLoadAttempts = 0;                            // libera as tentativas de novo
+    } catch (_) {}
+    this._swappingClass = false;
+    // recarrega já com o novo class_id
+    this._tryLoadAvatar().catch((e) => console.warn('[RemotePlayer] reload avatar fail', e?.message));
+  }
+
   async _tryLoadAvatar() {
-    // FRENTE 3 EDIT 3c: usar mesmo path do Player.js local (assets/characters/player.glb)
-    const url = "assets/characters/player.glb";
+    // SKIN POR CLASSE: o modelo vem do class_id sincronizado (default = rato).
+    const model = _classModel(this.state?.class_id);
+    const url = model.url;
+    this._loadedClassId = this.state?.class_id | 0;
     const shortId = (this.playerId || "").slice(0, 8);
     this._glbLoadAttempts = (this._glbLoadAttempts || 0) + 1;
     console.log("[RemotePlayer]", shortId, "loading avatar from", url, "(attempt", this._glbLoadAttempts, "/", this._glbMaxAttempts, ")");
@@ -788,9 +838,9 @@ export class RemotePlayer {
       // nos PES, entao precisa descer -(height/2) = -0.9 pra encostar no chao — exatamente
       // o foot-offset que o Player LOCAL aplica (PlayerAnimator.js:293 _rootOffsetY=-(h/2)).
       // Sem isso o avatar remoto flutua ~0.9 acima do chao.
-      root.position.set(0, -(1.8 / 2), 0);
-      // Escala correta do player.glb Meshy (igual PlayerAnimator.js linha 291).
-      root.scaling.setAll(1.164);
+      root.position.set(0, -((model.height || 1.8) / 2), 0);
+      // Escala do modelo da classe (default = player.glb Meshy, PlayerAnimator.js:291).
+      root.scaling.setAll(model.scale || 1.164);
       // FIX PvP fidelidade: a capsule continua HABILITADA e PICAVEL — ela e o
       // hitbox-proxy limpo do player remoto (segue x/y/z incl. pulo via this.root).
       // So fica INVISIVEL (visibility=0). NAO usar setEnabled(false): isso a tiraria
