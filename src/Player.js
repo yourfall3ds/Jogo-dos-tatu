@@ -200,14 +200,15 @@ export class Player {
     //  reverse-depth-buffer (Z invertido espalha a precisão pelo far) +
     //  logarithmicDepthBuffer como reforço quando suportado. Mantém o
     //  far-plane pro mapão; a névoa segue escondendo o pop-in.
+    // FIX flicker SEM reverse-Z: subir minZ (0.05→0.3) + baixar maxZ (2500→1500)
+    // já corta a razão far/near de 50000:1 pra 5000:1 — depth precision suficiente
+    // pra matar o flash preto ao rotacionar, e o mapão continua visível com a
+    // névoa escondendo o pop-in. NÃO ligar useReverseDepthBuffer: no WebGPU ele
+    // estoura o limite de 16 varyings do PostProcess de Glow/highlights
+    // (fragment input 17 > 16) → quebra o pipeline e a tela toda.
     this.camera.minZ = 0.3;    // era 0.05 — sobe o near p/ encolher a razão far/near
     this.camera.maxZ = 1500;   // era 2500 — far seguro p/ ver o mapão sem estourar o depth
     this.camera.fov  = 1.38;
-    try {
-      // Reverse-Z: redistribui a precisão do depth-buffer — mata o z-fighting
-      //  e o flicker no far. Suportado em WebGL2 e WebGPU.
-      if (this.scene?.getEngine) this.scene.getEngine().useReverseDepthBuffer = true;
-    } catch (_) {}
     this.camera.inputs.clear();          // remove inputs padrão
     this.scene.activeCamera = this.camera;
 
