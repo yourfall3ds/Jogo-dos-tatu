@@ -1135,6 +1135,15 @@ async function init() {
       if (!_engineMode) window.enterEngineMode('scene');
       else window.exitEngineMode();
     }
+    // F6 → Animator · F7 → Debug de Monstros (acesso direto, sem depender do pause)
+    if (e.code === 'F6' && !e.repeat && $('start-screen').style.display === 'none') {
+      e.preventDefault();
+      animatorMode?.active ? window.closeAnimator() : window.openAnimator();
+    }
+    if (e.code === 'F7' && !e.repeat && $('start-screen').style.display === 'none') {
+      e.preventDefault();
+      monsterDebugMode?.active ? window.closeMonsterDebug() : window.openMonsterDebug('monsterPlant');
+    }
     // ESC: pause / engine mode handling
     if (e.code === 'Escape' && !e.repeat) {
       if ($('start-screen').style.display !== 'none') return; // jogo nao iniciado
