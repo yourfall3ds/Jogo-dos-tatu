@@ -62,6 +62,7 @@ export class ColyseusClient {
       'br_zone_warning': new Set(), 'br_zone_shrinking': new Set(), 'br_zone_idle': new Set(),
       'br_player_died': new Set(),
       'player_skydive': new Set(),
+      'remote_fire': new Set(),
     };
     this.ping = 0;
     this._lastInputSent = 0;
@@ -227,6 +228,8 @@ export class ColyseusClient {
     this.room.onMessage('world_object_placed', (m) => this._notify('world_object_placed', m));
     this.room.onMessage('world_object_hit', (m) => this._notify('world_object_hit', m));
     this.room.onMessage('world_object_destroyed', (m) => this._notify('world_object_destroyed', m));
+    // Som posicional de tiro/golpe do parceiro (rebroadcast do server)
+    this.room.onMessage('remote_fire', (m) => this._notify('remote_fire', m));
     // Frentes B/C
     this.room.onMessage('match_countdown', (m) => this._notify('match_countdown', m));
     this.room.onMessage('match_finished', (m) => this._notify('match_finished', m));
