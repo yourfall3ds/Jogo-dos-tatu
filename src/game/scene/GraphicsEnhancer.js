@@ -108,6 +108,29 @@ export class GraphicsEnhancer {
     console.log(`[GFX] ✨ pós-processamento ligado (Bloom+ACES+FXAA+Glow+CA${this.ssao ? '+SSAO' : ''})`);
   }
 
+  // ── VR: desliga TODO pós-processamento pesado ────────────────────
+  //  WebXR não convive com pipelines de post-process HDR/render-target
+  //  (DefaultRenderingPipeline, SSAO, SSR, GlowLayer): a sessão imersiva
+  //  fica TRAVADA no "carregando" (nenhum frame chega ao headset). Aqui
+  //  destruímos tudo isso ao entrar em VR; enableAfterVR() reconstrói ao sair.
+  disableForVR() {
+    if (this._vrDisabled) return;
+    try { this.pipeline?.dispose(); } catch (_) {}
+    try { this.ssao?.dispose(); } catch (_) {}
+    try { this.ssr?.dispose(); } catch (_) {}
+    try { this.glow?.dispose(); } catch (_) {}
+    this.pipeline = this.ssao = this.ssr = this.glow = null;
+    try { this.engine.setHardwareScalingLevel(1); } catch (_) {}
+    this._vrDisabled = true;
+    console.log('[GFX] pós-processamento DESLIGADO para VR (compat WebXR)');
+  }
+  enableAfterVR() {
+    if (!this._vrDisabled) return;
+    this._vrDisabled = false;
+    try { this._build(); } catch (e) { console.warn('[GFX] rebuild pós-VR falhou:', e?.message); }
+    console.log('[GFX] pós-processamento religado (saiu do VR)');
+  }
+
   // ── Realismo extra: IBL (reflexão/ambiente HDR) + SSR (reflexo real) ──
   //  Chamado depois do boot. IBL dá luz ambiente e reflexos realistas aos
   //  materiais PBR; SSR espelha a cena em superfícies glossy (ex: chão).

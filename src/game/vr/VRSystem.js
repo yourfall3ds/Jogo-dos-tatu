@@ -157,6 +157,12 @@ export class VRSystem {
         //  porque o mundo nunca foi carregado. Idempotente: ok chamar já em jogo.
         try { this.onEnterWorld?.(); } catch (e) { console.error("[VR] onEnterWorld", e); }
 
+        // ⭐⭐ Desliga pós-processamento pesado (pipeline HDR, bloom, SSAO, glow,
+        //  FXAA). É a causa nº1 do WebXR TRAVAR no "carregando": pipelines de
+        //  post-process com render-target não deixam frame chegar ao headset.
+        try { window._gfx?.disableForVR?.(); } catch (_) {}
+        try { this.player?._fxaa?.dispose?.(); this.player._fxaa = null; } catch (_) {}
+
         // Câmera XR controlada pelo headset → desativa o _updateCamera manual.
         try { this.player._vrControlsCamera = true; } catch (_) {}
         // Garante que a lógica de jogo roda mesmo sem pointer-lock (impossível no HMD).
@@ -174,6 +180,10 @@ export class VRSystem {
         // Arma vai pra mão direita.
         this._attachWeaponToHand();
 
+        // Painel de boas-vindas VR (mostra os controles; também prova que o
+        // render imersivo funcionou). Some ao apertar o gatilho.
+        this._showVRMenu();
+
         // Tick por frame: roda DEPOIS do player.update (que move o mesh) e ANTES
         // do render → a câmera segue a posição nova; input alimenta o próximo frame.
         if (!this._tickBound) {
@@ -185,6 +195,9 @@ export class VRSystem {
         console.log("[VR] SESSION ENCERRADA");
         try { document.body.classList.remove("vr-active"); } catch (_) {}
         try { this.player._vrControlsCamera = false; } catch (_) {}
+        // Religa o pós-processamento ao sair do VR.
+        try { window._gfx?.enableAfterVR?.(); } catch (_) {}
+        this._hideVRMenu();
         // Solta a câmera do rig e devolve a arma pra câmera FPS.
         try { if (this.xrCamera) this.xrCamera.parent = null; } catch (_) {}
         this._detachWeaponFromHand();
@@ -231,6 +244,8 @@ export class VRSystem {
       if (trigger && hand === "right") {
         trigger.onButtonStateChangedObservable.add(() => {
           if (!trigger.changes.pressed) return;
+          // Painel VR aberto → 1º gatilho FECHA o menu e começa a jogar (não atira).
+          if (trigger.pressed && this._vrMenuActive) { this._hideVRMenu(); return; }
           this._fireHeld = trigger.pressed;
           if (trigger.pressed) {
             // Semi-auto: 1 tiro por aperto (automático repete no tick).
@@ -290,6 +305,19 @@ export class VRSystem {
       this.player.yaw = Math.atan2(f.x, f.z) * 180 / Math.PI;
     } catch (_) {}
 
+    // Painel VR aberto → PAUSA locomoção/tiro (lê os controles, gatilho começa).
+    //  Mantém a câmera seguindo o player (passo 6) pra cena ficar visível.
+    if (this._vrMenuActive) {
+      k.KeyW = k.KeyS = k.KeyA = k.KeyD = k.ShiftLeft = false;
+      const p0 = this.player.mesh.position;
+      this.rig.position.set(p0.x, p0.y - this.player.HEIGHT / 2, p0.z);
+      this.rig.rotation.y = this._rigYaw;
+      // auto-dismiss de segurança (caso o mapeamento do gatilho varie no controle)
+      this._vrMenuT = (this._vrMenuT || 0) + ((this.scene.getEngine?.()?.getDeltaTime?.() || 16) / 1000);
+      if (this._vrMenuT > 15) this._hideVRMenu();
+      return;
+    }
+
     // 2) Analógico esquerdo → WASD + correr (empurrar tudo).
     const lx = this._leftAxes.x, ly = this._leftAxes.y;
     const dead = 0.22;
@@ -337,6 +365,80 @@ export class VRSystem {
       const muzzle = w._muzzlePoint?.parent ? w._muzzlePoint.getAbsolutePosition() : null;
       w._vrAimOrigin = muzzle || ptr.getAbsolutePosition().add(dir.scale(0.15));
     } catch (_) {}
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  //  Menu VR — painel 3D flutuante (boas-vindas + controles). Some no gatilho.
+  //  Também serve de PROVA de que o render imersivo funcionou (se você VÊ o
+  //  painel no headset, o WebXR está renderizando).
+  // ───────────────────────────────────────────────────────────────────
+  _showVRMenu() {
+    try {
+      if (this._vrMenu) return;
+      this._vrMenuT = 0;
+      const plane = BABYLON.MeshBuilder.CreatePlane("vrMenuPanel", { width: 1.3, height: 0.78 }, this.scene);
+      const dt = new BABYLON.DynamicTexture("vrMenuTex", { width: 1024, height: 614 }, this.scene, true);
+      dt.hasAlpha = true;
+      const ctx = dt.getContext();
+      ctx.clearRect(0, 0, 1024, 614);
+      // fundo arredondado
+      ctx.fillStyle = "rgba(10,14,28,0.92)";
+      this._roundRect(ctx, 14, 14, 996, 586, 34); ctx.fill();
+      ctx.strokeStyle = "#3a8aff"; ctx.lineWidth = 6;
+      this._roundRect(ctx, 14, 14, 996, 586, 34); ctx.stroke();
+      // título
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#7ec8ff"; ctx.font = "bold 78px Segoe UI, Arial, sans-serif";
+      ctx.fillText("🥽 TRANSFPS — VR", 512, 120);
+      // controles
+      ctx.fillStyle = "#dffaff"; ctx.font = "40px Segoe UI, Arial, sans-serif";
+      const lines = [
+        "Analógico ESQ:  andar  ·  empurrar = correr",
+        "Analógico DIR:  girar a câmera (suave)",
+        "Gatilho:  atirar     A:  pular",
+        "B:  recarregar     X / Y:  trocar arma",
+      ];
+      lines.forEach((t, i) => ctx.fillText(t, 512, 215 + i * 64));
+      ctx.fillStyle = "#ffd84a"; ctx.font = "bold 46px Segoe UI, Arial, sans-serif";
+      ctx.fillText("► aperte o GATILHO pra jogar", 512, 545);
+      dt.update();
+
+      const mat = new BABYLON.StandardMaterial("vrMenuMat", this.scene);
+      mat.diffuseTexture = dt;
+      mat.emissiveTexture = dt;        // legível sem depender de luz da cena
+      mat.opacityTexture = dt;
+      mat.emissiveColor = new BABYLON.Color3(1, 1, 1);
+      mat.disableLighting = true;
+      mat.backFaceCulling = false;
+      plane.material = mat;
+      plane.isPickable = false;
+      // Flutua à frente da câmera XR (acompanha o olhar).
+      plane.parent = this.xrCamera;
+      plane.position.set(0, 0, 1.6);   // 1.6m à frente dos olhos
+      this._vrMenu = plane;
+      this._vrMenuActive = true;
+      console.log("[VR] painel de boas-vindas exibido");
+    } catch (e) { console.error("[VR] showVRMenu", e); }
+  }
+
+  _hideVRMenu() {
+    this._vrMenuActive = false;
+    try {
+      this._vrMenu?.material?.diffuseTexture?.dispose?.();
+      this._vrMenu?.material?.dispose?.();
+      this._vrMenu?.dispose?.();
+    } catch (_) {}
+    this._vrMenu = null;
+  }
+
+  _roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
   }
 
   // ───────────────────────────────────────────────────────────────────
