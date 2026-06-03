@@ -13,9 +13,26 @@ let _client = null;
 let _initPromise = null;
 let _config = null;
 
+function _isProd() {
+  const h = (typeof location !== 'undefined') ? location.hostname : '';
+  return h !== 'localhost' && h !== '127.0.0.1' && h !== '';
+}
+
+const HARDCODED_CONFIG = {
+  SUPABASE_URL: 'https://myylkpoisqijfnptlnyk.supabase.co',
+  SUPABASE_ANON_KEY:
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15eWxrcG9pc3FpamZucHRsbnlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY0MzQxNTIsImV4cCI6MjA3MjAxMDE1Mn0.me7aXILmeIHvjbkYWUVczOZt7gxrz8Rddv515Xa9ZTU',
+  TRANSFPS_MP_WS_URL: 'wss://app.overpixel.online/transfps-mp',
+};
+
 async function _loadConfig() {
   if (_config) return _config;
-  // Tenta buscar do config-server local (porta 3099)
+  // Em prod: usa hardcoded direto (config-server local nao existe).
+  // Em dev: tenta buscar do config-server local (porta 3099).
+  if (_isProd()) {
+    _config = HARDCODED_CONFIG;
+    return _config;
+  }
   try {
     const r = await fetch('http://127.0.0.1:3099/transfps-env', { signal: AbortSignal.timeout(1500) });
     if (r.ok) {
@@ -25,14 +42,10 @@ async function _loadConfig() {
         return _config;
       }
     }
-  } catch (_) { /* fallback abaixo */ }
-  // Fallback: usa URL/KEY hardcoded (mesmas do .env, schema transfps)
-  _config = {
-    SUPABASE_URL: 'https://myylkpoisqijfnptlnyk.supabase.co',
-    SUPABASE_ANON_KEY:
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15eWxrcG9pc3FpamZucHRsbnlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY0MzQxNTIsImV4cCI6MjA3MjAxMDE1Mn0.me7aXILmeIHvjbkYWUVczOZt7gxrz8Rddv515Xa9ZTU',
-    TRANSFPS_MP_WS_URL: 'wss://app.overpixel.online/transfps-mp',
-  };
+  } catch (e) {
+    console.warn('[SupabaseClient] config-server local indisponivel, usando hardcoded:', e.message);
+  }
+  _config = HARDCODED_CONFIG;
   return _config;
 }
 
@@ -45,8 +58,9 @@ export async function getSupabase() {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
-        detectSessionInUrl: true,
-        flowType: 'pkce',
+        detectSessionInUrl: false, // popup faz manualmente via BroadcastChannel
+        flowType: 'implicit', // PKCE quebrava entre opener<->popup. Implicit retorna
+                              // access_token direto no hash, sem code_verifier roundtrip.
         storage: window.localStorage,
         storageKey: 'transfps-auth',
       },
