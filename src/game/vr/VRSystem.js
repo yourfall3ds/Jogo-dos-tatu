@@ -27,22 +27,32 @@ export class VRSystem {
     this.cs = cs;
     this.xr = null;
     this.xrCamera = null;
-    this._movement = null;           // feature nativa de locomoção (move a câmera XR)
+    this.rig = null;                 // nó-pai da câmera XR (movemos p/ seguir o personagem)
     this.leftController = null;
     this.rightController = null;
-    this.rightGrip = null;           // nó do grip da mão direita (onde a arma encaixa)
-    this.rightPointer = null;        // nó de mira do controle direito (direção do tiro)
+    this.rightGrip = null;
+    this.rightPointer = null;
+    this.leftGrip = null;
     this.inSession = false;
     this.isQuest = this._detectQuest();
     this.isSupported = false;
-    this.lastError = null;       // último motivo de falha (mostrado na tela do Quest)
+    this.lastError = null;
 
     this._fireHeld = false;
     this._tickBound = null;
 
-    // Sobe o corpo pra a câmera (cabeça) ficar mais perto/encaixada nele.
-    // Maior = corpo mais alto (câmera mais "dentro"/baixa no corpo). Ajustável.
-    this._bodyYOffset = 0.32;
+    // Analógicos (cacheados por observable, lidos no tick).
+    this._leftAxes = { x: 0, y: 0 };
+    this._rightAxes = { x: 0, y: 0 };
+    this._rigYaw = 0;                 // giro acumulado (snap/smooth turn)
+    this._turnSpeed = 2.2;           // rad/s na deflexão total (~126°/s)
+
+    // Em qual osso da mão a arma fica (após inverter o IK, a mão que segura o
+    // controle direito é a "LeftHand" do modelo). Ajustável.
+    this._gunHandBone = "LeftHand";
+
+    // Calibração de altura: escala do corpo medida pela altura do headset.
+    this._heightCalibrated = false;
   }
 
   _detectQuest() {
@@ -95,39 +105,10 @@ export class VRSystem {
       // Desliga o laser de seleção (atrapalha num shooter; menus usam DOM).
       try { fm?.disableFeature?.(BABYLON.WebXRFeatureName.POINTER_SELECTION); } catch (_) {}
 
-      // ⭐ LOCOMOÇÃO NATIVA do Babylon (move a câmera XR CORRETAMENTE via reference
-      //  space — reparentar a câmera não funciona, ela ignora o pai). Stick esq =
-      //  andar (relativo à cabeça); stick dir = girar SMOOTH. O corpo segue a
-      //  câmera (1ª pessoa) no _tick.
-      try {
-        const DZ = 0.25;  // zona morta (mata drift)
-        this._movement = fm?.enableFeature(BABYLON.WebXRFeatureName.MOVEMENT, "latest", {
-          xrInput: this.xr.input,
-          movementSpeed: 0.06,
-          rotationSpeed: 0.20,           // giro contínuo (smooth, não snap)
-          movementOrientationFollowsViewerPose: true,
-          // Força ESQUERDO = andar, DIREITO = girar a câmera (estava invertido).
-          customRegistrationConfigurations: [
-            {
-              allowedComponentTypes: ["thumbstick"],
-              forceHandedness: "left",
-              axisChangedHandler: (axes, state) => {
-                state.moveX = Math.abs(axes.x) > DZ ? axes.x : 0;
-                state.moveY = Math.abs(axes.y) > DZ ? axes.y : 0;
-              },
-            },
-            {
-              allowedComponentTypes: ["thumbstick"],
-              forceHandedness: "right",
-              axisChangedHandler: (axes, state) => {
-                state.rotateX = Math.abs(axes.x) > DZ ? axes.x : 0;
-                state.rotateY = Math.abs(axes.y) > DZ ? axes.y : 0;
-              },
-            },
-          ],
-        });
-        console.log("[VR] feature de movimento nativa ligada:", !!this._movement);
-      } catch (e) { console.warn("[VR] feature de movimento falhou:", e?.message); }
+      // Locomoção é PELA FÍSICA do jogo (stick → W/A/S/D → player anda/pula/corre/
+      // dasha no chão, horizontal). A câmera (rig) SEGUE a cabeça do personagem.
+      // Nada de feature "voadora" — ela ignorava física e voava ao olhar pra cima.
+      this.rig = new BABYLON.TransformNode("vrRig", this.scene);
 
       this._wireSession();
       this._wireControllers();
@@ -202,9 +183,14 @@ export class VRSystem {
         // Garante que a lógica de jogo roda mesmo sem pointer-lock (impossível no HMD).
         try { this.player.input.gameActive = true; document.body.classList.add("game-active"); } catch (_) {}
 
-        // 1ª pessoa: o CORPO (player.mesh) segue a CÂMERA XR a cada frame (_tick).
-        //  A locomoção move a câmera (feature nativa); o personagem fica embaixo
-        //  dela com a cabeça na câmera. NÃO reparentamos a câmera (ela ignora o pai).
+        // Prende a câmera XR no rig. O personagem anda PELA FÍSICA (stick→WASD no
+        // _tick) e a câmera (rig) segue a cabeça dele a cada frame (1ª pessoa).
+        try {
+          this._rigYaw = 0;
+          this.rig.rotation.set(0, 0, 0);
+          this.xrCamera.parent = this.rig;
+        } catch (_) {}
+        this._heightCalibrated = false;   // recalibra a altura nos primeiros frames
 
         // Encarna o avatar: corpo visível, cabeça oculta, arma na mão (TPS) e IK
         // dos braços seguindo os controles.
@@ -230,6 +216,7 @@ export class VRSystem {
         try { this.scene.shadowsEnabled = true; } catch (_) {}
         try { this.scene.getEngine?.()?.setHardwareScalingLevel?.(this._savedScaling ?? 1); } catch (_) {}
         this._hideVRMenu();
+        try { if (this.xrCamera) this.xrCamera.parent = null; } catch (_) {}
         // Desfaz o avatar VR (mostra cabeça de volta, desliga IK, esconde corpo).
         this._teardownVRAvatar();
         this._detachWeaponFromHand();
@@ -253,6 +240,7 @@ export class VRSystem {
         const hand = mc.handedness;
         if (hand === "left") {
           this.leftController = controller;
+          this.leftGrip = controller.grip || controller.pointer || null;
         } else if (hand === "right") {
           this.rightController = controller;
           this.rightGrip = controller.grip || controller.pointer || null;
@@ -287,16 +275,28 @@ export class VRSystem {
         });
       }
 
-      // ── Grip: pular (qualquer mão, alternativo ao A) ────────────────
+      // ── Grip: direita = pular · esquerda = DASH ─────────────────────
       if (squeeze) {
         squeeze.onButtonStateChangedObservable.add(() => {
-          if (!squeeze.changes.pressed) return;
-          this._setJump(squeeze.pressed);
+          if (!squeeze.changes.pressed || !squeeze.pressed) return;
+          if (hand === "left") this._dash();        // grip esquerdo → dash
+          else this._setJump(true);                 // grip direito → pula
         });
+        if (hand === "right") {
+          // soltar o grip direito solta o "pulo segurado"
+          squeeze.onButtonStateChangedObservable.add(() => {
+            if (squeeze.changes.pressed && !squeeze.pressed) this._setJump(false);
+          });
+        }
       }
 
-      // Analógicos: locomoção (andar/correr) + giro são da FEATURE nativa de
-      // movimento do Babylon (ligada no init). Não tratamos aqui pra não duplicar.
+      // ── Analógicos: cacheia eixos (lidos no _tick) ──────────────────
+      if (thumb) {
+        thumb.onAxisValueChangedObservable.add((v) => {
+          if (hand === "left")  this._leftAxes  = { x: v.x, y: v.y };
+          else                  this._rightAxes = { x: v.x, y: v.y };
+        });
+      }
 
       // ── Botões de face (A/B na direita, X/Y na esquerda) ────────────
       const aOrX = mc.getComponent("a-button") || mc.getComponent("x-button");
@@ -320,70 +320,107 @@ export class VRSystem {
   }
 
   // ───────────────────────────────────────────────────────────────────
-  //  Tick por frame: aplica input cacheado + faz a câmera seguir o player
+  //  Tick por frame: stick → FÍSICA do jogo (anda/corre no chão) + a câmera
+  //  (rig) segue a cabeça do personagem. Roda em onBeforeRender, DEPOIS do
+  //  player.update (que moveu o mesh) → câmera segue a posição nova.
   // ───────────────────────────────────────────────────────────────────
   _tick() {
     if (!this.inSession || !this.xrCamera || !this.player?.mesh) return;
     const k = this.player.input.keys;
-    if (k) k.KeyW = k.KeyS = k.KeyA = k.KeyD = k.ShiftLeft = false;  // locomoção é da feature, não WASD
+    const dt = Math.min((this.scene.getEngine?.()?.getDeltaTime?.() || 16) / 1000, 0.05);
 
-    // 1) O CORPO segue a CÂMERA → 1ª PESSOA. A feature move a câmera XR; aqui
-    //    plantamos o personagem com a CABEÇA na câmera (cabeça oculta), corpo
-    //    pendurado embaixo. Usamos globalPosition (posição REAL no mundo, já com
-    //    a locomoção) — ler getAbsolutePosition dava posição errada → "boneco solto".
-    let cam = null;
-    try { cam = this.xrCamera.globalPosition; } catch (_) {}
-    if (cam) {
-      const m = this.player.mesh;
-      m.position.set(cam.x, cam.y - this.player.HEIGHT / 2 + (this._bodyYOffset || 0), cam.z);
-      if (this.player._cc) {
-        try { this.player._cc.setPosition(m.position); this.player._cc.setVelocity(BABYLON.Vector3.Zero()); } catch (_) {}
-      }
-    }
-
-    // 2) Direção da cabeça → facing do corpo e mira (anda/atira pra onde olha).
+    // 1) Direção da cabeça → "frente" da locomoção (HORIZONTAL: player.update usa
+    //    fwd=(sin,0,cos) → olhar pra cima NÃO faz voar).
     try {
       const f = this.xrCamera.getDirection(BABYLON.Axis.Z);
       this.player.yaw = Math.atan2(f.x, f.z) * 180 / Math.PI;
     } catch (_) {}
 
-    // 2.5) Anima o ANDAR: o corpo seguia a câmera em pose PARADA (parecia voar).
-    //  Medimos o quanto a câmera andou e setamos W/A/S/D (relativo ao facing) →
-    //  o player.update toca a animação de caminhada/corrida na direção certa.
-    //  (As teclas só dirigem a ANIMAÇÃO; a posição é a da câmera, setada acima.)
-    if (cam) {
-      const dt = Math.min((this.scene.getEngine?.()?.getDeltaTime?.() || 16) / 1000, 0.05);
-      if (this._lastCamPos && dt > 0) {
-        const dx = cam.x - this._lastCamPos.x, dz = cam.z - this._lastCamPos.z;
-        const sp = Math.hypot(dx, dz) / dt;          // m/s horizontal
-        if (sp > 0.5 && k) {
-          const yr = this.player.yaw * Math.PI / 180;
-          const fwd = dx * Math.sin(yr) + dz * Math.cos(yr);   // componente p/ frente
-          const rgt = dx * Math.cos(yr) - dz * Math.sin(yr);   // componente lateral
-          const t = Math.max(Math.abs(fwd), Math.abs(rgt)) * 0.35;
-          k.KeyW = fwd > t; k.KeyS = fwd < -t;
-          k.KeyD = rgt > t; k.KeyA = rgt < -t;
-          k.ShiftLeft = sp > 4.5;                    // rápido → corre
-        }
+    // 2) Analógico ESQ → W/A/S/D (a física do player anda/pula/corre no chão).
+    if (k) {
+      const lx = this._leftAxes.x, ly = this._leftAxes.y;
+      const dzn = 0.3, mag = Math.hypot(lx, ly);
+      if (mag < dzn || this._vrMenuActive) {
+        k.KeyW = k.KeyS = k.KeyA = k.KeyD = k.ShiftLeft = false;
+      } else {
+        k.KeyW = ly < -dzn; k.KeyS = ly > dzn;
+        k.KeyA = lx < -dzn; k.KeyD = lx > dzn;
+        k.ShiftLeft = mag > 0.9;     // empurrar tudo = correr
       }
-      this._lastCamPos = { x: cam.x, y: cam.y, z: cam.z };
     }
 
-    // Painel VR aberto → pausa o tiro (gatilho fecha o painel).
+    // 3) Analógico DIR → giro SMOOTH (rotaciona o rig; a cabeça gira no mundo).
+    const rx = this._rightAxes.x, td = 0.2;
+    if (!this._vrMenuActive && Math.abs(rx) > td) {
+      const amt = (Math.abs(rx) - td) / (1 - td);
+      this._rigYaw += Math.sign(rx) * amt * this._turnSpeed * dt;
+    }
+
     if (this._vrMenuActive) {
-      this._vrMenuT = (this._vrMenuT || 0) + ((this.scene.getEngine?.()?.getDeltaTime?.() || 16) / 1000);
+      this._vrMenuT = (this._vrMenuT || 0) + dt;
       if (this._vrMenuT > 15) this._hideVRMenu();
-      return;
+    } else {
+      // 4) Tiro automático segurando o gatilho.
+      if (this._fireHeld && this.player.weapon?.getCurrentWeapon?.()?.automatic) this._fire();
+      // 5) Mira (direção do controle) + IK dos braços.
+      this._updateAimRay();
+      this._updateVRAvatar();
     }
 
-    // 3) Tiro automático enquanto segura o gatilho.
-    if (this._fireHeld && this.player.weapon?.getCurrentWeapon?.()?.automatic) this._fire();
+    // 6) Calibra a altura uma vez (escala o corpo pra a sua altura real).
+    if (!this._heightCalibrated) this._calibrateHeight();
 
-    // 4) Raio de mira da arma (direção do controle direito).
-    this._updateAimRay();
+    // 7) CÂMERA segue a cabeça do personagem (1ª pessoa). xz travado sobre o
+    //    personagem; y acompanha o pulo (mesh sobe → câmera sobe).
+    this._followHead();
+  }
 
-    // 5) Avatar: mãos do personagem seguem os controles (IK) + cabeça oculta.
-    this._updateVRAvatar();
+  // Câmera (rig) sobre a cabeça do personagem. Cancela o deslocamento físico do
+  // headset no plano (XZ) usando a posição GLOBAL real (getAbsolutePosition dava
+  // valor errado → 3ª pessoa). O Y vem do mesh (pulo) + altura real do headset.
+  _followHead() {
+    const m = this.player.mesh.position;
+    this.rig.rotation.y = this._rigYaw;
+    // y do rig = pé do personagem; o headset soma a altura real → olhos na altura certa.
+    this.rig.position.set(m.x, m.y - this.player.HEIGHT / 2, m.z);
+    try {
+      this.rig.computeWorldMatrix(true);
+      this.xrCamera.computeWorldMatrix(true);
+      const cw = this.xrCamera.globalPosition;
+      this.rig.position.x += m.x - cw.x;   // trava XZ da câmera no personagem
+      this.rig.position.z += m.z - cw.z;
+    } catch (_) {}
+  }
+
+  // Calibra a altura: escala o corpo pra que a cabeça do modelo fique na altura
+  // dos seus olhos reais (headset). Assim o esqueleto bate com a sua altura e o
+  // IK dos braços alcança os controles naturalmente.
+  _calibrateHeight() {
+    try {
+      const eye = this.xrCamera?.position?.y;   // altura dos olhos acima do chão (local-floor)
+      if (!eye || eye < 0.5) return;            // ainda sem pose válida
+      const root = this.player?.animator?.root;
+      if (!root) return;
+      const baseScale = this._baseModelScale || (this._baseModelScale = root.scaling.x || 1);
+      // modelo foi desenhado p/ ~1.7m de olhos; escala proporcional à sua altura.
+      const factor = Math.max(0.7, Math.min(1.4, eye / 1.7));
+      root.scaling.setAll(baseScale * factor);
+      this._heightCalibrated = true;
+      console.log("[VR] altura calibrada: olhos", eye.toFixed(2), "m → escala", (baseScale * factor).toFixed(3));
+    } catch (_) {}
+  }
+
+  // Dash: injeta o double-tap na direção do movimento (reaproveita o dash do jogo).
+  _dash() {
+    try {
+      const inp = this.player?.input; if (!inp) return;
+      const k = inp.keys;
+      if (k.KeyS) inp._sDoubleTap = true;
+      else if (k.KeyA) inp._aDoubleTap = true;
+      else if (k.KeyD) inp._dDoubleTap = true;
+      else inp._wDoubleTap = true;     // parado/andando → dash pra frente
+      this._pulse(this.leftController, 0.4, 40);
+    } catch (_) {}
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -397,8 +434,15 @@ export class VRSystem {
     try {
       p._tpsMode = true;                  // usa o TPS: arma encaixa no osso da mão (orientação tunada)
       p.animator?.setVisible?.(true);     // mostra o corpo
-      p._updateWeaponVisibility?.();      // anexa a arma TPS na mão direita
+      p._updateWeaponVisibility?.();      // anexa a arma TPS (na mão direita por padrão)
       if (p.weapon) p.weapon._vrMode = true;  // tiro mira pelo controle, sem mexer na câmera XR
+      // Move a arma pra a mão que segura o controle direito (após inverter o IK,
+      // essa é a "LeftHand" do modelo). Reusa a orientação TPS calibrada no PC.
+      try {
+        const cur = p.weapon?.getCurrentWeapon?.();
+        const tps = cur && p.weapon?.getTPSWeaponMesh?.(cur.id);
+        if (tps && p.animator) { p.animator.attachWeapon(tps, this._gunHandBone); cur.applyToMesh?.(tps, true); }
+      } catch (_) {}
       this._hideHead(true);               // some com a cabeça (senão tampa a visão)
     } catch (e) { console.error("[VR avatar]", e); }
     this._setupArmIK();
