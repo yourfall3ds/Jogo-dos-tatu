@@ -404,11 +404,26 @@ export class ColyseusClient {
     // held_item = o que está REALMENTE na mão: um construível da hotbar em modo
     // de colocar (player._heldItem, ex.: 'asset:crate') tem prioridade; senão a arma.
     const heldItem = (typeof player._heldItem === 'string' && player._heldItem) ? player._heldItem : weaponId;
+    // ── anim_state = LOCOMOÇÃO real (idle/walk/run), NÃO o estado do FSM de combate.
+    //    O PlayerStateMachine só conhece armed/unarmed/sword/attacking/... — nunca
+    //    'walk'/'run'. Mandar o FSM aqui fazia o RemotePlayer._maybePlayFootstep
+    //    (que casa anim_state.includes('walk'|'run')) NUNCA tocar passos, e o
+    //    matcher de animação do GLB remoto também nunca encontrava walk/run.
+    //    Deriva da velocidade horizontal + sprint pra os parceiros OUVIREM os passos
+    //    e verem a anim de corrida/caminhada do avatar. ──
+    const _vx = player._vx || 0, _vz = player._vz || 0;
+    const _speed = Math.hypot(_vx, _vz);
+    const _grounded = (player.isGrounded !== false);
+    let animState;
+    if (!_grounded)                          animState = 'fall';
+    else if (player._sprinting || _speed > 6.5) animState = 'run';
+    else if (_speed > 0.8)                   animState = 'walk';
+    else                                     animState = 'idle';
     this.room.send('input', {
       x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2),
       ry: +(player.yaw || 0).toFixed(1),
       vy: +(player.velY || 0).toFixed(1),
-      state: player.stateMachine?.state || 'idle',
+      state: animState,
       weapon: weaponId,
       held_item: heldItem,
     });

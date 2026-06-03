@@ -1378,8 +1378,8 @@ async function init() {
 
     let g = scene.getMeshByName("openworld_ground");
     if (g) { g.setEnabled(true); return g; }
-    // subdivisions:1 — plano liso basta, menos vertices = menos z-fight
-    g = BABYLON.MeshBuilder.CreateGround("openworld_ground", { width: 200, height: 200, subdivisions: 1 }, scene);
+    // 4x maior: 200 -> 800. subdivisions:2 (ainda plano, pouco z-fight).
+    g = BABYLON.MeshBuilder.CreateGround("openworld_ground", { width: 800, height: 800, subdivisions: 2 }, scene);
     g.position.y = 0;
     g.checkCollisions = true;
     g.receiveShadows = true;
@@ -1399,10 +1399,13 @@ async function init() {
     // Caso contrario mantem a cor solida (sem quebrar nada).
     try {
       if (BABYLON.GridMaterial) {
+        // Grid em unidades de mundo (gridRatio em metros), entao escala junto
+        // com o plano 800x800 sem esticar/distorcer. Textura procedural =
+        // sem risco de 404, estavel no WebGPU.
         const grid = new BABYLON.GridMaterial("openworld_ground_grid", scene);
-        grid.majorUnitFrequency = 10;
+        grid.majorUnitFrequency = 10;   // linha grossa a cada 10 celulas
         grid.minorUnitVisibility = 0.35;
-        grid.gridRatio = 2;
+        grid.gridRatio = 4;             // celula de 4m (plano grande -> menos linhas)
         grid.backFaceCulling = true;
         grid.mainColor = new BABYLON.Color3(0.20, 0.22, 0.27);
         grid.lineColor = new BABYLON.Color3(0.30, 0.45, 0.55);

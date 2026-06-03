@@ -20,12 +20,12 @@ export class SkillMapExtras {
 
   build() {
     this._buildMaterials();
-    this._buildWallJumpCorridor();
-    this._buildDashRing();
-    this._buildSuspendedPlatforms();
-    this._buildRamps();
-    this._buildSpeedAlley();
-    DEBUG.log(`[SkillMap] ${this.created.length} elementos extras criados`);
+    // OPEN_WORLD limpo: SO as torres altas de escalada (wall-jump vertical).
+    // Removidos os 27 objetos pequenos forcados (dash ring, plataformas
+    // suspensas, rampas e pads/flags) — poluiam o mapa aberto.
+    this._buildWallJumpCorridor();  // corredor de paredes (escalada media)
+    this._buildSpeedAlley();        // torres paralelas H=28 (escalada alta)
+    DEBUG.log(`[SkillMap] ${this.created.length} torres de escalada criadas`);
   }
 
   _buildMaterials() {
@@ -72,8 +72,7 @@ export class SkillMapExtras {
       this._box(`wj_zigL_${i}`, 1.0, 8 + i * 1.5, 4, baseX + offset - 2.5, 4 + i * 0.7, baseZ + i * 5, this.mats.skill1);
       this._box(`wj_zigR_${i}`, 1.0, 8 + i * 1.5, 4, baseX + offset + 2.5, 4 + i * 0.7, baseZ + i * 5, this.mats.skill1);
     }
-    // base/entrada cyan
-    this._box('wj_zigEntry', 6, 0.3, 4, baseX, 0.15, baseZ - 5, this.mats.accent);
+    // (pad de entrada 'wj_zigEntry' removido — so as paredes de escalada)
   }
 
   // ── Anel de dash (passagem fina + paredes acima/abaixo) ──
@@ -145,12 +144,6 @@ export class SkillMapExtras {
     this._box('spdAlley_L', W, H, 8, cx - GAP/2, H/2, cz, this.mats.skill1);
     this._box('spdAlley_R', W, H, 8, cx + GAP/2, H/2, cz, this.mats.skill1);
     this._box('spdAlley_back', GAP + W*2, H, W, cx, H/2, cz + 4.5, this.mats.wall);
-    // chão da entrada
-    this._box('spdAlley_floor', GAP + W*2, 0.3, 4, cx, 0.15, cz - 5, this.mats.accent);
-    // bandeira no topo
-    const flag = BABYLON.MeshBuilder.CreateBox('spdAlley_flag', { size: 1.2 }, this.scene);
-    flag.position.set(cx, H + 1, cz);
-    flag.material = this.mats.accent;
-    this.created.push(flag);
+    // (pad 'spdAlley_floor' e bandeira 'spdAlley_flag' removidos — so as torres)
   }
 }

@@ -24,6 +24,104 @@ function _colorFor(id) {
 
 function _esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
+// ─────────────────────────────────────────────────────────────────
+//  Mapa de animação remota  (anim_state do server -> clipe REAL do GLB)
+//
+//  O server manda PlayerStateMachine.state:
+//    'unarmed' | 'idle' | 'moving' | 'armed' | 'sword' |
+//    'attacking' | 'shooting' | 'stunned' | 'knockdown' | 'dodging'
+//
+//  O GLB (assets/characters/player.glb, mesmo do player local) tem 16
+//  AnimationGroups com nomes do Meshy AI que NAO batem com o conteudo.
+//  A tabela abaixo usa a CALIBRAÇÃO do usuario (igual ao comentario do
+//  PlayerAnimator.js) — qual clipe Meshy realmente faz o que:
+//
+//    Jump_Down_from_Wall            -> Parado (idle REAL)
+//    Walk_Backward_While_Shooting   -> Andando (walk REAL)
+//    Walk_Forward_with_Bow_Aimed    -> Correndo mirando
+//    Running                        -> Correndo + recarregando
+//    Archery_Shot_1                 -> Tiro de arco (shoot)
+//    Run_and_Shoot                  -> Tiro de arco 2
+//    Parkour_Vault_with_Roll        -> Roll / morte
+//    Roll_Dodge_1                   -> Esquiva (dodge)
+//
+//  Por isso o resolver NÃO usa includes() na string crua (causava
+//  'idle' -> Idle_5 = PULO, e 'moving'/'armed'/... -> nenhum match =
+//  avatar congelado). Aqui cada anim_state aponta pro NOME REAL do clipe.
+// ─────────────────────────────────────────────────────────────────
+const REMOTE_ANIM_MAP = {
+  // ── estados do server (PlayerStateMachine.state) ──
+  idle      : 'Jump_Down_from_Wall',          // parado de verdade
+  unarmed   : 'Jump_Down_from_Wall',          // sem arma = parado
+  armed     : 'Jump_Down_from_Wall',          // arma equipada, parado
+  sword     : 'Jump_Down_from_Wall',          // espada equipada, parado
+  moving    : 'Walk_Backward_While_Shooting', // andar de verdade
+  shooting  : 'Archery_Shot_1',               // tiro de arco
+  attacking : 'Run_and_Shoot',                // ataque (tiro 2)
+  stunned   : 'Parkour_Vault_with_Roll',      // atordoado -> roll/queda
+  knockdown : 'Parkour_Vault_with_Roll',      // nocaute/morte -> roll
+  dodging   : 'Roll_Dodge_1',                 // esquiva
+
+  // ── aliases p/ nomes "limpos" (PlayerAnimator local / futuro server) ──
+  walk      : 'Walk_Backward_While_Shooting',
+  walk_aim  : 'Walk_Forward_with_Bow_Aimed',
+  walk_back : 'Walk_Backward_with_Bow_Aimed',
+  run       : 'Running',
+  run_fast  : 'Running',
+  run_shoot : 'Run_and_Shoot',
+  run_reload: 'Running_Reload',
+  reload    : 'Running_Reload',
+  jump      : 'Regular_Jump',
+  falling   : 'Jump_Over_Obstacle_2',
+  fall      : 'Jump_Over_Obstacle_2',
+  wall_ready: 'Climb_Stairs',
+  wall_jump : 'Regular_Jump',
+  roll      : 'Parkour_Vault_with_Roll',
+  shoot     : 'Archery_Shot_1',
+  aim       : 'Walk_Forward_with_Bow_Aimed',
+  aim_idle  : 'Walk_Forward_with_Bow_Aimed',
+  aim_walk  : 'Walk_Forward_with_Bow_Aimed',
+  shoot_back: 'Walk_Backward_with_Bow_Aimed',
+  dead      : 'Parkour_Vault_with_Roll',
+  death     : 'Parkour_Vault_with_Roll',
+  dodge     : 'Roll_Dodge_1',
+  stun      : 'Parkour_Vault_with_Roll',
+};
+
+const REMOTE_DEFAULT_ANIM = 'Jump_Down_from_Wall'; // fallback = idle REAL
+
+/**
+ * Resolve um anim_state cru (do server) para a AnimationGroup REAL do GLB.
+ *   1) mapa calibrado (estado do server -> nome exato do clipe)
+ *   2) match exato pelo nome do clipe (caso o server mande o nome cru do GLB)
+ *   3) idle REAL como ultimo recurso (nunca retorna null se houver anim)
+ * @returns {object|null} AnimationGroup ou null se a lista estiver vazia.
+ */
+function _resolveRemoteAnim(rawState, animGroups) {
+  if (!animGroups || !animGroups.length) return null;
+  const findByName = (name) => {
+    if (!name) return null;
+    const low = String(name).toLowerCase();
+    return animGroups.find(a => a.name && a.name.toLowerCase() === low) || null;
+  };
+
+  const key = String(rawState == null ? 'idle' : rawState).toLowerCase().trim() || 'idle';
+
+  // 1) mapa calibrado (estado -> clipe REAL)
+  const mapped = REMOTE_ANIM_MAP[key];
+  if (mapped) {
+    const ag = findByName(mapped);
+    if (ag) return ag;
+  }
+
+  // 2) server pode ter mandado o nome cru do clipe do GLB
+  const exact = findByName(rawState);
+  if (exact) return exact;
+
+  // 3) idle REAL (ou primeira anim disponivel) — nunca congela
+  return findByName(REMOTE_DEFAULT_ANIM) || animGroups[0] || null;
+}
+
 export class RemotePlayer {
   constructor(scene, state) {
     this.scene = scene;
@@ -47,17 +145,23 @@ export class RemotePlayer {
     this.body.material = mat;
     this._bodyMat = mat;
 
-    this.eye = BABYLON.MeshBuilder.CreateBox(`remote_eye_${this.playerId}`,
-      { width: 0.10, height: 0.10, depth: 0.30 }, scene);
-    this.eye.parent = this.root;
-    this.eye.position.set(0, 1.5, 0.30);
-    const em = new BABYLON.StandardMaterial(`remote_eyem_${this.playerId}`, scene);
-    em.diffuseColor = new BABYLON.Color3(1, 1, 1);
-    em.emissiveColor = new BABYLON.Color3(1, 0.9, 0.4);
-    this.eye.material = em;
+    // ── FIX: retângulo/box indicador de mira REMOVIDO ──
+    // Antes era um box branco (this.eye) só pra indicar a frente. Agora a
+    // direção é mostrada pelo próprio avatar + arma na mão (orientado por ry,
+    // aplicado em this.root.rotation.y no update()). this.eye fica null pra
+    // não quebrar dispose/refs antigos.
+    this.eye = null;
+
+    // Slot da arma anexada na mão do avatar remoto (preenchido após GLB carregar)
+    this._weaponMesh   = null;   // clone TPS atual anexado
+    this._weaponSocket = null;   // TransformNode socket no osso da mão
+    this._weaponId     = null;   // id da arma atualmente anexada
 
     this.body._isRemotePlayer = true;
     this.body._remoteRef = this;
+    // Capsule e o hit-proxy fallback (quando o GLB falha em carregar e a capsule
+    // volta a ficar visivel). Garante que continua picavel pelo raycast PvP.
+    try { this.body.isPickable = true; } catch (_) {}
 
     // FRENTE 3: capsule ja inicia com visibility baixa (vai ser escondida total quando GLB carregar)
     try { this.body.visibility = 0.25; } catch (_) {}
@@ -123,12 +227,26 @@ export class RemotePlayer {
   }
 
   _maybePlayFootstep(state) {
-    if (!state || !state.anim_state) return;
-    const a = String(state.anim_state);
-    const isMoving = a.includes("walk") || a.includes("run");
+    if (!state) return;
+    const a = String(state.anim_state || "");
+    let isMoving = a.includes("walk") || a.includes("run");
+    let running = a.includes("run");
+    // Fallback robusto: mesmo que o anim_state nao chegue como walk/run (ex.: o
+    // server so atualizou x/z), detecta movimento real pelo DELTA de posicao
+    // horizontal (XZ) entre updates. Garante que os passos do parceiro toquem
+    // quando ele anda, independente do estado de animacao.
+    if (!isMoving) {
+      const px = this._lastStepPos;
+      if (px) {
+        const dx = (state.x || 0) - px.x, dz = (state.z || 0) - px.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > 0.0009) { isMoving = true; running = d2 > 0.02; } // ~0.03m walk / ~0.14m run
+      }
+    }
+    this._lastStepPos = { x: state.x || 0, z: state.z || 0 };
     if (!isMoving) return;
     const now = performance.now();
-    const cooldown = a.includes("run") ? 280 : 420;
+    const cooldown = running ? 280 : 420;
     if (this._lastStepT && now - this._lastStepT < cooldown) return;
     this._lastStepT = now;
     try {
@@ -168,18 +286,55 @@ export class RemotePlayer {
         this._applyDead(s.dead === true);
         break;
       case 'weapon':
-        // (opcional: trocar viewmodel — placeholder por enquanto)
+      case 'held_item':
+        // Player remoto trocou de arma / item na mão → re-anexa o mesh TPS.
+        try { this._attachWeaponFromState(); } catch (e) { console.warn('[RemotePlayer] weapon swap fail', e?.message); }
         break;
     }
-    // FRENTE 7: troca animacao quando anim_state muda
+    // FRENTE 7 (FIX): troca animacao quando anim_state muda.
+    // Usa o mapa calibrado (estado do server -> clipe REAL do GLB) em vez do
+    // antigo includes() na string crua. SEMPRE para a anim anterior e cai pra
+    // idle REAL quando o estado for vazio/desconhecido (nunca congela).
     if (field === "anim_state" && this._avatarAnims?.length) {
-      const v = newValue || s?.anim_state || "idle";
-      const match = this._avatarAnims.find(a => a.name.toLowerCase().includes(String(v).toLowerCase()));
-      if (match) {
-        this._avatarAnims.forEach(a => { try { a.stop(); } catch (_) {} });
-        try { match.start(true, 1.0); } catch (_) {}
-      }
+      const v = newValue != null ? newValue : (s?.anim_state || "idle");
+      this._playAnimState(v);
     }
+  }
+
+  /**
+   * Toca a animação correta do avatar remoto pro anim_state recebido.
+   * Resolve o clipe REAL via _resolveRemoteAnim (mapa calibrado), PARA a anim
+   * anterior e inicia a nova em loop com crossfade simples.
+   */
+  _playAnimState(rawState) {
+    const anims = this._avatarAnims;
+    if (!anims?.length) return;
+
+    const next = _resolveRemoteAnim(rawState, anims);
+    if (!next) return;
+
+    // Já está tocando esse clipe → não reinicia (evita "tremor" de restart).
+    if (this._curAnim === next && next.isPlaying) return;
+
+    // PARA todas as outras anims (out-of-if): garante que a anterior NUNCA
+    // fica rodando empilhada. Era exatamente isso que congelava o remoto.
+    for (const a of anims) {
+      if (a === next) continue;
+      try { a.stop(); } catch (_) {}
+    }
+
+    try {
+      // Crossfade simples: inicia com peso baixo e sobe (se a engine suportar).
+      next.start(true, 1.0, next.from, next.to, false);
+      if (next.setWeightForAllAnimatables) {
+        try { next.setWeightForAllAnimatables(1.0); } catch (_) {}
+      }
+    } catch (_) {
+      try { next.start(true, 1.0); } catch (_) {}
+    }
+
+    this._curAnim = next;
+    this._curAnimState = rawState;
   }
 
   _pushSnapshot() {
@@ -277,9 +432,13 @@ export class RemotePlayer {
     try {
       if (this._avatarRoot) {
         this._avatarAnims?.forEach(a => { try { a.stop(); } catch(_){} });
-        const dead = this._avatarAnims?.find(a => /dead|death|fall/i.test(a.name));
-        if (dead) { try { dead.start(false, 1.0); } catch(_){} }
-        else { this._avatarRoot.rotation.x = Math.PI / 2; }
+        // FIX: o GLB Meshy não tem clipe 'dead'/'death'/'fall'. Usa o mapa
+        // calibrado (death -> Parkour_Vault_with_Roll, mesmo do roll/morte).
+        const dead = _resolveRemoteAnim('death', this._avatarAnims || []);
+        if (dead) {
+          this._curAnim = dead;
+          try { dead.start(false, 1.0); } catch(_){}
+        } else { this._avatarRoot.rotation.x = Math.PI / 2; }
       } else {
         // Sem GLB carregado: tomba a capsule fallback.
         try { this.body.rotation.x = -Math.PI / 2; this.body.position.y = 0.4; } catch (_) {}
@@ -369,6 +528,8 @@ export class RemotePlayer {
   disposeNow() {
     if (this._disposed) return;
     this._disposed = true;
+    try { this._detachWeapon?.(); } catch (_) {}
+    try { this._weaponSocket?.dispose(); } catch (_) {}
     try { this.body?.dispose(); } catch (_) {}
     try { this.eye?.dispose(); } catch (_) {}
     try { this.aura?.dispose(); } catch (_) {}
@@ -529,11 +690,54 @@ export class RemotePlayer {
           if (n.visibility !== undefined) { try { n.isVisible = true; n.visibility = 1; } catch (_) {} }
         }
       } catch (_) {}
+
+      // ── FIX A (PvP hit): tag o avatar GLB inteiro como remote player picavel ──
+      // O raycast do WeaponSystem so dispara o branch PvP se pickedMesh._isRemotePlayer
+      // && _remoteRef. Esses markers viviam SO na capsule (this.body), que fica
+      // disabled/invisible quando o GLB carrega — entao o ray nunca os acha.
+      // Propaga os markers + isPickable=true pro root E todo mesh descendente.
+      // ── FIX B (invisivel em cima de objeto): alwaysSelectAsActiveMesh evita
+      // que o frustum culling do Babylon derrube o avatar quando elevado em
+      // geometria construida (bounding info baked na origem nao acompanha o
+      // transform do parent). Aplica no root + descendentes.
+      try {
+        root.metadata = Object.assign({}, root.metadata, { isRemotePlayer: true, remoteRef: this });
+        root._isRemotePlayer = true;
+        root._remoteRef = this;
+        if (root.isPickable !== undefined) root.isPickable = true;
+        try { root.alwaysSelectAsActiveMesh = true; } catch (_) {}
+        const all = root.getDescendants ? root.getDescendants(false) : [];
+        for (const n of all) {
+          try {
+            n._isRemotePlayer = true;
+            n._remoteRef = this;
+            // so meshes reais (com geometria) sao picaveis pelo ray
+            if (n.getClassName && /Mesh/.test(n.getClassName())) {
+              if (n.isPickable !== undefined) n.isPickable = true;
+              try { n.alwaysSelectAsActiveMesh = true; } catch (_) {}
+              try { n.refreshBoundingInfo(true); } catch (_) {}
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+
       this._avatarRoot = root;
       this._avatarAnims = result.animationGroups || [];
-      const idleAnim = this._avatarAnims.find(a => /idle/i.test(a.name));
-      if (idleAnim) { try { idleAnim.start(true, 1.0); } catch (_) {} }
-      console.log("[RemotePlayer]", shortId, "avatar carregado OK — meshes:", result.meshes.length, "anims:", this._avatarAnims.length);
+      // Para TODAS as anims antes de iniciar a correta (evita varias tocando
+      // ao mesmo tempo logo no load).
+      for (const a of this._avatarAnims) { try { a.stop(); } catch (_) {} }
+      // Debug: lista os nomes reais das AnimationGroups do GLB remoto.
+      console.log("[RemotePlayer]", shortId, "avatar carregado OK — meshes:", result.meshes.length,
+        "anims:", this._avatarAnims.length, "→", this._avatarAnims.map(a => a.name).join(", "));
+      // Inicia já com o anim_state atual do schema (ou idle REAL via resolver).
+      const initialState = this.state?.anim_state || "idle";
+      this._playAnimState(initialState);
+
+      // ── FIX: anexa a arma do player remoto na mão do avatar ──
+      // Usa weapon/held_item do state pra saber qual arma e clona o mesh TPS
+      // do player LOCAL (window._gamePlayer.weapon). Cada remote precisa do
+      // próprio clone. O socket no osso RightHand + escala já replica o local.
+      try { this._attachWeaponFromState(); } catch (e) { console.warn("[RemotePlayer] weapon attach fail", e?.message); }
     } catch (e) {
       clearTimeout(timeoutId);
       console.error("[RemotePlayer] AVATAR FALHOU", shortId, e?.message);
@@ -555,6 +759,164 @@ export class RemotePlayer {
           try { this.body.visibility = 1.0; } catch (_) {}
         } catch (_) {}
       }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  ARMA NA MÃO DO AVATAR REMOTO
+  //
+  //  Replica o que o Player local faz (Player.attachCurrentWeaponToAnimator
+  //  + PlayerAnimator.attachWeapon/getSocketNode): pega o mesh TPS da arma,
+  //  CLONA (cada remote precisa do próprio), acha o osso da mão direita no
+  //  avatar remoto, cria um socket, compensa a escala do osso e parenteia.
+  // ─────────────────────────────────────────────────────────────────
+
+  /** Resolve o id de arma a partir do state (weapon → held_item). Itens de
+   *  build (ex.: 'asset:crate') e 'unarmed' não viram arma. */
+  _resolveWeaponId() {
+    const s = this.state || {};
+    let id = s.weapon || s.held_item || '';
+    id = String(id || '').trim();
+    // held_item pode ser um construível ('asset:...') — não é arma de mão
+    if (!id || id === 'unarmed' || id.includes(':')) return null;
+    return id;
+  }
+
+  /** Acesso ao WeaponSystem do player local (fonte dos meshes TPS pra clonar). */
+  _localWeaponSystem() {
+    const p = (typeof window !== 'undefined')
+      ? (window._gamePlayer || window._player) : null;
+    return p?.weapon || null;
+  }
+
+  /** Acha o osso da mão direita no avatar remoto e devolve um TransformNode
+   *  socket filho dele (com escala compensada). Replica getSocketNode +
+   *  compensação de escala do PlayerAnimator. Devolve null se não achar. */
+  _getRemoteHandSocket(boneName = 'RightHand') {
+    if (!this._avatarRoot) return null;
+    if (this._weaponSocket) return this._weaponSocket;
+
+    const nodes = this._avatarRoot.getDescendants ? this._avatarRoot.getDescendants() : [];
+    if (!nodes.length) return null;
+    const lowerName = boneName.toLowerCase();
+
+    // 1) match direto pelo nome (RightHand / mixamorig:RightHand / hand_r ...)
+    let boneNode = nodes.find(n => {
+      const nLower = (n.name || '').toLowerCase();
+      return nLower.includes(lowerName) ||
+             (lowerName.includes('right') && nLower.includes('_r') && nLower.includes(lowerName.replace('right', '')));
+    });
+
+    // 2) fallback: sem o sufixo hand
+    if (!boneNode) {
+      boneNode = nodes.find(n => (n.name || '').toLowerCase().includes(lowerName.replace('hand', '')));
+    }
+
+    // 3) mega-fallback p/ rigs malucos: wrist/paw/finger do lado direito
+    if (!boneNode) {
+      boneNode = nodes.find(n => {
+        const nl = (n.name || '').toLowerCase();
+        return (nl.includes('wrist') || nl.includes('paw') || nl.includes('finger')) && nl.includes('r');
+      });
+    }
+
+    // 4) último recurso: anexa direto no root do avatar com offset aproximado
+    //    de mão (pra arma pelo menos APARECER, mesmo sem osso resolvível).
+    let parentNode = boneNode;
+    let approx = false;
+    if (!parentNode) {
+      parentNode = this._avatarRoot;
+      approx = true;
+      console.warn('[RemotePlayer] osso da mão não encontrado — usando offset aproximado');
+    }
+
+    const socket = new BABYLON.TransformNode(`remote_wsock_${this.playerId}`, this.scene);
+    socket.parent = parentNode;
+
+    if (!approx) {
+      // Compensa a escala absoluta do osso (esqueleto do rato tem escala ~0.01)
+      try {
+        parentNode.computeWorldMatrix(true);
+        const bs = parentNode.absoluteScaling || BABYLON.Vector3.One();
+        socket.scaling.copyFromFloats(
+          bs.x ? 1 / bs.x : 1,
+          bs.y ? 1 / bs.y : 1,
+          bs.z ? 1 / bs.z : 1
+        );
+      } catch (_) {}
+    } else {
+      // Offset aproximado de mão direita (relativo ao avatar já escalado 1.164)
+      socket.position.set(0.25, 1.1, 0.15);
+    }
+
+    this._weaponSocket = socket;
+    return socket;
+  }
+
+  /** Anexa/troca a arma na mão conforme o state atual. */
+  _attachWeaponFromState() {
+    if (!this._avatarRoot) return;   // só depois do GLB carregar
+    const id = this._resolveWeaponId();
+
+    // Sem arma (unarmed / item de build): remove a que estiver anexada.
+    if (!id) { this._detachWeapon(); return; }
+    // Mesma arma já anexada: nada a fazer.
+    if (id === this._weaponId && this._weaponMesh) return;
+
+    const ws = this._localWeaponSystem();
+    if (!ws?.getTPSWeaponMesh) return;          // sistema local ainda não pronto
+    const srcMesh = ws.getTPSWeaponMesh(id);
+    if (!srcMesh) {
+      // arma desconhecida (ex.: skin ainda não carregada) — limpa a antiga
+      this._detachWeapon();
+      this._weaponId = null;
+      return;
+    }
+
+    const socket = this._getRemoteHandSocket('RightHand');
+    if (!socket) return;
+
+    // Cada RemotePlayer precisa do PRÓPRIO clone (não pode reusar o tps do local).
+    let clone = null;
+    try {
+      clone = srcMesh.clone(`rweap_${this.playerId}_${id}`, null, false);
+    } catch (_) { clone = null; }
+    if (!clone) return;
+
+    // Substitui a arma antiga.
+    this._detachWeapon();
+
+    clone.parent = socket;
+    // Garante visível + não-picável (não deve atrapalhar raycast PvP).
+    try {
+      clone.setEnabled(true);
+      if (clone.isPickable !== undefined) clone.isPickable = false;
+      const kids = clone.getChildMeshes ? clone.getChildMeshes() : [];
+      for (const m of kids) {
+        try { m.setEnabled(true); m.isVisible = true; m.isPickable = false; } catch (_) {}
+      }
+    } catch (_) {}
+
+    // Aplica offset/rotação/escala TPS da arma (igual o local via applyToMesh(_, true)).
+    try {
+      const ws2 = this._localWeaponSystem();
+      const weaponRef = ws2?.weapons?.find?.(w => w.id === id);
+      weaponRef?.applyToMesh?.(clone, true);
+    } catch (_) {}
+
+    this._weaponMesh = clone;
+    this._weaponId   = id;
+  }
+
+  /** Remove e descarta a arma atualmente anexada. */
+  _detachWeapon() {
+    if (this._weaponMesh) {
+      try {
+        const kids = this._weaponMesh.getChildMeshes ? this._weaponMesh.getChildMeshes() : [];
+        for (const m of kids) { try { m.dispose(); } catch (_) {} }
+        this._weaponMesh.dispose();
+      } catch (_) {}
+      this._weaponMesh = null;
     }
   }
 
