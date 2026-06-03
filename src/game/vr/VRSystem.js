@@ -39,6 +39,10 @@ export class VRSystem {
 
     this._fireHeld = false;
     this._tickBound = null;
+
+    // Sobe o corpo pra a câmera (cabeça) ficar mais perto/encaixada nele.
+    // Maior = corpo mais alto (câmera mais "dentro"/baixa no corpo). Ajustável.
+    this._bodyYOffset = 0.32;
   }
 
   _detectQuest() {
@@ -397,8 +401,12 @@ export class VRSystem {
       const rFore = skel.bones.find(b => b.name === "RightForeArm");
       const lFore = skel.bones.find(b => b.name === "LeftForeArm");
       const mk = (name, parent) => { const t = new BABYLON.TransformNode(name, this.scene); if (parent) t.parent = parent; return t; };
-      this._rHandTarget = mk("vrRHandTarget", this.rightGrip || this.rightPointer);
-      this._lHandTarget = mk("vrLHandTarget", this.leftController?.grip || this.leftController?.pointer);
+      // INVERTIDO de propósito: a mão DIREITA do personagem segue o controle
+      // ESQUERDO e vice-versa (estavam ao contrário no headset).
+      const ctrlForRight = this.leftController?.grip || this.leftController?.pointer;
+      const ctrlForLeft  = this.rightGrip || this.rightPointer;
+      this._rHandTarget = mk("vrRHandTarget", ctrlForRight);
+      this._lHandTarget = mk("vrLHandTarget", ctrlForLeft);
       this._rPole = mk("vrRPole", this.player.mesh); this._rPole.position.set(1.4, 0.2, -0.8);
       this._lPole = mk("vrLPole", this.player.mesh); this._lPole.position.set(-1.4, 0.2, -0.8);
       if (rFore && this._rHandTarget) this._ikR = new BABYLON.BoneIKController(skinned, rFore, { targetMesh: this._rHandTarget, poleTargetMesh: this._rPole, slerpAmount: 0.7 });
