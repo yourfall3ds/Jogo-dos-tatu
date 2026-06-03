@@ -25,6 +25,7 @@
 // ─────────────────────────────────────────────────────────────────
 import { LocalDB }       from '../data/LocalDB.js';
 import { WorldObjects }  from '../data/WorldObjects.js';
+import { Breakable }     from './Breakable.js';
 import { AssetRegistry } from '../data/AssetRegistry.js';
 import { AssetGroups }   from '../data/AssetGroups.js';
 import { optimizeCollider } from '../scene/ColliderOptimizer.js';
@@ -148,6 +149,7 @@ export class BuildMode {
   _removeWorldEntry(worldId) {
     const entry = worldId && this._worldEntries.get(worldId);
     if (!entry) return;
+    try { entry.breakable?.dispose(); } catch (_) {}
     try { this._disposeColliderArtifacts(entry.root); } catch (_) {}
     try { entry.root?.dispose(); } catch (_) {}
     const i = this._placed.indexOf(entry);
@@ -195,7 +197,52 @@ export class BuildMode {
     if (gProps.castShadows !== false) this.level?.shadowGen?.addShadowCaster?.(root, true);
     const entry = { record: rec, root, worldId: rec._worldId || null };
     this._placed.push(entry);
+    this._attachBreakable(entry, res.meshes);   // sandbox: rachar→quebrar→dropar
     return entry;
+  }
+
+  /**
+   * Torna um objeto GLB QUEBRÁVEL (sandbox): bater em sequência racha e
+   * quebra; parar regenera; ao quebrar dropa o próprio asset pro inventário.
+   * hp (em golpes) escala com o tamanho. Peças/quadros não entram.
+   */
+  _attachBreakable(entry, meshes) {
+    if (!entry?.root) return;
+    const rec = entry.record || {};
+    if (rec.kind === 'piece' || rec.kind === 'frame') return;
+    if (!(rec.id || rec.url)) return;   // precisa ser um asset recolocável
+    let maxDim = 2;
+    try {
+      const bb = entry.root.getHierarchyBoundingVectors?.(true);
+      if (bb) maxDim = Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z) || 2;
+    } catch (_) {}
+    const hits = Math.max(3, Math.min(12, Math.round(3 + maxDim)));   // 3..12 golpes
+    const ctrl = new Breakable(entry.root, meshes, {
+      hp: hits, onBreak: () => this._onObjectBroken(entry),
+    });
+    entry.breakable = ctrl;
+    for (const mm of (meshes || [])) { try { mm._breakable = ctrl; } catch (_) {} }
+  }
+
+  /** Objeto quebrou → dropa o asset pro inventário + remove do mundo. */
+  _onObjectBroken(entry) {
+    if (!entry) return;
+    try {
+      const rec = entry.record || {};
+      if (rec.id || rec.url) {
+        window._gamePlayer?.inventory?.addBuildable?.({
+          assetId: rec.id, name: rec.name || rec.id || 'asset',
+          glbUrl: rec.url, groupProps: rec.groupProps || {},
+        });
+        window._gamePlayer?.sounds?.playNow?.('pickup_item', 0.5);
+      }
+    } catch (_) {}
+    // mundo compartilhado: marca quebrado (some pra todos via Realtime)
+    if (entry.worldId) { this._worldEntries?.delete(entry.worldId); WorldObjects.markBroken(entry.worldId); }
+    const i = this._placed.indexOf(entry);
+    if (i >= 0) this._placed.splice(i, 1);
+    if (!this._sharedWorld) this._save();
+    window._navMesh?.markDirty?.();
   }
 
   /**
@@ -944,6 +991,7 @@ export class BuildMode {
       };
       const entry = { record, root };
       this._placed.push(entry);
+      this._attachBreakable(entry, res.meshes);   // sandbox: rachar→quebrar→dropar
       this._save();
       this._persistPlaced(entry);   // mundo compartilhado (no-op se offline)
     } catch (e) {
@@ -1189,6 +1237,7 @@ export class BuildMode {
   _undo() {
     const last = this._placed.pop();
     if (!last) return;
+    try { last.breakable?.dispose(); } catch (_) {}
     this._disposeColliderArtifacts(last.root);   // corpos da peça/colisor
     try { last.root?.dispose(); } catch (_) {}
     // Mundo compartilhado: remove do Supabase (todos deixam de ver).

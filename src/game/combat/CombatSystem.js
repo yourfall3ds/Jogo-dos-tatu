@@ -553,6 +553,24 @@ export class CombatSystem {
         return;
       }
 
+      // ── Objeto QUEBRÁVEL do mundo (sandbox: rachar→quebrar→dropar) ──
+      const brk = m._breakable;
+      if (brk && !brk.broken && !hitPhysics.has(brk)) {
+        if (activeHitbox.intersectsMesh(m, false) || _inFront(m.getAbsolutePosition())) {
+          hitSomething = true;
+          hitPhysics.add(brk);   // não conta 2x no mesmo objeto/golpe
+          brk.hit();
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
+          if (this.impactSystem) {
+            const ip = activeHitbox.getAbsolutePosition().clone();
+            if (isKick) this.impactSystem.spawnKickImpact(ip, true);
+            else        this.impactSystem.spawnPunchImpact(ip, true);
+          }
+          window._hitStop?.hit(0.04);
+        }
+        return;
+      }
+
       // ── Objetos FÍSICOS (soco/chute empurram e quebram) ──────────────
       const go = m._gameObject;
       if (go && go.hasPhysics && !go._broken && !go._collected && !hitPhysics.has(go)) {

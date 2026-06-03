@@ -153,7 +153,11 @@ localStorage continua como **cache offline** (escreve local + Supabase; lê Supa
   - `src/game/data/WorldObjects.js`: CRUD + Realtime (insert/update/delete ao vivo) + mapeamento linha↔registro do BuildMode.
   - `BuildMode`: ao logar carrega o mundo global do Supabase e assina Realtime (vê builds dos outros na hora); ao colocar persiste; undo/apagar-chão remove do mundo; dedupe do próprio echo. Sem login → fallback local (offline).
   - ⚠️ **Limitação conhecida**: assets **da biblioteca embutida** (caminhos relativos) sincronizam e carregam pra todos. Assets **gerados no Meshy** usam blob/URL local → NÃO carregam pra outros players até terem **hosting público** (depende da F4). Por isso comecem o mundo com itens da biblioteca.
-- **F3 — Destruição sandbox**: rachaduras progressivas (emissive/decal por % de hp) + regeneração por timer (para de bater N s → hp volta) + **quebrar dropa o próprio asset recolocável** ao inventário + sincronizar `broken`/removido via Colyseus e persistir.
+- **F3 — Destruição sandbox** — **CÓDIGO PRONTO** (pendente teste in-game):
+  - `src/game/build/Breakable.js`: hp em GOLPES (escala com tamanho), rachaduras progressivas (material escurece + brasa avermelhada cresce + squash no hit), **regenera** se parar de bater (~2.2s), e ao quebrar **dropa o próprio asset recolocável** pro inventário (`inventory.addBuildable`).
+  - `BuildMode._attachBreakable`: todo asset GLB colocado/carregado vira quebrável; `_onObjectBroken` dropa + `WorldObjects.markBroken` (some pra todos via Realtime) + remove local.
+  - `CombatSystem`: golpe de melee em malha `m._breakable` chama `.hit()` (dedupe por golpe).
+  - Quebrado persiste como `broken=true` (não recarrega). ⚠️ Teste real exige login + colocar objeto + bater nele.
 
 ---
 
