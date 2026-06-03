@@ -152,6 +152,11 @@ export class VRSystem {
         console.log("[VR] SESSION ATIVA");
         try { document.body.classList.add("vr-active"); } catch (_) {}
 
+        // ⭐ Garante que o MUNDO existe (chão, player spawnado, menus escondidos).
+        //  Sem isso, entrar em VR direto do menu mostra só o fundo (partículas)
+        //  porque o mundo nunca foi carregado. Idempotente: ok chamar já em jogo.
+        try { this.onEnterWorld?.(); } catch (e) { console.error("[VR] onEnterWorld", e); }
+
         // Câmera XR controlada pelo headset → desativa o _updateCamera manual.
         try { this.player._vrControlsCamera = true; } catch (_) {}
         // Garante que a lógica de jogo roda mesmo sem pointer-lock (impossível no HMD).

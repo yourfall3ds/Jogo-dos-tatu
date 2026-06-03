@@ -1243,6 +1243,34 @@ async function init() {
   };
   window._enterGameOffline = _enterGameOffline;
 
+  // ── Garante o MUNDO pra uma sessão VR ─────────────────────────────
+  //  Chamado pelo VRSystem ao entrar em VR. Se o jogador entrou em VR
+  //  direto do menu (sem ter carregado o jogo), aqui criamos o chão,
+  //  escondemos os menus e ativamos o input — senão o headset mostra só
+  //  o fundo do menu (partículas). Idempotente: seguro chamar já em jogo.
+  const _ensureWorldForVR = () => {
+    try {
+      // Sem login? entra offline (user/profile falsos) pra não travar.
+      if (!window._auth?.user) { try { window._auth?.signInOffline?.(); } catch (_) {} }
+      // Esconde overlays de menu (não aparecem no headset, mas limpam o estado).
+      ['start-screen', 'login-screen'].forEach(id => { const e = $(id); if (e) e.style.display = 'none'; });
+      try { window._serverListUI?.hide?.(); } catch (_) {}
+      try { window._loginScreen?.hide?.(); } catch (_) {}
+      document.body.classList.add('in-game');
+      // Cria o chão do mundo aberto (sync) se ainda não existe.
+      _ensureOpenWorldGround(scene);
+      // Ativa a lógica de jogo SEM pointer-lock (impossível no HMD).
+      try { if (window._gameInput) { window._gameInput.gameActive = true; document.body.classList.add('game-active'); } } catch (_) {}
+      // Garante posição válida sobre o chão.
+      try { window._gamePlayer?.spawn?.(); } catch (_) {}
+      try { window._musicSystem?.start?.(); } catch (_) {}
+      console.log('[VR] mundo garantido para a sessão imersiva');
+    } catch (e) { console.error('[VR ensureWorld]', e); }
+  };
+  window._ensureWorldForVR = _ensureWorldForVR;
+  // Liga o hook no VRSystem (criado lá em cima, antes desta função existir).
+  try { if (window._vrSystem) window._vrSystem.onEnterWorld = _ensureWorldForVR; } catch (_) {}
+
   // ── Overlay "CLIQUE PARA JOGAR" — captura gesture fresco pro Pointer Lock ──
   function _showClickToPlayOverlay(onClick) {
     let el = document.getElementById('click-to-play-overlay');
