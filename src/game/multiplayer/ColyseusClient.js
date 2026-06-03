@@ -284,6 +284,7 @@ export class ColyseusClient {
       $(player).listen('pvp_on', (v) => this._notify('player_change', { id: key, field: 'pvp_on', value: v, state: player }));
       $(player).listen('is_ready', (v) => this._notify('player_change', { id: key, field: 'is_ready', value: v, state: player }));
       $(player).listen('weapon', (v) => this._notify('player_change', { id: key, field: 'weapon', value: v, state: player }));
+      $(player).listen('held_item', (v) => this._notify('player_change', { id: key, field: 'held_item', value: v, state: player }));
       $(player).listen('x', () => this._notify('player_change', { id: key, field: 'pos', value: null, state: player }));
       $(player).listen('y', () => this._notify('player_change', { id: key, field: 'pos', value: null, state: player }));
       $(player).listen('z', () => this._notify('player_change', { id: key, field: 'pos', value: null, state: player }));
@@ -359,12 +360,17 @@ export class ColyseusClient {
     this._lastInputSent = now;
     const pos = player.mesh?.position;
     if (!pos) return;
+    const weaponId = player.weapon?.getCurrentWeapon?.()?.id || 'unarmed';
+    // held_item = o que está REALMENTE na mão: um construível da hotbar em modo
+    // de colocar (player._heldItem, ex.: 'asset:crate') tem prioridade; senão a arma.
+    const heldItem = (typeof player._heldItem === 'string' && player._heldItem) ? player._heldItem : weaponId;
     this.room.send('input', {
       x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2),
       ry: +(player.yaw || 0).toFixed(1),
       vy: +(player.velY || 0).toFixed(1),
       state: player.stateMachine?.state || 'idle',
-      weapon: player.weapon?.getCurrentWeapon?.()?.id || 'unarmed',
+      weapon: weaponId,
+      held_item: heldItem,
     });
   }
 

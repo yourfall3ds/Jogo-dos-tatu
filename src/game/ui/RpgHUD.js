@@ -6,6 +6,7 @@ import { SKILL_DEFS } from '../skills/SkillSystem.js';
 import { STAT_KEYS, STAT_LABELS } from '../stats/PlayerStats.js';
 import { ItemCatalog } from '../items/ItemCatalog.js';
 import { LocalDB } from '../data/LocalDB.js';
+import { CloudSave } from '../data/CloudSave.js';
 
 export class RpgHUD {
   constructor(player, stats, skills, inventory) {
@@ -447,8 +448,13 @@ export class RpgHUD {
 
   _save() {
     try {
-      localStorage.setItem('digifps_stats', JSON.stringify(this.stats.toJSON()));
-      localStorage.setItem('digifps_inv', JSON.stringify(this.inventory.toJSON()));
+      const statsJson = this.stats.toJSON();
+      const invJson = this.inventory.toJSON();
+      // Cache local imediato (offline) + sincroniza pra nuvem (debounced).
+      localStorage.setItem('digifps_stats', JSON.stringify(statsJson));
+      localStorage.setItem('digifps_inv', JSON.stringify(invJson));
+      CloudSave.saveStats(statsJson);
+      CloudSave.saveInventory(invJson);
     } catch (_) {}
   }
 

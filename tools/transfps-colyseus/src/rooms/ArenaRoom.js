@@ -435,6 +435,7 @@ export class ArenaRoom extends Room {
     p.ry = 0; p.vy = 0;
     p.anim_state = 'idle';
     p.weapon = 'unarmed';
+    p.held_item = 'unarmed';
     p.dead = false;
     p.xp = 0;
     p.level = 1;
@@ -534,6 +535,7 @@ export class ArenaRoom extends Room {
     if (Number.isFinite(+payload.vy)) p.vy = +payload.vy;
     if (typeof payload.state === 'string') p.anim_state = payload.state.slice(0, 24);
     if (typeof payload.weapon === 'string') p.weapon = payload.weapon.slice(0, 32);
+    if (typeof payload.held_item === 'string') p.held_item = payload.held_item.slice(0, 48);
   }
 
   _onHitPlayer(client, payload) {

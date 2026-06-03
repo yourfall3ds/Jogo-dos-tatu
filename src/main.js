@@ -119,6 +119,7 @@ import { DeathCam }            from './game/multiplayer/DeathCam.js';
 import { PvpToggle }           from './game/ui/PvpToggle.js';
 import { LocalAura }           from './game/combat/LocalAura.js';
 import { getConfig }           from './game/auth/SupabaseClient.js';
+import { CloudSave }           from './game/data/CloudSave.js';
 
 const TRANSFPS_CS_URL = 'wss://app.overpixel.online/transfps-cs';
 
@@ -1078,11 +1079,13 @@ async function init() {
   // ── Sistemas RPG: Stats + Skills + Inventário ────────────────────
   const stats = new PlayerStats();
   {
-    const _statsRaw = localStorage.getItem('digifps_stats');
-    if (_statsRaw) {
-      try { stats.load(JSON.parse(_statsRaw)); }
-      catch (e) { console.error('[Stats] save corrompido (digifps_stats):', e); throw e; }
+    // Nuvem primeiro (Supabase transfps.settings.data.stats); cai p/ cache local.
+    let _statsData = await CloudSave.loadStats();
+    if (!_statsData) {
+      const _statsRaw = localStorage.getItem('digifps_stats');
+      if (_statsRaw) { try { _statsData = JSON.parse(_statsRaw); } catch (e) { console.error('[Stats] cache local corrompido:', e); } }
     }
+    if (_statsData) { try { stats.load(_statsData); } catch (e) { console.error('[Stats] load falhou:', e); } }
   }
   player.stats = stats;
   player.maxHp = stats.maxHp();
@@ -1094,11 +1097,13 @@ async function init() {
   await initItemCatalog();   // popula o catálogo (consumíveis, equips, armas)
   const inventory = new Inventory(player, stats);
   {
-    const _invRaw = localStorage.getItem('digifps_inv');
-    if (_invRaw) {
-      try { inventory.load(JSON.parse(_invRaw)); }
-      catch (e) { console.error('[Inventory] save corrompido (digifps_inv):', e); throw e; }
+    // Nuvem primeiro (Supabase transfps.inventory); cai p/ cache local.
+    let _invData = await CloudSave.loadInventory();
+    if (!_invData) {
+      const _invRaw = localStorage.getItem('digifps_inv');
+      if (_invRaw) { try { _invData = JSON.parse(_invRaw); } catch (e) { console.error('[Inventory] cache local corrompido:', e); } }
     }
+    if (_invData) { try { inventory.load(_invData); } catch (e) { console.error('[Inventory] load falhou:', e); } }
   }
   inventory.ensureStarterItems();   // começa com as armas no inventário
   player.inventory = inventory;

@@ -39,6 +39,7 @@ type('number')(PlayerState.prototype, 'ry');
 type('number')(PlayerState.prototype, 'vy');
 type('string')(PlayerState.prototype, 'anim_state');
 type('string')(PlayerState.prototype, 'weapon');
+type('string')(PlayerState.prototype, 'held_item'); // item ATIVO na mão (arma OU construível da hotbar)
 type('boolean')(PlayerState.prototype, 'dead');
 type('number')(PlayerState.prototype, 'xp');
 type('number')(PlayerState.prototype, 'level');

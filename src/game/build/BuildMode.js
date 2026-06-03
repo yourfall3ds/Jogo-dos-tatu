@@ -24,6 +24,7 @@
 //  com animação de deploy completa.
 // ─────────────────────────────────────────────────────────────────
 import { LocalDB }       from '../data/LocalDB.js';
+import { WorldObjects }  from '../data/WorldObjects.js';
 import { AssetRegistry } from '../data/AssetRegistry.js';
 import { AssetGroups }   from '../data/AssetGroups.js';
 import { optimizeCollider } from '../scene/ColliderOptimizer.js';
@@ -103,7 +104,98 @@ export class BuildMode {
     this._buildHUD();
     this._loadCatalog();
     this._restoreFrames();   // restaura quadros salvos do F5 anterior
-    this._restorePlaced();   // restaura objetos colocados (posição/escala/colisão)
+    // MUNDO COMPARTILHADO: se logado, carrega do Supabase + sync ao vivo;
+    // senão cai pro restore local (LocalDB 'placed').
+    this._sharedWorld = false;
+    this._worldEntries = new Map();   // worldId(uuid) → entry colocado
+    this._initSharedWorld();
+  }
+
+  /**
+   * Inicializa o MUNDO ÚNICO GLOBAL (colaborativo, estilo Fortnite):
+   * carrega todos os objetos do Supabase e assina o Realtime pra ver
+   * construções/remoções dos outros players ao vivo. Sem login, cai no
+   * restore local (offline).
+   */
+  async _initSharedWorld() {
+    let ok = false;
+    try { ok = await WorldObjects.available(); } catch (_) { ok = false; }
+    if (!ok) { this._restorePlaced(); return; }   // offline/deslogado → local
+    this._sharedWorld = true;
+
+    try {
+      const recs = await WorldObjects.loadAll();
+      for (const rec of recs) {
+        const entry = await this._renderRecordToScene(rec);
+        if (entry && rec._worldId) this._worldEntries.set(rec._worldId, entry);
+      }
+      console.log(`[BuildMode] 🌍 mundo compartilhado: ${recs.length} objeto(s)`);
+    } catch (e) { console.warn('[BuildMode] load mundo falhou:', e?.message || e); }
+
+    // Realtime: insert/delete/update dos OUTROS players (e echo dos meus).
+    this._unsubWorld = await WorldObjects.subscribe({
+      onInsert: async (rec) => {
+        if (!rec._worldId || this._worldEntries.has(rec._worldId)) return; // dedupe (inclui os meus)
+        const entry = await this._renderRecordToScene(rec);
+        if (entry) this._worldEntries.set(rec._worldId, entry);
+      },
+      onDelete: (worldId) => this._removeWorldEntry(worldId),
+      onUpdate: (rec, row) => { if (row?.broken) this._removeWorldEntry(rec._worldId); },
+    });
+  }
+
+  /** Remove (visual + colisor) um objeto do mundo pelo worldId. */
+  _removeWorldEntry(worldId) {
+    const entry = worldId && this._worldEntries.get(worldId);
+    if (!entry) return;
+    try { this._disposeColliderArtifacts(entry.root); } catch (_) {}
+    try { entry.root?.dispose(); } catch (_) {}
+    const i = this._placed.indexOf(entry);
+    if (i >= 0) this._placed.splice(i, 1);
+    this._worldEntries.delete(worldId);
+    window._navMesh?.markDirty?.();
+  }
+
+  /** Persiste um objeto recém-colocado no mundo compartilhado (Supabase). */
+  async _persistPlaced(entry) {
+    if (!this._sharedWorld || !entry?.record || entry.record.kind === 'frame') return;
+    try {
+      const worldId = await WorldObjects.place(entry.record);
+      if (worldId) { entry.worldId = worldId; this._worldEntries.set(worldId, entry); }
+    } catch (e) { console.warn('[BuildMode] persist mundo falhou:', e?.message || e); }
+  }
+
+  /**
+   * Renderiza UM registro (GLB ou peça) na cena e empurra pra _placed.
+   * Reusado por _restorePlaced (local) e pelo mundo compartilhado (Supabase).
+   * Não salva — quem chama decide persistência.
+   */
+  async _renderRecordToScene(rec) {
+    if (rec.kind === 'piece' && rec.pieceId) {
+      const entry = await this._placePieceAt(
+        new BABYLON.Vector3(rec.p[0], rec.p[1], rec.p[2]),
+        rec.ry || 0, rec.sc ?? 1, { pieceId: rec.pieceId }, false, rec.s || null,
+      );
+      if (entry) entry.worldId = rec._worldId || null;
+      return entry;
+    }
+    const url = rec.url;
+    if (!url) return null;   // assetMachine (sem url) restaurado à parte
+    const ld = await this._resolveLoadable(url);
+    if (!ld) return null;
+    const res  = await BABYLON.SceneLoader.ImportMeshAsync('', ld.folder, ld.file, this.scene, null, ld.extHint);
+    const root = res.meshes[0];
+    root.name = rec.name || ('placed_' + rec.id);
+    root.rotationQuaternion = null;
+    root.position.set(rec.p[0], rec.p[1], rec.p[2]);
+    root.rotation.y = rec.ry || 0;
+    root.scaling.setAll(rec.sc ?? 1);
+    const gProps = rec.groupProps || {};
+    this._applyCollisionProps(root, res.meshes, gProps);
+    if (gProps.castShadows !== false) this.level?.shadowGen?.addShadowCaster?.(root, true);
+    const entry = { record: rec, root, worldId: rec._worldId || null };
+    this._placed.push(entry);
+    return entry;
   }
 
   /**
@@ -119,38 +211,11 @@ export class BuildMode {
 
     let n = 0;
     for (const rec of records) {
-      // Peça procedural (sem url) → reconstrói em código
-      if (rec.kind === 'piece' && rec.pieceId) {
-        try {
-          await this._placePieceAt(
-            new BABYLON.Vector3(rec.p[0], rec.p[1], rec.p[2]),
-            rec.ry || 0, rec.sc ?? 1, { pieceId: rec.pieceId }, false, rec.s || null,
-          );
-          n++;
-        } catch (e) { console.warn('[BuildMode] peça falhou ao restaurar:', rec.pieceId, e.message); }
-        continue;
-      }
-      const url = rec.url;
-      if (!url) continue;   // assetMachine (sem url) é restaurado à parte
       try {
-        const ld = await this._resolveLoadable(url);
-        if (!ld) continue;
-        const res  = await BABYLON.SceneLoader.ImportMeshAsync('', ld.folder, ld.file, this.scene, null, ld.extHint);
-        const root = res.meshes[0];
-        root.name = rec.name || ('placed_' + rec.id);
-        root.rotationQuaternion = null;   // senão .rotation.y é ignorado
-        root.position.set(rec.p[0], rec.p[1], rec.p[2]);
-        root.rotation.y = rec.ry || 0;
-        root.scaling.setAll(rec.sc ?? 1);
-
-        const gProps = rec.groupProps || {};
-        this._applyCollisionProps(root, res.meshes, gProps);   // colisão + gameplay
-        if (gProps.castShadows !== false) this.level?.shadowGen?.addShadowCaster?.(root, true);
-
-        this._placed.push({ record: rec, root });
-        n++;
+        const entry = await this._renderRecordToScene(rec);
+        if (entry) n++;
       } catch (e) {
-        console.warn('[BuildMode] objeto colocado falhou ao restaurar:', rec.id, e.message);
+        console.warn('[BuildMode] objeto colocado falhou ao restaurar:', rec.id || rec.pieceId, e.message);
       }
     }
     if (n) console.log(`[BuildMode] 🧱 ${n} objeto(s) colocado(s) restaurado(s)`);
@@ -450,6 +515,14 @@ export class BuildMode {
 
   _enterPlacing() {
     this._state = 'placing';
+    // MULTIPLAYER: marca o item "na mão" pra sincronizar com os outros players.
+    // (consumido por ColyseusClient.sendInput → state.held_item)
+    try {
+      const src = this._ghostSrc || {};
+      const tag = src.pieceId ? ('piece:' + src.pieceId)
+                              : ('asset:' + (src.assetId || src.id || src.name || 'obj'));
+      if (window._gamePlayer) window._gamePlayer._heldItem = tag;
+    } catch (_) {}
     this._el.style.display  = 'none';
     this._hud.style.display = 'block';
     this._ch.style.display  = 'block';
@@ -469,6 +542,8 @@ export class BuildMode {
   _leavePlacing() {
     this._disposeGhost();
     this._state = 'inactive';
+    // MULTIPLAYER: largou o construível → volta a mão pra arma (held_item segue weapon).
+    try { if (window._gamePlayer) window._gamePlayer._heldItem = null; } catch (_) {}
     if (this._el)  this._el.style.display  = 'none';
     this._hud.style.display = 'none';
     this._ch.style.display  = 'none';
@@ -780,6 +855,7 @@ export class BuildMode {
       if (Math.abs(p.x - pos.x) < tol && Math.abs(p.z - pos.z) < tol && Math.abs(p.y - pos.y) < 2) {
         this._disposeColliderArtifacts(e.root);
         try { e.root.dispose(); } catch (_) {}
+        if (e.worldId) { this._worldEntries?.delete(e.worldId); WorldObjects.remove(e.worldId); }
         this._placed.splice(i, 1);
       }
     }
@@ -866,8 +942,10 @@ export class BuildMode {
         p: [pos.x, pos.y, pos.z], ry: rotY, sc: scale,
         groupProps: gProps,
       };
-      this._placed.push({ record, root });
+      const entry = { record, root };
+      this._placed.push(entry);
       this._save();
+      this._persistPlaced(entry);   // mundo compartilhado (no-op se offline)
     } catch (e) {
       console.warn('[BuildMode] falha ao colocar:', e.message);
     }
@@ -1008,11 +1086,14 @@ export class BuildMode {
     if (scl3) record.s = scl3;
     const entry = { record, root };
     this._placed.push(entry);
-    if (save) this._save();
+    if (save) { this._save(); this._persistPlaced(entry); }   // user action → persiste no mundo
     return entry;
   }
 
   async _save() {
+    // No mundo compartilhado a verdade é o Supabase (world_objects); não grava
+    // o bucket local 'placed' pra não duplicar no reload. Navmesh segue marcada.
+    if (this._sharedWorld) { window._navMesh?.markDirty?.(); return; }
     // Quadros têm seu próprio bucket (placed_frames); filtra aqui
     try { await LocalDB.save('placed', this._placed.filter(p => p.record?.kind !== 'frame').map(p => p.record)); } catch (_) {}
     // Mundo mudou (coloquei/movi/removi algo) → regera a navmesh (debounce).
@@ -1110,6 +1191,8 @@ export class BuildMode {
     if (!last) return;
     this._disposeColliderArtifacts(last.root);   // corpos da peça/colisor
     try { last.root?.dispose(); } catch (_) {}
+    // Mundo compartilhado: remove do Supabase (todos deixam de ver).
+    if (last.worldId) { this._worldEntries?.delete(last.worldId); WorldObjects.remove(last.worldId); }
     // Quadros têm persitência separada
     if (last.record?.kind === 'frame') {
       LocalDB.get('placed_frames', []).then(frames => {
