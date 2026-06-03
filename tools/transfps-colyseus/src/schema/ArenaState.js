@@ -128,6 +128,20 @@ type('number')(MobState.prototype, 'maxHp');
 type('string')(MobState.prototype, 'state');
 type('string')(MobState.prototype, 'target_id');
 
+// ── 4.5) WorldObjectState (placed/built objects per owner) ──
+export class WorldObjectState extends Schema {}
+type('string')(WorldObjectState.prototype, 'id');
+type('string')(WorldObjectState.prototype, 'owner_id');
+type('string')(WorldObjectState.prototype, 'asset_id');
+type('number')(WorldObjectState.prototype, 'x');
+type('number')(WorldObjectState.prototype, 'y');
+type('number')(WorldObjectState.prototype, 'z');
+type('number')(WorldObjectState.prototype, 'ry');
+type('number')(WorldObjectState.prototype, 'hp');
+type('number')(WorldObjectState.prototype, 'max_hp');
+type('number')(WorldObjectState.prototype, 'tier');
+type('number')(WorldObjectState.prototype, 'created_at');
+
 // ── 4) Root ──
 export class ArenaState extends Schema {
   constructor() {
@@ -137,6 +151,7 @@ export class ArenaState extends Schema {
     this.drops = new MapSchema();
     this.props = new MapSchema();
     this.fx = new MapSchema();
+    this.world_objects = new MapSchema();
   }
 }
 type({ map: PlayerState })(ArenaState.prototype, 'players');
@@ -144,6 +159,7 @@ type({ map: MobState })(ArenaState.prototype, 'mobs');
 type({ map: DropState })(ArenaState.prototype, 'drops');
 type({ map: PropState })(ArenaState.prototype, 'props');
 type({ map: FxState })(ArenaState.prototype, 'fx');
+type({ map: WorldObjectState })(ArenaState.prototype, 'world_objects');
 type('string')(ArenaState.prototype, 'host_id');
 type('boolean')(ArenaState.prototype, 'started');
 type('string')(ArenaState.prototype, 'map_id');

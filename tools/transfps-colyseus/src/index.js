@@ -10,7 +10,7 @@
 //  Service: systemd transfps-colyseus.service
 //  Nginx:   wss://app.overpixel.online/transfps-cs → 127.0.0.1:2567
 // ─────────────────────────────────────────────────────────────────
-import { Server, LobbyRoom } from '@colyseus/core';
+import { Server, LobbyRoom, matchMaker } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { monitor } from '@colyseus/monitor';
 import express from 'express';
@@ -55,7 +55,43 @@ gameServer
   .enableRealtimeListing()
   .filterBy(['map']);
 
-gameServer.listen(PORT);
+await gameServer.listen(PORT);
 console.log(`[transfps-colyseus] online :${PORT}`);
 console.log(`  rooms: lobby, arena`);
 console.log(`  monitor: /colyseus (basic auth)`);
+
+// ─────────────────────────────────────────────────────────────────
+//  BRASIL 1 — sala persistente OPEN_WORLD 24/7.
+//  Auto-criada no boot. Re-criada se cair (auto-heal a cada 60s).
+// ─────────────────────────────────────────────────────────────────
+const BR1_MAP = process.env.BRASIL1_MAP || 'cemetery';
+const BR1_MAX = parseInt(process.env.BRASIL1_MAX_PLAYERS || '50', 10);
+
+async function ensureBrasil1() {
+  try {
+    const existing = await matchMaker.query({ name: 'arena' });
+    const openWorld = (existing || []).find(r =>
+      r.metadata?.mode === 'OPEN_WORLD' && r.metadata?.region === 'BR'
+    );
+    if (openWorld) return openWorld;
+    const room = await matchMaker.createRoom('arena', {
+      name: 'BRASIL 1',
+      map: BR1_MAP,
+      mode: 'OPEN_WORLD',
+      region: 'BR',
+      maxPlayers: BR1_MAX,
+      host_nickname: 'BRASIL 1',
+    });
+    try {
+      await matchMaker.remoteRoomCall(room.roomId, 'setMetadata', [{ region: 'BR' }]);
+    } catch (_) {}
+    console.log(`[BR1] criada: ${room.roomId} map=${BR1_MAP} max=${BR1_MAX}`);
+    return room;
+  } catch (e) {
+    console.error('[BR1] erro:', e.message);
+    return null;
+  }
+}
+
+await ensureBrasil1();
+setInterval(ensureBrasil1, 60_000);

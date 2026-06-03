@@ -90,7 +90,7 @@ export class SoundManager {
       // Movimento
       jump            : 'assets/Sound FX/voos e rushs/jump.wav',
       walljump        : 'assets/Sound FX/voos e rushs/walljumps.wav',
-      deathfall       : 'assets/Sound FX/voos e rushs/deathfall.wav',
+      deathfall       : 'assets/Sound FX/voos e rushs/Caindo morto forte.wav',
       // Inimigo voando longe após golpe forte (ESPACIAL — abaixa com a distância)
       flyby           : 'assets/Sound FX/voos e rushs/Barulho do cara voando longe quando recebe um golpe forte.wav',
       // Coleta de drop (moeda/material)
@@ -117,6 +117,7 @@ export class SoundManager {
         'kick_med', 'kick_crit',
         'swing_1', 'swing_2', 'swing_3',
         'gun_pistol',
+        'chibatada', // som de impacto da Chibata — precarrega pra nao engolir o 1o golpe
       ]);
       this._getSpatialSound('flyby', 45);   // pré-carrega o som de voar
       this._getLoopSound('mg_loop');        // pré-carrega o loop da metralhadora

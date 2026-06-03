@@ -1,91 +1,71 @@
-/**
- * LocalDB.js
- *
- * Cliente para o servidor de banco de dados local (JSON).
- * Gerencia a comunicação com o config-server.js.
- *
- * PROD vs DEV:
- *   - Dev (localhost/127.0.0.1): tenta config-server em :3099, cai pra localStorage se offline.
- *   - Prod  (app.overpixel.online): usa direto localStorage; NUNCA fetch em 127.0.0.1:3099
- *     (estoura ERR_CONNECTION_REFUSED e polui o console).
- */
+// LocalDB — adapter Supabase com cache local (transfps_storage).
+// API: LocalDB.get(collection, defaultData), LocalDB.set(collection, data), LocalDB.del(collection)
+// Strategy: read tenta Supabase, cai pro localStorage; write escreve em ambos.
+
+import { getSupabase } from "../auth/SupabaseClient.js";
+
+const LS_PREFIX = "transfps_localdb_";
+
 export class LocalDB {
-  static BASE_URL = 'http://127.0.0.1:3099';
-
-  /** Detecta prod (mesmo critério usado em index.html no health-check). */
-  static isProd() {
-    try {
-      const h = location.hostname;
-      return !(h === 'localhost' || h === '127.0.0.1');
-    } catch (_) {
-      return true;   // sem `location` (worker?) → assume prod, evita fetch
-    }
+  static _userId() {
+    try { return window._auth?.getUserId?.() || null; } catch (_) { return null; }
   }
 
-  /** Lê do localStorage com fallback em memória. */
-  static _readLocal(collection, defaultData) {
-    try {
-      const local = localStorage.getItem(`db_fallback_${collection}`);
-      return local ? JSON.parse(local) : defaultData;
-    } catch (_) {
-      return defaultData;
-    }
+  static async _supa() {
+    try { return await getSupabase(); } catch (_) { return null; }
   }
 
-  /** Grava no localStorage (silencia QuotaExceeded). */
-  static _writeLocal(collection, data) {
-    try {
-      localStorage.setItem(`db_fallback_${collection}`, JSON.stringify(data));
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /**
-   * Busca uma coleção do banco de dados local.
-   * @param {string} collection - Nome do arquivo (ex: 'scene', 'player_save')
-   * @param {Object} defaultData - Valor padrão se não existir
-   */
   static async get(collection, defaultData = {}) {
-    // Prod: localStorage puro, sem fetch.
-    if (this.isProd()) {
-      return this._readLocal(collection, defaultData);
+    const key = LS_PREFIX + collection;
+    const uid = LocalDB._userId();
+    const supa = uid ? await LocalDB._supa() : null;
+    if (supa && uid) {
+      try {
+        const { data, error } = await supa
+          .from("transfps_storage")
+          .select("payload")
+          .eq("user_id", uid)
+          .eq("collection", collection)
+          .maybeSingle();
+        if (!error && data?.payload) {
+          try { localStorage.setItem(key, JSON.stringify(data.payload)); } catch (_) {}
+          return data.payload;
+        }
+      } catch (e) { console.warn("[LocalDB] supa get falhou", collection, e?.message); }
     }
-
     try {
-      const resp = await fetch(`${this.BASE_URL}/db/${collection}`);
-      if (!resp.ok) throw new Error('Falha ao ler DB local');
-      const data = await resp.json();
-      return (data && Object.keys(data).length > 0) ? data : defaultData;
-    } catch (e) {
-      console.warn(`[LocalDB] Servidor offline? Usando localStorage para '${collection}'`, e.message);
-      return this._readLocal(collection, defaultData);
-    }
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return defaultData;
   }
 
-  /**
-   * Salva dados em uma coleção local.
-   * @param {string} collection - Nome do arquivo
-   * @param {Object} data - Objeto JSON para salvar
-   */
-  static async save(collection, data) {
-    // Sempre salva no localStorage como backup imediato
-    this._writeLocal(collection, data);
-
-    // Prod: só localStorage; não tenta config-server.
-    if (this.isProd()) return true;
-
+  static async set(collection, data) {
+    const key = LS_PREFIX + collection;
+    try { localStorage.setItem(key, JSON.stringify(data)); } catch (_) {}
+    const uid = LocalDB._userId();
+    if (!uid) return;
+    const supa = await LocalDB._supa();
+    if (!supa) return;
     try {
-      const resp = await fetch(`${this.BASE_URL}/db/${collection}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      return resp.ok;
-    } catch (e) {
-      console.error(`[LocalDB] Falha ao salvar no servidor:`, e.message);
-      return false;
-    }
+      await supa.from("transfps_storage").upsert({
+        user_id: uid,
+        collection,
+        payload: data,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id,collection" });
+    } catch (e) { console.warn("[LocalDB] supa set falhou", collection, e?.message); }
+  }
+
+  static async del(collection) {
+    const key = LS_PREFIX + collection;
+    try { localStorage.removeItem(key); } catch (_) {}
+    const uid = LocalDB._userId();
+    if (!uid) return;
+    const supa = await LocalDB._supa();
+    if (!supa) return;
+    try {
+      await supa.from("transfps_storage").delete().eq("user_id", uid).eq("collection", collection);
+    } catch (e) { console.warn("[LocalDB] supa del falhou", collection, e?.message); }
   }
 }

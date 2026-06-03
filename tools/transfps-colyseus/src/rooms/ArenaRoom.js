@@ -9,7 +9,7 @@
 //     start_match, spawn_mob, chat
 // ─────────────────────────────────────────────────────────────────
 import { Room } from '@colyseus/core';
-import { ArenaState, PlayerState, MobState, DropState, PropState, FxState, InventoryState, InvSlot, BossState, ZoneState } from '../schema/ArenaState.js';
+import { ArenaState, PlayerState, MobState, DropState, PropState, FxState, InventoryState, InvSlot, BossState, ZoneState, WorldObjectState } from '../schema/ArenaState.js';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { validateHit, getWeapon } from './WeaponTable.js';
 import { validateSkillCast, getSkill } from './SkillTable.js';
@@ -177,22 +177,29 @@ export class ArenaRoom extends Room {
   static metadata = { type: 'arena' };
 
   async onCreate(options) {
-    this.maxClients = Math.max(2, Math.min(16, parseInt(options.maxPlayers) || 8));
+    // OPEN_WORLD: sala unica persistente 24/7. Cap maior, sem dispose vazio.
+    const isOpenWorld = String(options.mode || '').toUpperCase() === 'OPEN_WORLD';
+    this.maxClients = isOpenWorld
+      ? Math.max(2, Math.min(64, parseInt(options.maxPlayers) || 50))
+      : Math.max(2, Math.min(16, parseInt(options.maxPlayers) || 8));
     this.state = new ArenaState();
     this.state.host_id = '';
-    this.state.started = false;
+    this.state.started = isOpenWorld; // ja "rodando" desde sempre
     this.state.map_id = String(options.map || 'default');
-    this.state.started_at = 0;
-    this.state.match_state = 'WAITING';
+    this.state.started_at = isOpenWorld ? Date.now() : 0;
+    this.state.match_state = isOpenWorld ? 'RUNNING' : 'WAITING';
     this.state.match_timer = 0;
     this.state.wave = 0;
     this.state.mobs_killed = 0;
-    // Battle Royale
+    // Battle Royale / Open World: usam o mesmo loop de skydive/respawn no ceu
     this.state.mode = String(options.mode || 'CLASSIC').toUpperCase();
-    this.state.br_phase = 'LOBBY';
+    // OPEN_WORLD: br_phase fica RUNNING permanente (cada player tem seu skydive local).
+    this.state.br_phase = isOpenWorld ? 'RUNNING' : 'LOBBY';
     this.state.br_alive_count = 0;
     this.state.br_takeoff_at = 0;
     this.state.br_skydive_at = 0;
+    // Flag interna pra logica de spawn-no-ceu (queda direta no onJoin)
+    this._isOpenWorld = isOpenWorld;
     this._lastTick = Date.now();
     this._cooldowns = new Map(); // mobId → { cdT, lastAttack }
     this._atkCooldowns = new Map(); // `${playerId}:${weaponId}` → lastUseAt
@@ -255,25 +262,28 @@ export class ArenaRoom extends Room {
     this.onMessage('br_skydive_input', (client, payload) => this._onBrSkydiveInput(client, payload));
     this.onMessage('br_landed', (client, payload) => this._onBrLanded(client, payload));
     this.onMessage('br_class_select', (client, payload) => this._onBrClassSelect(client, payload));
+    this.onMessage("place_object", (client, payload) => this._onPlaceObject(client, payload));
+    this.onMessage("remove_object", (client, payload) => this._onRemoveObject(client, payload));
+    this.onMessage("hit_object", (client, payload) => this._onHitObject(client, payload));
     this._skillCooldowns = new Map();
 
-    // ── IDLE TIMEOUT: se sala fica vazia por 60s, descarta. ──
-    this.autoDispose = true; // Colyseus já dispara onDispose quando lastClient sai
+    // ── IDLE TIMEOUT: OPEN_WORLD nunca descarta (sala 24/7). Demais salas: dispose vazio. ──
+    this.autoDispose = !isOpenWorld;
 
-    // ── IDLE TIMEOUT pra sala SEM matches começados (lobby fica aberto eterno) ──
-    this._idleCheckT = setInterval(() => {
-      if (this.state.players.size === 0) {
-        console.log(`[ArenaRoom] idle vazia, descartando ${this.roomId}`);
-        this.disconnect();
-      } else if (!this.state.started) {
-        // Lobby aberto há mais de 30 min sem iniciar = também encerra
-        const ageMs = Date.now() - (this._createdAt || 0);
-        if (ageMs > 30 * 60_000) {
-          console.log(`[ArenaRoom] lobby velho (>30min), descartando ${this.roomId}`);
+    if (!isOpenWorld) {
+      this._idleCheckT = setInterval(() => {
+        if (this.state.players.size === 0) {
+          console.log(`[ArenaRoom] idle vazia, descartando ${this.roomId}`);
           this.disconnect();
+        } else if (!this.state.started) {
+          const ageMs = Date.now() - (this._createdAt || 0);
+          if (ageMs > 30 * 60_000) {
+            console.log(`[ArenaRoom] lobby velho (>30min), descartando ${this.roomId}`);
+            this.disconnect();
+          }
         }
-      }
-    }, 60_000);
+      }, 60_000);
+    }
     this._createdAt = Date.now();
 
     console.log(`[ArenaRoom] criada id=${this.roomId} map=${this.state.map_id} max=${this.maxClients}`);
@@ -290,6 +300,18 @@ export class ArenaRoom extends Room {
       x: point.x + (Math.random() - 0.5) * 1.5,
       y: point.y,
       z: point.z + (Math.random() - 0.5) * 1.5,
+    };
+  }
+
+  // OPEN_WORLD: ring fixo de 8 pontos espacados ao redor do centro
+  _pickSpawnPointOpenWorld() {
+    this._owSpawnIdx = ((this._owSpawnIdx || 0) + 1) % 8;
+    const angle = (this._owSpawnIdx / 8) * Math.PI * 2;
+    const radius = 10;
+    return {
+      x: Math.cos(angle) * radius + (Math.random() - 0.5) * 1.2,
+      y: 1.5,
+      z: Math.sin(angle) * radius + (Math.random() - 0.5) * 1.2,
     };
   }
 
@@ -430,7 +452,7 @@ export class ArenaRoom extends Room {
     p.hp = 100;
     p.maxHp = 100;
     // Spawn point real ao invés de 0,0,0
-    const sp = this._pickSpawnPoint();
+    const sp = this._isOpenWorld ? this._pickSpawnPointOpenWorld() : this._pickSpawnPoint();
     p.x = sp.x; p.y = sp.y; p.z = sp.z;
     p.ry = 0; p.vy = 0;
     p.anim_state = 'idle';
@@ -456,6 +478,37 @@ export class ArenaRoom extends Room {
     console.log(`[ArenaRoom] +${p.nickname} ${p.is_host ? '[HOST]' : ''} (${this.state.players.size} players)`);
     // Hidrata profile (xp/level/coins persistidos)
     this._hydrateFromProfile(p).catch(() => {});
+    // OPEN_WORLD CLEAN: aparece no chao em spawn fixo (sem skydive)
+    if (this._isOpenWorld) {
+      p.br_state = "ALIVE"; p.altitude = 0; p.anim_state = "idle";
+    }
+  }
+
+  /**
+   * Joga o player no ar (br_state=SKYDIVE) para queda livre individual.
+   * Usado tanto no onJoin (entrou no servidor) quanto no respawn pós-morte.
+   */
+  _dropPlayerFromSky(p) {
+    if (!p) return;
+    // Posicao XZ ao redor do centro do mapa, com jitter
+    const sp = this._pickSpawnPoint();
+    const radius = 60 + Math.random() * 40; // 60-100 unidades do centro
+    const angle = Math.random() * Math.PI * 2;
+    p.x = sp.x + Math.cos(angle) * radius;
+    p.z = sp.z + Math.sin(angle) * radius;
+    p.y = 200; // altitude inicial do drop
+    p.ry = angle + Math.PI; // rosto pro centro
+    p.vy = 0;
+    p.altitude = 200;
+    p.skydive_pitch = 60; // mergulhando
+    p.skydive_yaw = p.ry;
+    p.br_state = 'SKYDIVE';
+    p.dead = false;
+    p.respawn_at = 0;
+    p.hp = p.maxHp;
+    p.anim_state = 'falling';
+    // Avisa SO o player do drop (anim de aterissagem) — outros veem via state
+    this.broadcast('player_skydive', { player_id: p.id, x: p.x, y: p.y, z: p.z });
   }
 
   async onLeave(client, consented) {
@@ -570,7 +623,7 @@ export class ArenaRoom extends Room {
     if (target.hp <= 0) {
       target.dead = true;
       target.deaths = (target.deaths || 0) + 1;
-      target.respawn_at = Date.now() + 3000;
+      target.respawn_at = Date.now() + 5000;
       this._kills.set(attacker.id, (this._kills.get(attacker.id) || 0) + 1);
       attacker.kills = (attacker.kills || 0) + 1;
       this._awardPvpKill(attacker);
@@ -1203,7 +1256,7 @@ export class ArenaRoom extends Room {
         if (best.hp <= 0) {
           best.dead = true;
           best.deaths = (best.deaths || 0) + 1;
-          best.respawn_at = Date.now() + 3000;
+          best.respawn_at = Date.now() + 5000;
           this.broadcast('died', { player_id: best.id, killer: boss.id });
         }
       }
@@ -1620,11 +1673,77 @@ export class ArenaRoom extends Room {
     this.broadcast('chat', { from: p.id, nick: p.nickname, msg });
   }
 
+  _onPlaceObject(client, payload) {
+    const p = this.state.players.get(client.userData?.playerId);
+    if (!p || p.dead) return;
+    const asset = String(payload?.asset_id || "").slice(0, 64);
+    if (!asset) return;
+    const x = parseFloat(payload?.x);
+    const y = parseFloat(payload?.y);
+    const z = parseFloat(payload?.z);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+    const ry = Number.isFinite(parseFloat(payload?.ry)) ? parseFloat(payload.ry) : 0;
+    const tier = parseInt(payload?.tier) || 0;
+    const w = new WorldObjectState();
+    this._woUid = (this._woUid || 0) + 1;
+    w.id = "wo_" + this.roomId + "_" + this._woUid;
+    w.owner_id = p.id;
+    w.asset_id = asset;
+    w.x = x; w.y = y; w.z = z; w.ry = ry;
+    w.hp = 100 + tier * 100;
+    w.max_hp = w.hp;
+    w.tier = tier;
+    w.created_at = Date.now();
+    this.state.world_objects.set(w.id, w);
+    this.broadcast("world_object_placed", { id: w.id, owner_id: w.owner_id, asset_id: w.asset_id, x, y, z, ry, tier });
+  }
+
+  _onRemoveObject(client, payload) {
+    const p = this.state.players.get(client.userData?.playerId);
+    if (!p) return;
+    const id = String(payload?.id || "");
+    const w = this.state.world_objects.get(id);
+    if (!w) return;
+    if (w.owner_id !== p.id) return;
+    this.state.world_objects.delete(id);
+  }
+
+  _onHitObject(client, payload) {
+    const p = this.state.players.get(client.userData?.playerId);
+    if (!p || p.dead) return;
+    const id = String(payload?.id || "");
+    const w = this.state.world_objects.get(id);
+    if (!w) return;
+    const dmg = Math.min(50, Math.max(1, parseInt(payload?.dmg) || 10));
+    w.hp = Math.max(0, w.hp - dmg);
+    this.broadcast("world_object_hit", { id, hp: w.hp, max_hp: w.max_hp });
+    if (w.hp === 0) {
+      this.state.world_objects.delete(id);
+      this.broadcast("world_object_destroyed", { id, asset_id: w.asset_id, owner_id: w.owner_id });
+    }
+  }
+
   // ── Tick autoritativo (MatchDirector + IA mobs + IA boss + expiração drops/fx) ──
   _tick(dt) {
-    // MatchDirector roda SEMPRE (não só durante started)
+    // OPEN_WORLD CLEAN: zero mob/boss/horda. Apenas players + respawn no chao.
+    if (this._isOpenWorld) {
+      const now = Date.now();
+      this.state.players.forEach((p) => {
+        if (p.dead && p.respawn_at > 0 && now >= p.respawn_at) {
+          const sp = this._pickSpawnPointOpenWorld();
+          p.x = sp.x; p.y = sp.y; p.z = sp.z;
+          p.hp = p.maxHp; p.dead = false; p.respawn_at = 0;
+          p.br_state = "ALIVE"; p.altitude = 0; p.anim_state = "idle";
+        }
+      });
+      if (this.state.mobs.size > 0) this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
+      if (this.state.drops.size > 0) this.state.drops.forEach((_, id) => this.state.drops.delete(id));
+      if (this.state.props.size > 0) this.state.props.forEach((_, id) => this.state.props.delete(id));
+      if (this.state.fx.size > 0) this.state.fx.forEach((_, id) => this.state.fx.delete(id));
+      if (this.state.boss) this.state.boss = undefined;
+      return; // SKIP director + brTick + boss
+    }
     this._matchDirectorTick();
-    // BR tick (zone shrink + fase transitions)
     this._brTick(dt);
 
     // IA do boss (quando existe)

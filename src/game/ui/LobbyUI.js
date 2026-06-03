@@ -461,8 +461,8 @@ export class LobbyUI {
   }
 
   _refreshRoomView() {
+    if (!this._visible) return;
     if (!this.cs.room || !this.cs.state) {
-      console.log('[Lobby] _refreshRoomView early: room=', !!this.cs.room, 'state=', !!this.cs.state);
       this._el.querySelector('#lb-empty').style.display = 'flex';
       this._el.querySelector('#lb-room').style.display = 'none';
       return;

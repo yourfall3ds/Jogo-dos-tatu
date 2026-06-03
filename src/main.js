@@ -101,6 +101,7 @@ if (typeof window !== 'undefined') {
 }
 import { LoginScreen }         from './game/ui/LoginScreen.js';
 import { LobbyUI }             from './game/ui/LobbyUI.js';
+import { ServerListUI }        from './game/ui/ServerListUI.js';
 import { ColyseusClient }      from './game/multiplayer/ColyseusClient.js';
 import { RemotePlayer }        from './game/multiplayer/RemotePlayer.js';
 import { RemoteMob }           from './game/multiplayer/RemoteMob.js';
@@ -863,6 +864,7 @@ async function init() {
   window._lobbyHall = lobbyHall;
   // Auto-entra no saguão quando entra em sala mas match ainda não começou
   cs.on('player_add', () => {
+    if (cs.state?.mode === "OPEN_WORLD") return;
     if (cs.state?.mode === 'BATTLE_ROYALE' && cs.state.br_phase === 'LOBBY' && !lobbyHall.isActive()) {
       lobbyHall.enter('spaceStation').catch(e => console.error('[LobbyHall] BR enter:', e));
     }
@@ -950,16 +952,27 @@ async function init() {
 
   const loginScreen = new LoginScreen(auth);
   window._loginScreen = loginScreen;
+  // LobbyUI fica disponivel pra compat (TransfpsFlowGuard), mas NAO eh mais
+  // exibida no fluxo principal — agora vai direto pra ServerListUI.
   const lobbyUI = new LobbyUI(auth, cs);
   window._lobbyUI = lobbyUI;
+  const serverListUI = new ServerListUI(auth, cs);
+  window._serverListUI = serverListUI;
 
+  // Flow novo: Login → ServerList → drop direto no mundo.
+  // O onContinue (single-player) foi removido — agora o botao principal
+  // do LoginScreen abre direto a ServerListUI (via _onOpenLobby).
   loginScreen.onContinue(() => {
-    $('start-screen').style.display = 'flex';
+    // Fallback legacy: se algo ainda chamar onContinue, redireciona pra ServerList.
+    serverListUI.show();
   });
   loginScreen.onOpenLobby(() => {
-    lobbyUI.show();
+    serverListUI.show();
   });
-  lobbyUI.onEnterGame(async (room) => {
+
+  // onEnterGame agora dispara quando a ServerListUI confirma join na sala.
+  // Mesma logica de carregar mapa + ativar input que a LobbyUI tinha.
+  const _onEnterGameImpl = async (room) => {
     // ── Abre portão + espera essenciais com tolerância de 200ms ──
     // Se TIER 1 já estiver pronto (ou ficar em <200ms): entra direto, sem barra.
     // Caso contrário: BootLoadGuard aparece para esse delay extra.
@@ -974,13 +987,26 @@ async function init() {
     const loading = window._loadingOverlay;
     let mapLoaded = false;
     try {
-      loading?.show('CARREGANDO MAPA', `${mapId} · preparando assets…`, true);
-      loading?.setProgress(10, 'baixando GLBs…');
-      await chibataMaps.load(mapId);
-      loading?.setProgress(80, 'compilando shaders…');
-      await new Promise(r => setTimeout(r, 200));
-      loading?.setProgress(100, 'pronto!');
-      await new Promise(r => setTimeout(r, 150));
+      const isOpenWorld = cs.state?.mode === "OPEN_WORLD";
+      if (isOpenWorld) {
+        loading?.show('ENTRANDO', 'preparando area de spawn', true);
+        loading?.setProgress(30, 'criando plano');
+        _ensureOpenWorldGround(scene);
+        loading?.setProgress(70, 'preparando shaders');
+        await new Promise(r => scene.executeWhenReady(r));
+        loading?.setProgress(100, 'pronto');
+        await new Promise(r => setTimeout(r, 100));
+      } else {
+        loading?.show('CARREGANDO MAPA', `${mapId} · preparando assets…`, true);
+        loading?.setProgress(10, 'baixando GLBs…');
+        await chibataMaps.load(mapId);
+        loading?.setProgress(80, 'compilando shaders…');
+        // Espera REAL pelos shaders/materials da scene ficarem prontos
+        // (substitui o setTimeout cosmetico que so dormia 200ms).
+        await new Promise(r => scene.executeWhenReady(r));
+        loading?.setProgress(100, 'pronto!');
+        await new Promise(r => setTimeout(r, 150));
+      }
       mapLoaded = true;
     } catch (e) {
       console.error('[Map] falhou - abortando entrada:', e);
@@ -990,17 +1016,82 @@ async function init() {
       loading?.hide();
     }
     if (!mapLoaded) {
-      // Aborta entrada: nao ativa input nem esconde start-screen, volta pro lobby
-      try { window._lobbyUI?.show?.(); }
-      catch (e) { console.error('[Lobby] show apos map fail:', e); throw e; }
+      // Aborta entrada: volta pra ServerListUI
+      try { window._serverListUI?.show?.(); }
+      catch (e) { console.error('[ServerList] show apos map fail:', e); throw e; }
       return;
     }
     $('start-screen').style.display = 'none';
     document.body.classList.add('in-game');
-    window._gameInput?.activate();
-    setFocusUI(true);
-    window._musicSystem?.start();
-  });
+    // Pointer Lock requer user-gesture. Em vez de chamar requestPointerLock automaticamente
+    // (que falha com NotAllowedError porque o gesture do click ENTRAR ja expirou apos os
+    // awaits do load), mostramos overlay "CLIQUE PARA JOGAR" — o click do overlay eh
+    // gesture FRESCO valido pro requestPointerLock.
+    _showClickToPlayOverlay(() => {
+      try { window._gameInput?.activate(); } catch (e) { console.error('[Input] activate:', e); }
+      try { setFocusUI(true); } catch (e) { console.error('[UI] setFocusUI:', e); }
+      try { window._musicSystem?.start(); } catch (e) { console.error('[Music] start:', e); }
+    });
+  };
+
+  // ── Overlay "CLIQUE PARA JOGAR" — captura gesture fresco pro Pointer Lock ──
+  function _showClickToPlayOverlay(onClick) {
+    let el = document.getElementById('click-to-play-overlay');
+    if (el) el.remove();
+    el = document.createElement('div');
+    el.id = 'click-to-play-overlay';
+    el.style.cssText = `
+      position:fixed; inset:0; z-index:9999;
+      background:radial-gradient(ellipse at center, rgba(10,15,30,0.85), rgba(0,0,0,0.95));
+      display:flex; align-items:center; justify-content:center;
+      cursor:pointer; color:#fff; font-family:'Segoe UI',monospace;
+      animation: ctpfadein 0.3s ease-out;
+    `;
+    el.innerHTML = `
+      <style>
+        @keyframes ctpfadein { from { opacity:0; } to { opacity:1; } }
+        @keyframes ctppulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.05); } }
+      </style>
+      <div style="text-align:center; animation: ctppulse 1.8s ease-in-out infinite;">
+        <div style="font-size:5em; margin-bottom:10px;">🪂</div>
+        <div style="font-size:2.4em; font-weight:900; letter-spacing:3px;
+                    background:linear-gradient(180deg,#fff5cc,#ffcc00,#ff9a2c);
+                    -webkit-background-clip:text;background-clip:text;color:transparent;
+                    filter:drop-shadow(0 0 18px rgba(255,180,40,.6));">
+          CLIQUE PARA CAIR
+        </div>
+        <div style="margin-top:14px; font-size:0.9em; color:#9ab; letter-spacing:2px;">
+          mouse vai ser travado na tela do jogo
+        </div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    el.addEventListener('pointerdown', () => {
+      el.remove();
+      try { onClick && onClick(); } catch (e) { console.error('[ClickToPlay]', e); }
+    }, { once: true });
+  }
+
+  // OPEN_WORLD CLEAN: plano vazio 200x200 com material liso + colisao
+  function _ensureOpenWorldGround(scene) {
+    let g = scene.getMeshByName("openworld_ground");
+    if (g) return g;
+    g = BABYLON.MeshBuilder.CreateGround("openworld_ground", { width: 200, height: 200, subdivisions: 4 }, scene);
+    g.position.y = 0;
+    g.checkCollisions = true;
+    g.receiveShadows = true;
+    const mat = new BABYLON.StandardMaterial("openworld_ground_mat", scene);
+    mat.diffuseColor = new BABYLON.Color3(0.18, 0.20, 0.25);
+    mat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+    mat.emissiveColor = new BABYLON.Color3(0.04, 0.06, 0.10);
+    g.material = mat;
+    console.log("[OpenWorld] plano vazio criado");
+    return g;
+  }
+  // Plugamos AMBAS as UIs no mesmo handler — a ServerListUI eh o caminho
+  // novo principal, a LobbyUI mantida pra compat com codigo legacy.
+  lobbyUI.onEnterGame(_onEnterGameImpl);
+  serverListUI.onEnterGame(_onEnterGameImpl);
 
   // ── Diretor de combate: povoa a fase com inimigos (tecla H) ───────
   const combatDirector = new CombatDirector(enemyManager, player, scene, level);
@@ -1318,11 +1409,11 @@ async function init() {
       // 5) Routing por estado de auth
       const logged = auth.isAuthenticated?.() && !auth.isGuest?.();
       if (logged) {
-        console.log('[Nav] entrou no LobbyUI (logado)');
-        try { window._lobbyUI?.show?.(); }
-        catch (e) { console.error('[Lobby] falha ao mostrar LobbyUI:', e); return; }
+        console.log('[Nav] entrou no ServerListUI (logado)');
+        try { window._serverListUI?.show?.(); }
+        catch (e) { console.error('[ServerList] falha ao mostrar:', e); return; }
       } else {
-        console.log('[Nav] entrou no LoginScreen (guest/nao-logado)');
+        console.log('[Nav] entrou no LoginScreen (nao-logado)');
         try { window._loginScreen?.show?.(); }
         catch (e) { console.error('[Auth] falha ao mostrar LoginScreen:', e); return; }
       }

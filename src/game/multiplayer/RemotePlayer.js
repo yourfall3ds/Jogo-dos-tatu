@@ -59,6 +59,9 @@ export class RemotePlayer {
     this.body._isRemotePlayer = true;
     this.body._remoteRef = this;
 
+    // ── FRENTE 7: tenta carregar GLB do avatar real (capsule fica como fallback) ──
+    this._tryLoadAvatar().catch(e => console.warn("[RemotePlayer] GLB load fail", e?.message));
+
     // ── Aura vermelha (PVP) ──
     this.aura = null;
     this._auraOn = false;
@@ -115,7 +118,7 @@ export class RemotePlayer {
   }
 
   /** Chamado pelo ColyseusClient quando um campo do schema muda. */
-  onSchemaChange(field) {
+  onSchemaChange(field, newValue) {
     const s = this.state;
     switch (field) {
       case 'pos':
@@ -134,6 +137,15 @@ export class RemotePlayer {
       case 'weapon':
         // (opcional: trocar viewmodel — placeholder por enquanto)
         break;
+    }
+    // FRENTE 7: troca animacao quando anim_state muda
+    if (field === "anim_state" && this._avatarAnims?.length) {
+      const v = newValue || s?.anim_state || "idle";
+      const match = this._avatarAnims.find(a => a.name.toLowerCase().includes(String(v).toLowerCase()));
+      if (match) {
+        this._avatarAnims.forEach(a => { try { a.stop(); } catch (_) {} });
+        try { match.start(true, 1.0); } catch (_) {}
+      }
     }
   }
 
@@ -411,6 +423,27 @@ export class RemotePlayer {
     requestAnimationFrame(tick);
     // Safety: hard dispose em 1.2s mesmo se algo trave
     setTimeout(() => { if (!this._disposed) this.disposeNow(); }, FADE_MS + 600);
+  }
+
+  async _tryLoadAvatar() {
+    try {
+      const url = "assets/character/playerUnarmed.glb";
+      const result = await BABYLON.SceneLoader.ImportMeshAsync("", url.substring(0, url.lastIndexOf("/") + 1), url.substring(url.lastIndexOf("/") + 1), this.scene);
+      if (!result?.meshes?.length) return;
+      const root = result.meshes[0];
+      root.name = "remote_avatar_" + this.playerId;
+      root.parent = this.body;
+      root.position.set(0, -1, 0);
+      root.scaling.set(1, 1, 1);
+      try { this.body.visibility = 0.05; } catch (_) {}
+      this._avatarRoot = root;
+      this._avatarAnims = result.animationGroups || [];
+      const idleAnim = this._avatarAnims.find(a => /idle/i.test(a.name));
+      if (idleAnim) { try { idleAnim.start(true, 1.0); } catch (_) {} }
+      console.log("[RemotePlayer] avatar carregado:", this.playerId.slice(0,8));
+    } catch (e) {
+      console.warn("[RemotePlayer] _tryLoadAvatar falhou:", e?.message);
+    }
   }
 }
 

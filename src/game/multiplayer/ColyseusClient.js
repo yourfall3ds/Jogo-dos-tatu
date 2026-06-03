@@ -37,6 +37,12 @@ export class ColyseusClient {
       'skill_cast': new Set(), 'xp_gain': new Set(), 'level_up': new Set(),
       'prop_add': new Set(), 'prop_remove': new Set(), 'prop_change': new Set(),
       'prop_hit': new Set(), 'prop_broken': new Set(),
+      'world_object_add': new Set(),
+      'world_object_remove': new Set(),
+      'world_object_change': new Set(),
+      'world_object_placed': new Set(),
+      'world_object_hit': new Set(),
+      'world_object_destroyed': new Set(),
       'fx_add': new Set(), 'fx_remove': new Set(),
       'pong': new Set(),
       // Frente B/C
@@ -55,6 +61,7 @@ export class ColyseusClient {
       'br_running': new Set(), 'br_finished': new Set(),
       'br_zone_warning': new Set(), 'br_zone_shrinking': new Set(), 'br_zone_idle': new Set(),
       'br_player_died': new Set(),
+      'player_skydive': new Set(),
     };
     this.ping = 0;
     this._lastInputSent = 0;
@@ -192,8 +199,15 @@ export class ColyseusClient {
     this.sessionId = this.room.sessionId;
     // ⚠️ MpGuard ATIVO — bloqueia spawns locais a partir de AGORA.
     MpGuard.enterRoom(this.room.roomId);
-    // Aguarda primeiro state sync antes de attachar listeners
+    // Aguarda primeiro state sync antes de attachar listeners de schema (.onAdd, .listen)
     this.room.onStateChange.once(() => this._attachStateListeners());
+    // Listener GERAL de qualquer patch no state — re-emite 'state_change' pra UI re-renderizar.
+    // Isso eh CRITICO pro Lobby: map_id/host_id/mode/br_phase chegam em deltas posteriores ao
+    // welcome. Sem isso, _refreshRoomView fica preso no early-return de map_id e a sala
+    // aparece vazia mesmo com player ja no state.
+    this.room.onStateChange((state) => {
+      this._notify('state_change', { reason: 'patch' });
+    });
 
     // Mensagens broadcasted pelo servidor (sempre disponíveis)
     this.room.onMessage('match_started', () => this._notify('match_started'));
@@ -210,6 +224,9 @@ export class ColyseusClient {
     this.room.onMessage('level_up', (m) => this._notify('level_up', m));
     this.room.onMessage('prop_hit', (m) => this._notify('prop_hit', m));
     this.room.onMessage('prop_broken', (m) => this._notify('prop_broken', m));
+    this.room.onMessage('world_object_placed', (m) => this._notify('world_object_placed', m));
+    this.room.onMessage('world_object_hit', (m) => this._notify('world_object_hit', m));
+    this.room.onMessage('world_object_destroyed', (m) => this._notify('world_object_destroyed', m));
     // Frentes B/C
     this.room.onMessage('match_countdown', (m) => this._notify('match_countdown', m));
     this.room.onMessage('match_finished', (m) => this._notify('match_finished', m));
@@ -229,6 +246,7 @@ export class ColyseusClient {
     this.room.onMessage('party_left', (m) => this._notify('party_left', m));
     // Battle Royale
     this.room.onMessage('br_takeoff', (m) => this._notify('br_takeoff', m));
+    this.room.onMessage('player_skydive', (m) => this._notify('player_skydive', m));
     this.room.onMessage('br_skydive_phase', (m) => this._notify('br_skydive_phase', m));
     this.room.onMessage('br_landed', (m) => this._notify('br_landed', m));
     this.room.onMessage('br_running', (m) => this._notify('br_running', m));
@@ -285,6 +303,8 @@ export class ColyseusClient {
       $(player).listen('is_ready', (v) => this._notify('player_change', { id: key, field: 'is_ready', value: v, state: player }));
       $(player).listen('weapon', (v) => this._notify('player_change', { id: key, field: 'weapon', value: v, state: player }));
       $(player).listen('held_item', (v) => this._notify('player_change', { id: key, field: 'held_item', value: v, state: player }));
+      $(player).listen('class_id', (v) => this._notify('player_change', { id: key, field: 'class_id', value: v, state: player }));
+      $(player).listen('equip_skin', (v) => this._notify('player_change', { id: key, field: 'equip_skin', value: v, state: player }));
       $(player).listen('x', () => this._notify('player_change', { id: key, field: 'pos', value: null, state: player }));
       $(player).listen('y', () => this._notify('player_change', { id: key, field: 'pos', value: null, state: player }));
       $(player).listen('z', () => this._notify('player_change', { id: key, field: 'pos', value: null, state: player }));
@@ -324,6 +344,17 @@ export class ColyseusClient {
     $(this.room.state).props.onRemove((prop, key) => {
       this._notify('prop_remove', { id: key, state: prop });
     });
+
+    // World Objects (dinâmicos: placed/hit/destroyed)
+    if (this.room.state.world_objects) {
+      $(this.room.state).world_objects.onAdd((wo, key) => {
+        this._notify('world_object_add', { id: key, state: wo });
+        $(wo).listen('hp', (v) => this._notify('world_object_change', { id: key, field: 'hp', value: v, state: wo }));
+      });
+      $(this.room.state).world_objects.onRemove((wo, key) => {
+        this._notify('world_object_remove', { id: key, state: wo });
+      });
+    }
 
     // FX (eventos visuais compartilhados)
     $(this.room.state).fx.onAdd((fx, key) => {

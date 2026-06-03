@@ -495,9 +495,24 @@ export class AuthSystem {
   isReady() { return !!this.profile; }
   /** Guest mode removido — sempre false. Mantido pra compat com chamadas antigas. */
   isGuest() { return false; }
+  /**
+   * Retorna o nickname melhor disponivel SEM throw:
+   *   1) profile.nickname (canonico, persistido em transfps.profiles)
+   *   2) user.user_metadata.full_name / .name / .preferred_username (Google OAuth)
+   *   3) email split (sem dominio)
+   *   4) 'Player' como ultimo recurso
+   * O throw original quebrava o fluxo qdo profile demorava p carregar (race do trigger
+   * transfps.handle_new_user vs primeiro getSession()).
+   */
   getNickname() {
-    if (!this.profile?.nickname) throw new Error('[Auth] getNickname sem profile carregado');
-    return this.profile.nickname;
+    if (this.profile?.nickname) return this.profile.nickname;
+    const meta = this.user?.user_metadata || {};
+    if (meta.full_name) return String(meta.full_name).trim().slice(0, 24);
+    if (meta.name) return String(meta.name).trim().slice(0, 24);
+    if (meta.preferred_username) return String(meta.preferred_username).trim().slice(0, 24);
+    const email = this.user?.email;
+    if (email) return String(email).split('@')[0].slice(0, 24);
+    return 'Player';
   }
   /** Retorna user id ou null se nao logado. Chamadas que precisam de id
    *  garantido devem validar antes (isAuthenticated()). */

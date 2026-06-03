@@ -78,18 +78,12 @@ export class LoginScreen {
               ✏️
             </button>
           </div>
-          <button id="ls-continue" style="
+          <button id="ls-lobby" style="
             padding:13px 22px; background:linear-gradient(135deg,#ffd84a,#ffaa2c);
             color:#1a1400; border:none; border-radius:10px; cursor:pointer;
-            font-size:1.05em; font-weight:900; letter-spacing:1px;
+            font-size:1.05em; font-weight:900; letter-spacing:2px;
             box-shadow:0 4px 18px rgba(255,170,40,.4);">
-            ▶ JOGAR (single)
-          </button>
-          <button id="ls-lobby" style="
-            padding:11px 20px; background:rgba(120,180,255,0.18); color:#cef;
-            border:1px solid rgba(120,180,255,0.40); border-radius:10px;
-            cursor:pointer; font-size:1em; font-weight:600;">
-            🌐 Multiplayer (lobby)
+            🪂 JOGAR ONLINE
           </button>
           <button id="ls-logout" style="
             padding:8px 14px; background:none; color:#666;
@@ -123,7 +117,6 @@ export class LoginScreen {
     this._el = el;
 
     el.querySelector('#ls-google').onclick = () => this._doGoogle();
-    el.querySelector('#ls-continue').onclick = () => this._doContinue(false);
     el.querySelector('#ls-lobby').onclick    = () => this._doContinue(true);
     el.querySelector('#ls-logout').onclick   = () => this._doLogout();
     el.querySelector('#ls-edit-nick').onclick = () => this._openNickEdit();
