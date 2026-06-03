@@ -564,6 +564,10 @@ export class WeaponSystem {
         const dmg = this.getCurrentWeapon().damage;
         window._cs?.sendHitPlayer?.(hit.pickedMesh._remoteRef.playerId, dmg, this.getCurrentWeapon().id);
         window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, { color: '#ff6666' });
+        // HITMARKER imediato no crosshair do atirador (tier por dano).
+        window._hitMarker?.hit({ dmg, crit: dmg >= 80 });
+        // Knockback + flinch PREDITIVO no alvo (visual, na direção do tiro).
+        try { hit.pickedMesh._remoteRef.playHit?.(dir, dmg >= 60 ? 4 : 2.5, dmg >= 80 ? 1 : 0); } catch (_) {}
         if (window._bloodFX) {
           window._bloodFX.spawn(hit.pickedPoint, dir, {
             multiplier: dmg >= 60 ? 1.4 : 0.85, sourceNode: hit.pickedMesh,

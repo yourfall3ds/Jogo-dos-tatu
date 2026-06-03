@@ -415,11 +415,18 @@ export class ColyseusClient {
     const _vx = player._vx || 0, _vz = player._vz || 0;
     const _speed = Math.hypot(_vx, _vz);
     const _grounded = (player.isGrounded !== false);
+    // ── THRESHOLD calibrado pela FISICA REAL do Player ──
+    //   Player.SPEED = 11 (walk em regime), sprint = 11 * 1.75 ≈ 19.25.
+    //   O corte antigo (_speed > 6.5) classificava TODA caminhada como 'run'
+    //   (porque andar normal ja da _speed ~= 11 > 6.5), e 'walk' so aparecia
+    //   na rampa de aceleracao — o remoto via Correndo o tempo todo.
+    //   Agora 'run' depende da FLAG de sprint (criterio primario) OU de um corte
+    //   ENTRE walk(11) e sprint(19.25) -> 14, separando walk de run de verdade.
     let animState;
-    if (!_grounded)                          animState = 'fall';
-    else if (player._sprinting || _speed > 6.5) animState = 'run';
-    else if (_speed > 0.8)                   animState = 'walk';
-    else                                     animState = 'idle';
+    if (!_grounded)                              animState = 'fall';
+    else if (player._sprinting || _speed > 14)   animState = 'run';
+    else if (_speed > 0.8)                       animState = 'walk';
+    else                                         animState = 'idle';
     this.room.send('input', {
       x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2),
       ry: +(player.yaw || 0).toFixed(1),

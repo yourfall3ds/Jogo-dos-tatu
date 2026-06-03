@@ -297,9 +297,22 @@ export class RemotePlayer {
       case 'ry':
         this._pushSnapshot();
         break;
-      case 'hp':
-        this._applyHp(s.hp, s.maxHp || 100);
+      case 'hp': {
+        const newHp = s.hp;
+        const prevHp = (this._lastHp != null) ? this._lastHp : newHp;
+        const dmg = prevHp - newHp;
+        this._lastHp = newHp;
+        this._applyHp(newHp, s.maxHp || 100);
+        // FIX dano visual remoto: HP caiu e nao esta morto → pisca vermelho no
+        // avatar GLB + numero de dano flutuante (reusa o DamageNumbers global).
+        // try/catch dedicado por FX: se um falhar, NAO pode pular o overlay de
+        // anim_state que vem DEPOIS no mesmo evento (bug central de PvP).
+        if (dmg > 0 && newHp > 0 && !this.state?.dead && !this._disposing && !this._disposed) {
+          try { this._flashHit(); } catch (_) {}
+          try { this._spawnDamageNumber(dmg); } catch (_) {}
+        }
         break;
+      }
       case 'pvp_on':
         this._applyPvp(s.pvp_on === true);
         break;
@@ -428,6 +441,14 @@ export class RemotePlayer {
       try { clip.start(false, 1.0); } catch (_) {}
     }
 
+    // ── VFX de corte (slash arc) — barato e transiente (~200ms) ──
+    // Só para golpes melee (não pra tiro de arco). Dá a leitura visual da
+    // "espadada" que faltava: o clipe do GLB sozinho era sutil demais.
+    const k = String(state || '').toLowerCase();
+    const isMelee = k === 'attacking' || k === 'melee' || k === 'punch' ||
+                    k === 'sword_atk' || k === 'sword';
+    if (isMelee) { try { this._spawnSlashVFX(); } catch (_) {} }
+
     // Marca como "em ataque" SEM gravar em _curAnimState (pra restaurar a locomoção).
     this._curAnim = clip;
     this._attackingUntil = performance.now() + ms;
@@ -444,13 +465,211 @@ export class RemotePlayer {
     }, ms);
   }
 
+  /**
+   * REAÇÃO DE HIT no player remoto (lado do ATACANTE).
+   *
+   * O estado autoritativo (posição/HP) vem do server e é interpolado nos
+   * snapshots — NÃO mexemos no estado lógico aqui. Pra dar game-feel de
+   * IMPACTO no PvP, aplicamos um EMPURRÃO VISUAL PREDITIVO: deslocamos o
+   * `_current` (a posição RENDERIZADA suavizada) na direção do golpe por um
+   * instante. O próximo snapshot do server reconverge a posição (update() faz
+   * lerp pro alvo), então o nudge some sozinho SEM desync — é puramente
+   * cosmético, igual ao hitstop do atacante já existente.
+   *
+   * Também dispara o flinch (anim de reação) + flash vermelho no avatar.
+   *
+   * @param {BABYLON.Vector3} dirVec  direção do golpe (do atacante p/ alvo), XZ
+   * @param {number} force            força do knockback (kbEff do CombatSystem)
+   * @param {number} critLevel        0/1/2 — crit empurra mais
+   */
+  playHit(dirVec, force = 1, critLevel = 0) {
+    if (this._disposed || this._disposing) return;
+    try {
+      if (dirVec && typeof BABYLON !== 'undefined') {
+        let dx = dirVec.x || 0, dz = dirVec.z || 0;
+        const len = Math.hypot(dx, dz) || 1;
+        dx /= len; dz /= len;
+        // Força bruta do kb vira um nudge pequeno (metros). Crit empurra mais.
+        // Clamp em ~0.9m: legível mas sem "voar" (o server reconverge no tick).
+        const push = Math.min(0.9, 0.16 * (force || 1) * (critLevel >= 1 ? 1.4 : 1.0));
+        this._current.x += dx * push;
+        this._current.z += dz * push;
+        try { this.root.position.set(this._current.x, this._current.y, this._current.z); } catch (_) {}
+      }
+    } catch (_) {}
+    // Flinch (anim de reação) + flash vermelho.
+    try { this.playAttackOnce('stunned', critLevel >= 1 ? 360 : 220); } catch (_) {}
+    try { this._flashHit(); } catch (_) {}
+  }
+
+  /**
+   * Flash vermelho transiente no corpo ao tomar dano. Reusado pelo
+   * onSchemaChange('hp') (dano autoritativo) e por playHit (preditivo).
+   * Pisca o emissiveColor do material por ~140ms e restaura pro estado certo.
+   */
+  _flashHit() {
+    if (this._disposed || this._disposing) return;
+    const mat = this._bodyMat;
+    if (!mat || typeof BABYLON === 'undefined') return;
+    try {
+      if (!this._emissiveBackup) {
+        this._emissiveBackup = mat.emissiveColor ? mat.emissiveColor.clone() : new BABYLON.Color3(0, 0, 0);
+      }
+      mat.emissiveColor = new BABYLON.Color3(0.95, 0.12, 0.12);
+      if (this._flashTimer) { clearTimeout(this._flashTimer); }
+      this._flashTimer = setTimeout(() => {
+        this._flashTimer = null;
+        try {
+          if (this._disposed || this._disposing) return;
+          if (this._auraOn) mat.emissiveColor = new BABYLON.Color3(0.50, 0.05, 0.05);
+          else if (this._emissiveBackup) mat.emissiveColor = this._emissiveBackup.clone();
+        } catch (_) {}
+      }, 140);
+    } catch (_) {}
+  }
+
+  /**
+   * Número de dano flutuante na cabeça do avatar remoto (reusa o
+   * DamageNumbers global). Disparado pelo onSchemaChange('hp').
+   */
+  _spawnDamageNumber(dmg) {
+    if (this._disposed || this._disposing) return;
+    try {
+      const dn = (typeof window !== 'undefined') ? window._dmgNumbers : null;
+      if (!dn?.spawn || typeof BABYLON === 'undefined') return;
+      const pos = this.root?.getAbsolutePosition?.();
+      if (!pos) return;
+      const head = pos.add(new BABYLON.Vector3(0, 1.9, 0));
+      dn.spawn(head, dmg, { color: '#ff8844' });
+    } catch (_) {}
+  }
+
+  /**
+   * VFX de corte BARATO e transiente (~200ms): um plane com textura de arco
+   * (gerada via canvas/DynamicTexture, cacheada estaticamente) anexado na
+   * frente do avatar remoto. Faz sweep angular + fade emissivo e se descarta
+   * sozinho. Zero TrailMesh, zero shader pesado, zero dependencia externa.
+   *
+   * Ancora: this._weaponSocket (mao da arma) se existir, senao this.root.
+   * Orientacao: usa o ry atual (this._current.ry) ja aplicado no root.
+   */
+  _spawnSlashVFX() {
+    if (this._disposed || this._disposing) return;
+    const scene = this.scene;
+    if (!scene || typeof BABYLON === 'undefined') return;
+
+    // Textura de arco (canvas) — construida UMA vez e compartilhada por todos.
+    // Se a cache aponta pra textura de uma cena ja descartada, recria.
+    if (RemotePlayer._slashTex && RemotePlayer._slashTex.getScene &&
+        RemotePlayer._slashTex.getScene() !== scene) {
+      RemotePlayer._slashTex = null;
+    }
+    if (!RemotePlayer._slashTex) {
+      try {
+        const S = 128;
+        const tex = new BABYLON.DynamicTexture('slashTex', { width: S, height: S }, scene, false);
+        const ctx = tex.getContext();
+        ctx.clearRect(0, 0, S, S);
+        // Arco em forma de crescente: stroke grosso com gradiente radial pra dar fade nas pontas.
+        const cx = S * 0.5, cy = S * 0.95, rad = S * 0.78;
+        ctx.lineCap = 'round';
+        const grd = ctx.createLinearGradient(0, 0, S, 0);
+        grd.addColorStop(0.0, 'rgba(120,230,255,0)');
+        grd.addColorStop(0.5, 'rgba(190,250,255,1)');
+        grd.addColorStop(1.0, 'rgba(120,230,255,0)');
+        ctx.strokeStyle = grd;
+        for (let pass = 0; pass < 2; pass++) {
+          ctx.lineWidth = pass === 0 ? 26 : 10;
+          ctx.globalAlpha = pass === 0 ? 0.55 : 1.0;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rad, Math.PI * 1.18, Math.PI * 1.82, false);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        tex.update();
+        tex.hasAlpha = true;
+        RemotePlayer._slashTex = tex;
+      } catch (_) { RemotePlayer._slashTex = null; }
+    }
+    if (!RemotePlayer._slashTex) return;
+
+    let plane = null, mat = null;
+    try {
+      plane = BABYLON.MeshBuilder.CreatePlane(`slash_${this.playerId}_${performance.now() | 0}`,
+        { size: 1.6, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+      mat = new BABYLON.StandardMaterial(`slashMat_${this.playerId}`, scene);
+      mat.diffuseTexture = RemotePlayer._slashTex;
+      mat.emissiveTexture = RemotePlayer._slashTex;
+      mat.opacityTexture = RemotePlayer._slashTex;
+      mat.emissiveColor = new BABYLON.Color3(0.55, 0.95, 1.0);
+      mat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+      mat.specularColor = new BABYLON.Color3(0, 0, 0);
+      mat.disableLighting = true;
+      mat.backFaceCulling = false;
+      mat.alphaMode = BABYLON.Engine.ALPHA_ADD;
+      mat.alpha = 1;
+      plane.material = mat;
+      plane.isPickable = false;
+      plane.doNotSyncBoundingInfo = true;
+      plane.alwaysSelectAsActiveMesh = true;
+
+      // Ancora: socket da mao se existir, senao o root (avatar inteiro).
+      const anchor = this._weaponSocket || this.root;
+      plane.parent = anchor;
+      // Se ancorado no root: posiciona na frente/altura do peito.
+      // Se no socket da mao: fica perto da lamina (escala compensada do osso ja
+      // aplicada no socket, entao usa offset pequeno).
+      if (anchor === this.root) {
+        plane.position.set(0, 1.1, 0.7);
+        plane.rotation.set(0, 0, 0);
+      } else {
+        plane.position.set(0, 0, 0);
+      }
+    } catch (_) {
+      try { mat?.dispose(); } catch (_) {}
+      try { plane?.dispose(); } catch (_) {}
+      return;
+    }
+
+    // Animacao manual via RAF: sweep angular (roll) + fade do alpha em ~200ms.
+    const DUR = 200;
+    const start = performance.now();
+    const baseRoll = -0.7; // comeca um pouco "atras"
+    const sweep = 1.6;     // varre ~1.6 rad
+    const tick = () => {
+      if (this._disposed || this._disposing) { try { mat.dispose(); } catch (_) {} try { plane.dispose(); } catch (_) {} return; }
+      const e = performance.now() - start;
+      const f = Math.min(1, e / DUR);
+      try {
+        plane.rotation.z = baseRoll + sweep * f;
+        const s = 1 + 0.35 * f;
+        plane.scaling.set(s, s, s);
+        mat.alpha = (1 - f) * (f < 0.25 ? f / 0.25 : 1); // ramp-in rapido, fade-out
+      } catch (_) {}
+      if (f < 1) requestAnimationFrame(tick);
+      else { try { mat.dispose(); } catch (_) {} try { plane.dispose(); } catch (_) {} }
+    };
+    requestAnimationFrame(tick);
+  }
+
   _pushSnapshot() {
-    this._snapshots.push({
-      t: performance.now(),
-      x: this.state.x || 0, y: this.state.y || 0, z: this.state.z || 0,
-      ry: this.state.ry || 0,
-    });
-    while (this._snapshots.length > 8) this._snapshots.shift();
+    // FIX bug 2b: o ColyseusClient emite 4 listens distintas por tick do server
+    // (x, y, z, ry → ate 4 chamadas quase-simultaneas). Empurrar 4 snapshots por
+    // tick polui o buffer (que so guarda N) e colapsa os timestamps, jogando a
+    // busca de par a/b pro fallback "sem interpolacao" = stutter/tranco.
+    // COALESCE: se a ultima snapshot foi empurrada no MESMO burst (< 6ms), so
+    // atualiza ela in-place com o state mais recente em vez de criar outra.
+    const now = performance.now();
+    const x = this.state.x || 0, y = this.state.y || 0, z = this.state.z || 0, ry = this.state.ry || 0;
+    const last = this._snapshots[this._snapshots.length - 1];
+    if (last && (now - last.t) < 6) {
+      last.x = x; last.y = y; last.z = z; last.ry = ry;
+      return;
+    }
+    this._snapshots.push({ t: now, x, y, z, ry });
+    // Buffer maior (16): com ate ~4 deltas/tick agora coalescidos, isto guarda
+    // varios ticks reais de margem pra interpolacao sem cair no fallback.
+    while (this._snapshots.length > 16) this._snapshots.shift();
   }
 
   _setNickname(name) {
@@ -504,6 +723,66 @@ export class RemotePlayer {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────
+  //  FEEDBACK DE DANO PvP (chamados em onSchemaChange case 'hp')
+  //
+  //  _flashHit(): pisca o emissive do avatar/capsule de vermelho por ~120ms e
+  //  restaura o emissive correto (vermelho-pvp se aura ligada, senao a cor base).
+  //  _spawnDamageNumber(): reusa o DamageNumbers global (window._dmgNumbers) na
+  //  posicao do root (acima do peito) — mesmo sistema do dano em mobs.
+  // ─────────────────────────────────────────────────────────────────
+
+  /** Pisca o avatar de vermelho por ~120ms ao tomar dano (feedback de hit PvP). */
+  _flashHit() {
+    if (this._disposing || this._disposed) return;
+    // Coleta os materiais a piscar: emissive do GLB (se carregado) ou da capsule.
+    const mats = [];
+    if (this._avatarRoot && this._avatarRoot.getChildMeshes) {
+      for (const m of this._avatarRoot.getChildMeshes()) {
+        if (m?.material?.emissiveColor) mats.push(m.material);
+      }
+    }
+    if (this._bodyMat?.emissiveColor) mats.push(this._bodyMat);
+    if (!mats.length) return;
+
+    const RED = new BABYLON.Color3(1.0, 0.12, 0.12);
+    for (const mat of mats) {
+      try {
+        if (!mat._rpHitSaved) mat._rpHitSaved = mat.emissiveColor.clone();
+        mat.emissiveColor = RED.clone();
+      } catch (_) {}
+    }
+    // Re-arma o timer (hits em sequencia mantem o flash) e restaura no fim.
+    if (this._hitFlashTimer) { try { clearTimeout(this._hitFlashTimer); } catch (_) {} }
+    this._hitFlashTimer = setTimeout(() => {
+      this._hitFlashTimer = null;
+      if (this._disposed || this._disposing) return;
+      for (const mat of mats) {
+        try {
+          if (mat._rpHitSaved) { mat.emissiveColor = mat._rpHitSaved; mat._rpHitSaved = null; }
+        } catch (_) {}
+      }
+      // Garante que a capsule volte pro emissive PvP/base correto.
+      if (this._bodyMat) {
+        try {
+          if (this._auraOn) this._bodyMat.emissiveColor = new BABYLON.Color3(0.50, 0.05, 0.05);
+          else this._bodyMat.emissiveColor = new BABYLON.Color3(this._rgb.r * 0.35, this._rgb.g * 0.35, this._rgb.b * 0.35);
+          this._bodyMat._rpHitSaved = null;
+        } catch (_) {}
+      }
+    }, 120);
+  }
+
+  /** Numero de dano flutuante sobre o avatar remoto (reusa o DamageNumbers global). */
+  _spawnDamageNumber(dmg) {
+    if (this._disposing || this._disposed) return;
+    if (!(dmg > 0)) return;
+    const dn = (typeof window !== 'undefined') ? window._dmgNumbers : null;
+    if (!dn?.spawn) return;
+    const pos = new BABYLON.Vector3(this._current.x, this._current.y + 1.4, this._current.z);
+    try { dn.spawn(pos, dmg, { color: '#ff6666' }); } catch (_) {}
+  }
+
   _applyPvp(on) {
     if (this._auraOn === on) return;
     this._auraOn = on;
@@ -529,13 +808,28 @@ export class RemotePlayer {
 
   _applyDead(dead) {
     if (dead) { this._applyDeadRagdoll(); return; }
+    // ── RESPAWN (dead → false) ──
     // Reset: volta avatar/capsule pro estado em pe.
     const target = this._avatarRoot || this.body;
     try { target.rotation.x = 0; } catch (_) {}
     try { this.body.rotation.x = 0; this.body.position.y = 0.9; } catch (_) {}
+    // FIX bug 3b: sem isto o avatar ressuscitado fica CONGELADO na ultima pose
+    // de morte ate o proximo delta de anim_state chegar. Reinicia a locomocao
+    // agora (idle REAL ou o anim_state atual do schema).
+    this._attackingUntil = 0;
+    if (this._attackTimer) { try { clearTimeout(this._attackTimer); } catch (_) {} this._attackTimer = null; }
+    this._curAnim = null;   // forca _playAnimState a reiniciar o clipe (nao e mais o de morte)
+    if (this._avatarAnims?.length) {
+      try { this._playAnimState(this.state?.anim_state || 'idle'); } catch (_) {}
+    }
   }
 
   _applyDeadRagdoll() {
+    // FIX bug 3a: cancela qualquer overlay de ataque pendente. Sem isto, um
+    // _attackTimer agendado em playAttackOnce dispara ~ms depois e arranca o
+    // cadaver da pose de morte de volta pra locomocao.
+    this._attackingUntil = 0;
+    if (this._attackTimer) { try { clearTimeout(this._attackTimer); } catch (_) {} this._attackTimer = null; }
     try {
       if (this._avatarRoot) {
         this._avatarAnims?.forEach(a => { try { a.stop(); } catch(_){} });
@@ -606,13 +900,29 @@ export class RemotePlayer {
       target = this._snapshots[0];
     }
     if (target) {
-      const k = Math.min(1, dt * 18);
-      this._current.x += (target.x - this._current.x) * k;
-      this._current.y += (target.y - this._current.y) * k;
-      this._current.z += (target.z - this._current.z) * k;
-      let dy = target.ry - this._current.ry;
-      while (dy > 180) dy -= 360; while (dy < -180) dy += 360;
-      this._current.ry += dy * k;
+      // FIX bug 2c: deteccao de TELEPORTE (respawn / correcao grande do server).
+      // Sem isto, o segundo suavizador (k) desliza _current pelo mapa inteiro —
+      // o avatar atravessa parede deslizando ate alcancar o ponto novo. Se o alvo
+      // saltou > TELEPORT_DIST do _current, SNAP direto (sem interpolar).
+      const ddx = target.x - this._current.x;
+      const ddy = target.y - this._current.y;
+      const ddz = target.z - this._current.z;
+      const dist2 = ddx * ddx + ddy * ddy + ddz * ddz;
+      const TELEPORT_DIST = 5; // metros
+      if (dist2 > TELEPORT_DIST * TELEPORT_DIST) {
+        this._current.x = target.x;
+        this._current.y = target.y;
+        this._current.z = target.z;
+        this._current.ry = target.ry;
+      } else {
+        const k = Math.min(1, dt * 18);
+        this._current.x += ddx * k;
+        this._current.y += ddy * k;
+        this._current.z += ddz * k;
+        let dy = target.ry - this._current.ry;
+        while (dy > 180) dy -= 360; while (dy < -180) dy += 360;
+        this._current.ry += dy * k;
+      }
     }
     this.root.position.set(this._current.x, this._current.y, this._current.z);
     // FIX orientacao: player.glb (Meshy) exporta de COSTAS (rosto para -Z).
@@ -640,6 +950,11 @@ export class RemotePlayer {
   disposeNow() {
     if (this._disposed) return;
     this._disposed = true;
+    // Cancela timers pendentes (overlay de ataque + flash de hit) pra nao tocarem
+    // em materiais/anims ja descartados. As guardas _disposed ja barram o efeito,
+    // mas limpar aqui evita o setTimeout solto.
+    if (this._attackTimer) { try { clearTimeout(this._attackTimer); } catch (_) {} this._attackTimer = null; }
+    if (this._hitFlashTimer) { try { clearTimeout(this._hitFlashTimer); } catch (_) {} this._hitFlashTimer = null; }
     try { this._detachWeapon?.(); } catch (_) {}
     try { this._weaponSocket?.dispose(); } catch (_) {}
     try { this.body?.dispose(); } catch (_) {}

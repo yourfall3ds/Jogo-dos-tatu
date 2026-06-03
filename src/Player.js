@@ -193,7 +193,7 @@ export class Player {
   _createCamera() {
     this.camera = new BABYLON.FreeCamera('fpsCam', BABYLON.Vector3.Zero(), this.scene);
     this.camera.minZ = 0.05;
-    this.camera.maxZ = 600;
+    this.camera.maxZ = 2500;   // far-plane p/ ver o mapão (névoa esconde o pop-in)
     this.camera.fov  = 1.38;
     this.camera.inputs.clear();          // remove inputs padrão
     this.scene.activeCamera = this.camera;
@@ -769,13 +769,27 @@ export class Player {
       this._vz *= 0.30;
     }
 
-    // ── 6. Pulo / Wall jump ──────────────────────────────────────────
+    // ── 6. Pulo / Wall jump / DASH PRA CIMA (double-tap Space) ───────
     const spaceNow  = this.input.isDown('Space');
     const jumpPress = spaceNow && !this._wasSpace && canMove;
     this._wasSpace  = spaceNow;
 
     if (jumpPress) {
-      if (this.isGrounded) {
+      // Detecta DOUBLE-TAP do espaço: 2 toques < 280ms = dash pra cima 2x.
+      const nowMs = performance.now();
+      const isDoubleSpace = (this._lastSpaceTapMs != null) && (nowMs - this._lastSpaceTapMs < 280);
+      this._lastSpaceTapMs = nowMs;
+
+      if (isDoubleSpace && this._airDashesLeft > 0) {
+        // DASH PRA CIMA: impulso vertical 2x o pulo normal. Encadeável no ar
+        // (consome 1 dash aéreo). Reseta o duplo-toque pra não disparar 2x.
+        this.velY = this.JUMP_FORCE * 2;
+        this._airDashesLeft--;
+        this._lastSpaceTapMs = null;
+        this.sounds?.playNow?.('jump', 0.85);
+        try { this.weapon?.applyWallJumpTilt?.(0); } catch (_) {}
+        this.animator?.onWallJump?.();
+      } else if (this.isGrounded) {
         this.velY = this.JUMP_FORCE;
         this.sounds?.playNow?.('jump', 0.7);
       } else {
@@ -954,6 +968,7 @@ export class Player {
     const vNow = this.input.isDown('KeyV');
     if (vNow && !this._wasV) {
       this._tpsMode = !this._tpsMode;
+      this._tpsCamDist = null; // zera lerp de distância p/ não dar snap ao voltar pra TPS
       this.animator?.setVisible(this._tpsMode);
       this._updateWeaponVisibility();
     }
@@ -1333,6 +1348,11 @@ export class Player {
     this.hp = Math.max(0, this.hp - amount);
     this._damageFlashT = 0.55;
 
+    // ── Som de impacto/dor ao LEVAR dano (mob/queda/melee local) ──────
+    // PvP via rede já toca 'hurt' no handler hit_confirmed; aqui garante
+    // feedback sonoro também em dano de inimigo e knockback local.
+    try { this.sounds?.playNow?.('hurt', 0.9); } catch (_) {}
+
     // ── Camera shake por tipo de ataque ───────────────────────────
     if (attackType === 'slam') {
       this._dmgShakeT   = 0.60;
@@ -1540,17 +1560,38 @@ export class Player {
       const toCamDist = toCamVec.length();
       const toCamDir  = toCamVec.scale(1 / toCamDist);
       const wallRay   = new BABYLON.Ray(pivot, toCamDir, toCamDist + 0.15);
+      // Predicate aceita QUALQUER colisor: paredes pickáveis (checkCollisions)
+      // E proxies de colisão de props GLB (que vêm isPickable=false, mas têm
+      // checkCollisions=true). Sem isso a câmera atravessa a geometria visível
+      // de props cujo colisor é proxy. Ignora só o próprio mesh do player.
       const wallHit   = this.scene.pickWithRay(wallRay, m =>
-        m.checkCollisions === true && m.isPickable !== false
+        m.checkCollisions === true && m !== this.mesh
       );
 
+      // Distância-alvo da câmera ao longo do ray pivot→câmera.
+      // Sem hit: distância cheia. Com hit: encosta na parede com margem,
+      // MAS o piso de segurança NUNCA pode ultrapassar a distância real do
+      // hit — senão a câmera atravessa a parede (clip). Por isso
+      // min(toCamDist, max(0.20, dist-0.25)) e clamp final pelo hit real.
+      let targetDist;
       if (wallHit?.hit && wallHit.distance < toCamDist) {
-        // Aproxima câmera da parede com pequena margem de segurança
-        const safe = Math.max(0.35, wallHit.distance - 0.25);
-        this.camera.position.copyFrom(pivot.add(toCamDir.scale(safe)));
+        const margin = wallHit.distance - 0.25;
+        targetDist = Math.min(toCamDist, Math.max(0.20, margin));
+        targetDist = Math.min(targetDist, wallHit.distance); // nunca passa da parede
       } else {
-        this.camera.position.set(desiredX, desiredY, desiredZ);
+        targetDist = toCamDist;
       }
+
+      // Anti-snap: encolher (aproximar da parede) é IMEDIATO p/ evitar clip;
+      // crescer (reabrir ao sair da parede) é interpolado p/ a câmera não
+      // "pular" de volta. Lerp só na direção de afastamento.
+      const prevDist = this._tpsCamDist ?? targetDist;
+      const nextDist = (targetDist < prevDist)
+        ? targetDist
+        : prevDist + (targetDist - prevDist) * 0.20;
+      this._tpsCamDist = nextDist;
+
+      this.camera.position.copyFrom(pivot.add(toCamDir.scale(nextDist)));
 
       // Alvo da câmera: ponto distante na direção de visada (yaw + pitch)
       // Isso garante que camera.getDirection(Forward) == direção de mira real

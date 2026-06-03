@@ -54,8 +54,10 @@ import { ChibataMapLoader }    from './game/scene/ChibataMapLoader.js';
 import { MapSelectUI }         from './game/ui/MapSelectUI.js';
 import { BloodFX }             from './game/combat/BloodFX.js';
 import { BulletTracer }        from './game/effects/BulletTracer.js';
+import { HitMarker }           from './game/effects/HitMarker.js';
 import { WaterSystem }         from './game/scene/WaterSystem.js';
 import { SkillMapExtras }      from './game/scene/SkillMapExtras.js';
+import { BiomeWorld }          from './game/scene/BiomeWorld.js';
 import { SettingsUI }          from './game/ui/SettingsUI.js';
 import { MusicSystem }         from './game/audio/MusicSystem.js';
 import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
@@ -466,7 +468,7 @@ async function init() {
 
   // ── Névoa (leve — só pra dar profundidade no horizonte) ──────────
   scene.fogMode    = BABYLON.Scene.FOGMODE_EXP2;
-  scene.fogDensity = 0.0018;
+  scene.fogDensity = 0.001;   // alcance ~3x maior p/ mapão (cor segue o céu via DayNightCycle)
   scene.fogColor   = new BABYLON.Color3(.58, .70, .92);
 
   // ── Ciclo dia/noite (sol, lua, fases, céu HD) ────────────────────
@@ -534,6 +536,12 @@ async function init() {
   const skillExtras = new SkillMapExtras(scene, level);
   skillExtras.build();
   window._skillExtras = skillExtras;
+
+  // ── Mapão por biomas com streaming (estilo Fortnite) ──
+  // Só ativa no OPEN_WORLD (via _ensureOpenWorldGround). Carrega biomas por
+  // proximidade do player — boot rápido, nunca os ~190MB de uma vez.
+  const biomeWorld = new BiomeWorld(scene, { shadowGen, seed: 1337 });
+  window._biomeWorld = biomeWorld;
 
   // ── Music + Mute button (música começa APENAS no JOGAR) ──
   const musicSystem = new MusicSystem();
@@ -734,6 +742,13 @@ async function init() {
       const color = m.from === myId ? (crit ? '#ff5050' : '#ffffff') : '#ffaa44';
       window._dmgNumbers?.spawn(targetPos, m.dmg, { crit, color });
     }
+    // ── HITMARKER: confirmação no crosshair quando EU fui o atacante.
+    //    Cobre melee E tiro (server confirma ambos via hit_confirmed).
+    //    Tier por dano; X de kill quando o alvo morre (hp<=0).
+    if (m.from === myId) {
+      const killed = (m.target_hp != null && m.target_hp <= 0) || m.killed === true;
+      window._hitMarker?.hit({ dmg: m.dmg || 0, crit: m.dmg >= 80, kill: killed });
+    }
     if (targetPos && window._bloodFX) {
       const isSword = String(m.weapon || '').startsWith('sword');
       window._bloodFX.spawn(
@@ -765,7 +780,10 @@ async function init() {
   cs.on("hit_confirmed", (m) => {
     try {
       const myId = window._auth?.getUserId?.();
-      if (m.target_id && m.target_id === myId) {
+      // FIX: o server manda o alvo no campo `m.to` (hit_confirmed PvP), não
+      // `m.target_id`. Antes a condição era sempre falsa → nunca tocava som
+      // de dor nem flash ao levar dano de outro player.
+      if (m.to && m.to === myId) {
         const sm = window._soundManager || window._player?.sounds;
         if (sm?.playNow) sm.playNow("hurt", 0.9);
         _showDamageFlash();
@@ -777,7 +795,8 @@ async function init() {
   cs.on("hit_confirmed", (m) => {
     try {
       const me = window._player?.mesh?.position;
-      const target = m?.target_id ? cs.state?.players?.get?.(m.target_id) : null;
+      // FIX: alvo do hit PvP vem em `m.to`, não `m.target_id`.
+      const target = m?.to ? cs.state?.players?.get?.(m.to) : null;
       if (me && target && Number.isFinite(target.x)) {
         const tPos = new BABYLON.Vector3(target.x, target.y + 1.5, target.z);
         bulletTracer.spawn(me, tPos);
@@ -1494,6 +1513,9 @@ async function init() {
     // Congela o material apos config: evita recompile/flicker no WebGPU.
     if (g.material && g.material.freeze) g.material.freeze();
     console.log("[OpenWorld] plano vazio criado");
+    // Liga o streaming de biomas (mapão). O update() no render loop carrega
+    // os biomas conforme o player se aproxima. Idempotente (enable repetido ok).
+    try { window._biomeWorld?.enable(); } catch (e) { console.error('[BiomeWorld] enable:', e); }
     return g;
   }
   // Plugamos AMBAS as UIs no mesmo handler — a ServerListUI eh o caminho
@@ -1531,6 +1553,10 @@ async function init() {
   // ── Hit-stop: freeze-frame de impacto nos golpes fortes ───────────
   const hitStop = new HitStop(scene, engine, player.camera);
   window._hitStop = hitStop;
+
+  // ── HitMarker: confirmação no crosshair ao ACERTAR (PvP/PvE) ──────
+  const hitMarker = new HitMarker();
+  window._hitMarker = hitMarker;
 
   // ── Drops: inimigos soltam moedas/materiais ao morrer ─────────────
   const dropSystem = new DropSystem(scene, player);
@@ -1961,6 +1987,8 @@ async function init() {
       }
       _lastDeadState = isDead;
     }
+    // Mapão por biomas: streaming por proximidade do player (2Hz interno).
+    try { biomeWorld.update(dt, player.mesh?.position); } catch (e) { /* não trava o loop */ }
     // Minimap (modo normal): atualiza a 5Hz. No BATTLE_ROYALE o próprio
     // BattleRoyaleMode cuida do minimap dele → escondemos este pra não duplicar.
     if (_minimap) {

@@ -114,10 +114,12 @@ export class Level {
       const m = new BABYLON.StandardMaterial(name, s);
       const dt = new BABYLON.Texture(enc(TEX + diffPath), s);
       dt.uScale = uv; dt.vScale = uv;
+      dt.anisotropicFilteringLevel = 16;   // nitidez no horizonte (ângulo raso) — custo baixo
       m.diffuseTexture = dt;
       if (norPath) {
         const nt = new BABYLON.Texture(enc(TEX + norPath), s);
         nt.uScale = uv; nt.vScale = uv;
+        nt.anisotropicFilteringLevel = 16;
         m.bumpTexture = nt;
       }
       m.specularColor = new BABYLON.Color3(.05, .05, .05);

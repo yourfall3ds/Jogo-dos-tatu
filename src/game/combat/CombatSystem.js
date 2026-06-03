@@ -307,17 +307,20 @@ export class CombatSystem {
     if (!snd) return;
     const pl = this.playerMesh?._playerRef;
     const curW = pl?.weapon?.getCurrentWeapon?.();
-    if (curW?.id === 'chibata' && curW.isMelee) {
-      // Chibata: silencia o swing (só toca chibatada no impacto)
-      return;
-    }
-    this._swingIdx = ((this._swingIdx || 0) % 3) + 1;
-    snd.playNow('swing_' + this._swingIdx, 0.5);
-    // MP: avisa o server pra parceiros OUVIREM o golpe (espacial), mesmo se errar.
+    // MP: avisa o server pra parceiros OUVIREM o golpe (espacial), mesmo se
+    // errar. FEITO ANTES do early-return da Chibata: o swing local da Chibata
+    // é silenciado, mas o parceiro AINDA precisa receber o remote_fire pra
+    // ouvir o whoosh espacial do golpe na posição do atacante.
     try {
       const wId = pl?.weapon?.getCurrentWeapon?.()?.id || 'melee';
       window._cs?.sendFire?.(wId, true);
     } catch (_) {}
+    if (curW?.id === 'chibata' && curW.isMelee) {
+      // Chibata: silencia o swing LOCAL (só toca chibatada no impacto).
+      return;
+    }
+    this._swingIdx = ((this._swingIdx || 0) % 3) + 1;
+    snd.playNow('swing_' + this._swingIdx, 0.5);
   }
 
   // Som de IMPACTO (acertou alguém). Combo normal → som CONSISTENTE; só o
@@ -488,6 +491,13 @@ export class CombatSystem {
           window._cs?.sendHitPlayer?.(m._remoteRef.playerId, hitDef.damage, animName);
           // Damage number visual no cliente que atacou (feedback imediato)
           window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
+          // HITMARKER imediato no crosshair do atacante (sem esperar o server).
+          window._hitMarker?.hit({ dmg: hitDef.damage, crit: isCrit });
+          // KNOCKBACK + flinch PREDITIVO no player remoto (lado do atacante):
+          //  empurrão visual na direção do golpe usando o kbEff já calculado
+          //  (mesmo do PvE). É cosmético — o snapshot do server reconverge a
+          //  posição no próximo tick, sem desync. Dá o IMPACTO que faltava.
+          try { m._remoteRef.playHit?.(moveDir, kbEff, critLevel); } catch (_) {}
           if (this.impactSystem) {
             const ip = activeHitbox.getAbsolutePosition().clone();
             if (isKick) this.impactSystem.spawnKickImpact(ip, true);
