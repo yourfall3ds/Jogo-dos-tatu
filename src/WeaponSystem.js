@@ -52,11 +52,12 @@ export class WeaponSystem {
     this._tiltZ = 0; this._tiltVel = 0;
 
     // ── Recoil de CÂMERA (kick vertical que decai) ──
-    // Acumula no fire, aplica em camera.rotation.x no update, decay *0.85/frame.
-    // _recoilCamApplied guarda quanto já foi somado à câmera pra remover ao decair
-    // (assim não briga com o look do mouse).
-    this._recoilKick = 0;        // pitch acumulado (rad), decai por frame
-    this._recoilCamApplied = 0;  // quanto desse kick já está somado em camera.rotation.x
+    // Acumula no fire (GRAUS). O Player CONSOME via consumeRecoilPitch() e
+    // aplica como OFFSET de pitch dentro de _updateCamera (NUNCA escreve direto
+    // em camera.rotation, que é totalmente reconstruída por setTarget todo frame).
+    // Decai *0.85/frame até zerar → a mira volta exatamente pro centro.
+    // Só PITCH, nunca yaw. Visual: não altera o pitch base real do Player.
+    this._recoilKick = 0;        // pitch acumulado em GRAUS, decai por frame
 
     this._weaponMeshes = {}; // { id: root } 1ª Pessoa
     this._tpsMeshes    = {}; // { id: root } 3ª Pessoa
@@ -449,10 +450,12 @@ export class WeaponSystem {
     this._flashT = .06;
     this._recoilVel = -8;
 
-    // ── Camera kick (recoil vertical) ──
-    // Acumula em _recoilKick (GRAUS). O Player consome em consumeRecoilPitch()
-    // somando ao pitch da câmera, e decai *0.85/frame. w.recoil opcional por arma.
+    // ── Camera kick (recoil vertical) — SÓ PITCH, sutil e visual ──
+    // Acumula em _recoilKick (GRAUS). O Player consome em consumeRecoilPitch(),
+    // aplica como offset de pitch e decai *0.85/frame até voltar ao centro.
+    // w.recoil opcional por arma; clampa o acúmulo pra nunca dar salto absurdo.
     this._recoilKick += (this.getCurrentWeapon().recoil ?? 1.2);
+    this._recoilKick = Math.min(this._recoilKick, 6); // teto: kick suave, sem virar pra trás
 
     // ── Cores por arma ──────────────────────────────────────────────
     const w = this.getCurrentWeapon();
@@ -496,11 +499,19 @@ export class WeaponSystem {
         : this.camera.position.clone();
     }
 
-    const ray = new BABYLON.Ray(rayOrigin, dir, 300);
+    // FIX PvP fidelidade: alcance 500 (era 300) pra acertar de longe.
+    const ray = new BABYLON.Ray(rayOrigin, dir, 500);
 
     // ── Filtro do ray — igual ao original ────────────────────────────
     // Exclui: meshes não-picáveis, invisíveis, e todos os efeitos visuais
     const hit = this.scene.pickWithRay(ray, m =>
+      // FIX PvP: o hitbox-proxy do player remoto (capsule invisível mas habilitada)
+      // tem _isHitProxy=true e DEVE ser sempre picável — bypassa os filtros de
+      // visibilidade (ele é invisível de propósito) mas continua sendo alvo limpo
+      // que segue o pulo (parentado no root interpolado). Sem isso o ray cai no
+      // GLB skinnado (bind-pose, hitbox errado) e os tiros falham.
+      (m._isHitProxy === true && m.isEnabled())
+      || (
       m.isEnabled()
       && m.isPickable !== false           // <─ CRÍTICO: exclui personagem (isPickable=false)
       && m.isVisible  !== false
@@ -515,6 +526,7 @@ export class WeaponSystem {
       && !m.name.startsWith('bhole')
       && !m.name.startsWith('tps_')      // clone TPS da arma
       && !m.name.startsWith('weaponRoot')
+      )
     );
 
     // ── Tracer: em FPS sai da boca da arma; em TPS sai da origem do ray
@@ -708,20 +720,12 @@ export class WeaponSystem {
         this._root.rotation.x = BABYLON.Tools.ToRadians(this._recoilPitch * 2);
     }
 
-    // ── Camera recoil: kick vertical que decai *0.85/frame ──
-    // Remove o que aplicamos no frame anterior (pra não brigar com o mouse-look),
-    // decai o kick, e reaplica o novo valor. Normaliza pra ~60fps.
-    if (!this._vrMode && this.camera && (this._recoilKick !== 0 || this._recoilCamApplied !== 0)) {
-      // 1) desfaz o aplicado anterior
-      this.camera.rotation.x += this._recoilCamApplied;
-      // 2) decai (0.85 por frame de 60fps, escalado pelo dt real)
-      const decay = Math.pow(0.85, Math.max(0, dt) * 60);
-      this._recoilKick *= decay;
-      if (Math.abs(this._recoilKick) < 1e-4) this._recoilKick = 0;
-      // 3) aplica o novo kick (pra cima → subtrai do pitch)
-      this.camera.rotation.x -= this._recoilKick;
-      this._recoilCamApplied = this._recoilKick;
-    }
+    // ── Camera recoil ──
+    // NÃO escrevemos mais em camera.rotation aqui: a câmera é totalmente
+    // reconstruída por Player._updateCamera()->setTarget() todo frame, então
+    // qualquer write direto era apagado e gerava tremor. O kick agora é um
+    // OFFSET de pitch consumido pelo Player (consumeRecoilPitch), aplicado
+    // dentro do setTarget e decaído suave até zero. Só pitch, nunca yaw.
 
     // ── Mira ADS (FPS): interpola arma entre quadril e mira ──────────
     // this._aimTarget é setado pelo Player (1 = mirando, 0 = quadril).
@@ -735,6 +739,21 @@ export class WeaponSystem {
       const w = this.getCurrentWeapon();
       if (w && w.applyToMesh) w.applyToMesh(this._glbRoot, false, this._aimAmount);
     }
+  }
+
+  /**
+   * Consome o recoil de câmera (kick vertical) acumulado.
+   * Decai *0.85/frame (normalizado a 60fps) e retorna o valor ATUAL em GRAUS.
+   * O Player aplica como offset de pitch (sobe a mira) só no _updateCamera,
+   * sem mexer no pitch base — a mira volta exatamente pro centro ao zerar.
+   * @param {number} dt segundos do frame
+   * @returns {number} kick atual em graus (>= 0)
+   */
+  consumeRecoilPitch(dt) {
+    const decay = Math.pow(0.85, Math.max(0, dt) * 60);
+    this._recoilKick *= decay;
+    if (Math.abs(this._recoilKick) < 1e-3) this._recoilKick = 0;
+    return this._recoilKick;
   }
 
   /** Chamado pelo Player a cada frame: aiming = true/false */

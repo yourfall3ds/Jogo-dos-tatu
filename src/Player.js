@@ -65,6 +65,10 @@ export class Player {
     this._landShake = 0;
     this._landMag   = 0;
 
+    // Recoil de câmera (kick vertical visual ao atirar) — SÓ pitch, decai a 0.
+    // Offset em GRAUS aplicado no _updateCamera; NUNCA altera this.pitch (base).
+    this._recoilOffset = 0;
+
     // Damage shake + knockback
     this._dmgShakeT   = 0;
     this._dmgShakeMag = 0;
@@ -1162,6 +1166,12 @@ export class Player {
     }
 
     // ── 10. Câmera + arma ────────────────────────────────────────────
+    // Recoil de câmera: lê/decai o kick da arma (graus) ANTES de montar a
+    // câmera. Vira offset de pitch dentro do setTarget (sobe a mira) e volta
+    // suave pro centro. NÃO mexe em this.pitch nem no yaw.
+    this._recoilOffset = this.weapon?.consumeRecoilPitch
+      ? this.weapon.consumeRecoilPitch(dt)
+      : 0;
     this._updateCamera();
 
     // Em TPS: passa ponto de origem do ray para a arma (nível dos olhos, sem parallaxe)
@@ -1438,7 +1448,12 @@ export class Player {
     // VR ativo: WebXRDefaultExperience controla câmera; pula update manual
     if (this._vrControlsCamera) return;
     const yR = BABYLON.Tools.ToRadians(this.yaw);
-    const pR = BABYLON.Tools.ToRadians(this.pitch);
+    // Pitch efetivo = pitch base − recoilOffset (sobe a mira no kick).
+    // SÓ pra montar a câmera/raycast: this.pitch base permanece intacto, então
+    // ao decair o offset a mira volta exatamente pro centro. Clamp ±89 garante
+    // que kick + pitch nunca cruzem o zênite (nunca "olhar pra trás").
+    const pitchEff = Math.max(-89, Math.min(89, this.pitch - (this._recoilOffset || 0)));
+    const pR = BABYLON.Tools.ToRadians(pitchEff);
 
     // ── Shake compartilhado (landing + damage) ───────────────────────
     let shakeX = 0, shakeY = 0, shakeZ = 0;

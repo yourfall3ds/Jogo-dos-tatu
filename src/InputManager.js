@@ -15,6 +15,11 @@ export class InputManager {
     this._rightClicked = false;
     this._wheelDelta   = 0;     // acumula scroll p/ trocar de arma
     this.gameActive    = false;
+    this._lockConfirmed     = false;  // lock já confirmou pelo menos uma vez
+    // Só vira true DEPOIS do primeiro pointer-lock confirmado pelo browser.
+    // O ramo de PAUSA do pointerlockchange só pode disparar quando isto for true,
+    // pra ignorar o pointerlockchange transitório (lock=null) do boot/transição.
+    this._gameFullyStarted  = false;
 
     // Double-tap WASD para dash 360 + W+S simultâneo = dash pra cima
     this._lastWPressTime = 0;
@@ -115,7 +120,13 @@ export class InputManager {
 
     // ── Click: atirar + re-adquirir lock se perdido ──────────────────
     document.addEventListener('mousedown', e => {
-      if (!this.gameActive) return;
+      // Modo construção: o LMB CONFIRMA a colocação da peça (BuildMode lê via
+      // consumeClick no preUpdate). Esse registro NÃO pode depender de
+      // gameActive — se o pointer-lock cair (gameActive=false) o player ainda
+      // precisa conseguir POSICIONAR o asset que tem na mão. Sem isso, entrar
+      // em modo construção pela hotbar "funciona" mas nunca conclui o placement.
+      const _placing = window._buildMode?._state === 'placing';
+      if (!this.gameActive && !_placing) return;
       if (e.target?.id === 'focus-btn') return;
       // Re-adquire lock se perdido (chamado dentro de handler de clique = gesto válido)
       if (!document.pointerLockElement) this._requestLock();
@@ -152,11 +163,22 @@ export class InputManager {
       if (document.pointerLockElement === this.canvas) {
         // Lock CONFIRMADO pelo browser → travou de verdade.
         this._lockConfirmed = true;
-      } else if (!document.pointerLockElement && this.gameActive) {
-        // Lock foi liberado pelo browser → pausa o jogo
+        // Primeira confirmação → libera o jogo pra valer e habilita a pausa
+        // por perda de lock daqui pra frente (ESC real). Garante gameActive.
+        this._gameFullyStarted = true;
+        this.gameActive = true;
+        document.body.classList.add('game-active');
+      } else if (!document.pointerLockElement && this.gameActive && this._gameFullyStarted) {
+        // Lock foi liberado pelo browser → pausa o jogo.
+        // SÓ pausa se o lock já foi confirmado uma vez (_gameFullyStarted).
+        // Assim o pointerlockchange transitório (lock=null) do BOOT/transição
+        // — quando a engine ainda está esquentando — NÃO pausa na entrada.
         this._lockConfirmed = false;
         this._internalDeactivate();
       }
+      // Se !pointerLockElement && !_gameFullyStarted: boot/transição.
+      // Ignora — não pausa. O lock confirma assim que a engine assenta, ou
+      // o próximo mousedown (handler acima) re-tenta o _requestLock().
     });
 
     // ── Pointer lock error ──────────────────────────────────────────

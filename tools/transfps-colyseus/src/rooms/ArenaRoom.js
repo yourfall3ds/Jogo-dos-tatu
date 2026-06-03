@@ -885,6 +885,7 @@ export class ArenaRoom extends Room {
         if (target.hp <= 0) {
           target.dead = true;
           target.deaths = (target.deaths || 0) + 1;
+          target.respawn_at = Date.now() + 5000;
           this.broadcast('died', { player_id: target.id, killer: caster.id });
         }
       });
@@ -1841,6 +1842,8 @@ export class ArenaRoom extends Room {
           best.hp = Math.max(0, best.hp - def.dmg);
           if (best.hp <= 0) {
             best.dead = true;
+            best.deaths = (best.deaths || 0) + 1;
+            best.respawn_at = Date.now() + 5000;
             this.broadcast('died', { player_id: best.id, killer: mob.id });
           }
           this.broadcast('mob_attack', { mob_id: mob.id, target_id: best.id, dmg: def.dmg });

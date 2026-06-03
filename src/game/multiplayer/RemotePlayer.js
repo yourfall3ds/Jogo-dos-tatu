@@ -57,7 +57,10 @@ const REMOTE_ANIM_MAP = {
   sword     : 'Jump_Down_from_Wall',          // espada equipada, parado
   moving    : 'Walk_Backward_While_Shooting', // andar de verdade
   shooting  : 'Archery_Shot_1',               // tiro de arco
-  attacking : 'Run_and_Shoot',                // ataque (tiro 2)
+  attacking : 'Run_and_Shoot',                // ataque melee/genérico (clipe de ação)
+  punch     : 'Run_and_Shoot',                // soco -> ação (GLB não tem soco real)
+  melee     : 'Run_and_Shoot',                // golpe melee genérico (overlay de ataque)
+  sword_atk : 'Archery_Shot_1',               // golpe de espada -> clipe de ação (overlay)
   stunned   : 'Parkour_Vault_with_Roll',      // atordoado -> roll/queda
   knockdown : 'Parkour_Vault_with_Roll',      // nocaute/morte -> roll
   dodging   : 'Roll_Dodge_1',                 // esquiva
@@ -159,8 +162,12 @@ export class RemotePlayer {
 
     this.body._isRemotePlayer = true;
     this.body._remoteRef = this;
-    // Capsule e o hit-proxy fallback (quando o GLB falha em carregar e a capsule
-    // volta a ficar visivel). Garante que continua picavel pelo raycast PvP.
+    // FIX PvP fidelidade: a capsule e o HITBOX dedicado do player remoto.
+    // _isHitProxy=true faz o predicate do WeaponSystem sempre escolher ESTE mesh
+    // (limpo, capsule simples) em vez do GLB skinnado (bind-pose, hitbox errado).
+    // Ela e filha de this.root, que recebe o y interpolado => sobe junto no pulo.
+    // Quando o GLB carrega ela fica visibility=0 mas continua enabled + pickable.
+    this.body._isHitProxy = true;
     try { this.body.isPickable = true; } catch (_) {}
 
     // FRENTE 3: capsule ja inicia com visibility baixa (vai ser escondida total quando GLB carregar)
@@ -297,6 +304,13 @@ export class RemotePlayer {
     // idle REAL quando o estado for vazio/desconhecido (nunca congela).
     if (field === "anim_state" && this._avatarAnims?.length) {
       const v = newValue != null ? newValue : (s?.anim_state || "idle");
+      // Se um overlay de ataque está rodando (via remote_fire), NÃO deixa a
+      // locomoção interromper o golpe — só grava o estado pra restaurar depois.
+      // O timer de playAttackOnce restaura a locomoção quando o golpe terminar.
+      if (this._attackingUntil && performance.now() < this._attackingUntil) {
+        this._curAnimState = v;
+        return;
+      }
       this._playAnimState(v);
     }
   }
@@ -335,6 +349,62 @@ export class RemotePlayer {
 
     this._curAnim = next;
     this._curAnimState = rawState;
+  }
+
+  /**
+   * OVERLAY DE ATAQUE TRANSIENTE — toca um clipe de ação UMA vez (não-loop) por
+   * ~ms e depois restaura a locomoção (o anim_state que estava antes).
+   *
+   * O anim_state que trafega pela rede é SÓ locomoção (idle/walk/run/fall) —
+   * o FSM de combate (attacking/punch/sword) é descartado de propósito no
+   * sendInput pra não quebrar os passos. Então o sinal de combate que chega é
+   * o evento `remote_fire` (rebroadcast do server quando o player dispara/golpeia).
+   * Este método dá o "tapa" visual de ataque por cima da locomoção e volta
+   * sozinho, sem poluir o _curAnimState de locomoção.
+   *
+   * @param {string} state estado de ataque ('attacking'|'punch'|'melee'|'shooting'|'sword_atk')
+   * @param {number} ms    duração antes de restaurar a locomoção (default 500ms)
+   */
+  playAttackOnce(state = 'attacking', ms = 500) {
+    const anims = this._avatarAnims;
+    if (!anims?.length) return;
+
+    const clip = _resolveRemoteAnim(state, anims);
+    if (!clip) return;
+
+    // Locomoção pra onde voltar quando o ataque acabar: o último anim_state de
+    // locomoção recebido pela rede (ou idle REAL).
+    const restoreTo = this._curAnimState || this.state?.anim_state || 'idle';
+
+    // PARA todas as outras anims pra o clipe de ataque ficar sozinho.
+    for (const a of anims) {
+      if (a === clip) continue;
+      try { a.stop(); } catch (_) {}
+    }
+
+    try {
+      clip.start(false, 1.0, clip.from, clip.to, false); // loop=false (toca uma vez)
+      if (clip.setWeightForAllAnimatables) {
+        try { clip.setWeightForAllAnimatables(1.0); } catch (_) {}
+      }
+    } catch (_) {
+      try { clip.start(false, 1.0); } catch (_) {}
+    }
+
+    // Marca como "em ataque" SEM gravar em _curAnimState (pra restaurar a locomoção).
+    this._curAnim = clip;
+    this._attackingUntil = performance.now() + ms;
+
+    // Cancela timer anterior (ataques em sequência re-armam) e agenda a restauração.
+    if (this._attackTimer) { try { clearTimeout(this._attackTimer); } catch (_) {} }
+    this._attackTimer = setTimeout(() => {
+      this._attackTimer = null;
+      if (this._disposed || this._disposing) return;
+      // Se um anim_state novo chegou nesse meio tempo, ele já mandou no _curAnimState;
+      // restaura a locomoção atual (ou a que estava antes do ataque).
+      const back = this.state?.anim_state || restoreTo;
+      this._playAnimState(back);
+    }, ms);
   }
 
   _pushSnapshot() {
@@ -508,7 +578,12 @@ export class RemotePlayer {
       this._current.ry += dy * k;
     }
     this.root.position.set(this._current.x, this._current.y, this._current.z);
-    this.root.rotation.y = BABYLON.Tools.ToRadians(this._current.ry);
+    // FIX orientacao: player.glb (Meshy) exporta de COSTAS (rosto para -Z).
+    // O player LOCAL compensa com FACING_OFFSET = Math.PI (PlayerAnimator.js:82,391).
+    // Aqui o ry vem cru do server, entao replicamos o MESMO +Math.PI; sem isso
+    // o avatar remoto fica 180 graus invertido (de costas quando esta de frente).
+    this.root.rotation.y = BABYLON.Tools.ToRadians(this._current.ry) + Math.PI;
+    this.root.rotationQuaternion = null;   // garante que rotation.y e respeitado
 
     // Nameplate em screen-space
     if (camera) {
@@ -671,16 +746,25 @@ export class RemotePlayer {
       // Parenteia DIRETO no this.root (TransformNode que recebe a posicao do mundo
       // via update/_pushSnapshot). Assim a capsule pode ser escondida sem tocar no avatar.
       root.parent = this.root;
-      // Offset Y: base nos pes (capsule height=1.8 => meia altura 0.9), igual Player local
-      // que usa -(playerHeight/2). this.root fica no chao, GLB fica em 0 (sobe pela escala).
-      root.position.set(0, 0, 0);
+      // FIX flutuacao: this.root recebe o y CRU do server, que e o CENTRO da capsule
+      // (~0.9 acima do chao, capsule height=1.8 => meia altura 0.9). O GLB tem origem
+      // nos PES, entao precisa descer -(height/2) = -0.9 pra encostar no chao — exatamente
+      // o foot-offset que o Player LOCAL aplica (PlayerAnimator.js:293 _rootOffsetY=-(h/2)).
+      // Sem isso o avatar remoto flutua ~0.9 acima do chao.
+      root.position.set(0, -(1.8 / 2), 0);
       // Escala correta do player.glb Meshy (igual PlayerAnimator.js linha 291).
       root.scaling.setAll(1.164);
-      // FIX: esconde APENAS a capsule. setEnabled(false) aqui NAO afeta o avatar,
-      // pois o avatar agora e filho de this.root, NAO da capsule.
+      // FIX PvP fidelidade: a capsule continua HABILITADA e PICAVEL — ela e o
+      // hitbox-proxy limpo do player remoto (segue x/y/z incl. pulo via this.root).
+      // So fica INVISIVEL (visibility=0). NAO usar setEnabled(false): isso a tiraria
+      // do raycast (predicate exige isEnabled()) e o tiro cairia no GLB skinnado,
+      // que tem hitbox de bind-pose (errado de longe e pulando).
+      // isVisible fica TRUE pra ela continuar sendo "renderizavel"/picavel, mas com
+      // visibility=0 nao aparece. O predicate trata _isHitProxy via bypass.
       try { this.body.visibility = 0; } catch (_) {}
-      try { this.body.isVisible = false; } catch (_) {}
-      try { this.body.setEnabled(false); } catch (_) {}
+      try { this.body.isVisible = true; } catch (_) {}
+      try { this.body.isPickable = true; } catch (_) {}
+      try { this.body.setEnabled(true); } catch (_) {}
       // Garante que o avatar GLB e a arvore estejam habilitados/visiveis.
       try {
         root.setEnabled(true);

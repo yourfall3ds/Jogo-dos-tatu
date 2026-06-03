@@ -865,6 +865,18 @@ async function init() {
   //    Dispara mesmo quando o tiro ERRA (hit_confirmed só toca o whiz no acerto). ──
   cs.on('remote_fire', (m) => {
     if (!m || m.id === auth.getUserId()) return; // ignora meu próprio disparo (já soa local)
+    // ── ANIMAÇÃO DE ATAQUE do parceiro (soco/espada/chibata/tiro) ──
+    // O anim_state que trafega é só locomoção (idle/walk/run); o estado de
+    // combate é descartado no sendInput. Então o ÚNICO sinal de golpe que chega
+    // é este `remote_fire`. Aqui damos o overlay visual de ataque no avatar do
+    // atirador, voltando pra locomoção sozinho (~500ms melee / ~350ms tiro).
+    try {
+      const rpAtk = _remotePlayers.get(m.id);
+      if (rpAtk?.playAttackOnce) {
+        const atkState = m.melee ? 'attacking' : 'shooting';
+        rpAtk.playAttackOnce(atkState, m.melee ? 500 : 350);
+      }
+    } catch (e) { console.warn('[remote_fire] attack anim', e?.message); }
     try {
       const sm = window._soundManager;
       if (!sm?._getSpatialSound) return;
@@ -1304,19 +1316,17 @@ async function init() {
     `;
     document.body.appendChild(el);
     el.addEventListener('pointerdown', () => {
-      // ── Pointer lock PRIMEIRO, síncrono, dentro deste gesture fresco ──
-      // O requestPointerLock SÓ engata se chamado direto num gesto confiável,
-      // ANTES de qualquer await/Promise. Por isso pedimos o lock aqui no topo,
-      // direto no canvas, antes de remover o overlay ou entrar em VR.
-      // input.activate() (via onClick) também pede o lock — chamadas repetidas
-      // no mesmo gesto são idempotentes/inofensivas.
+      // ── Só foco aqui; o pointer lock é pedido UMA única vez ──
+      // ANTES chamávamos cv.requestPointerLock() aqui E de novo via
+      // onClick->input.activate()->_requestLock() no MESMO gesture. Duas chamadas
+      // no mesmo gesto, com a engine ainda esquentando, geravam um
+      // pointerlockchange transitório (lock=null) que pausava o jogo na entrada.
+      // Agora: só garantimos o foco no canvas; quem pede o lock é o activate()
+      // (uma chamada só, gesto confiável).
       try {
         const cv = document.getElementById('renderCanvas');
-        if (cv) {
-          cv.focus();
-          cv.requestPointerLock?.();
-        }
-      } catch (e) { console.warn('[ClickToPlay] requestPointerLock:', e?.name || e); }
+        if (cv) cv.focus();
+      } catch (e) { console.warn('[ClickToPlay] focus:', e?.name || e); }
 
       // Quest auto-entra em VR no mesmo gesture
       try {

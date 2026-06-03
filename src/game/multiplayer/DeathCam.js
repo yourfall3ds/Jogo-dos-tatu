@@ -73,6 +73,36 @@ export class DeathCam {
 
     // Banner UI
     this._buildBanner();
+
+    // ── SAFETY NET: nunca ficar preso na killcam pra sempre. ──
+    // Após o cinematic (orbit 3s + killcam 2s ≈ 3.5s pro player ver o replay),
+    // pede respawn ao server proativamente e RE-PEDE a cada 1.5s até dead virar
+    // false (o server limpa dead → main.js chama exit()). Isso cobre o caso de
+    // respawn_at=0 (server bugado/não reiniciado) ou mensagem 'respawn' perdida.
+    this._cleanupTimers();
+    this._respawnKickTimer = setTimeout(() => {
+      this._requestRespawn();
+      // Retry contínuo enquanto continuar morto (DeathCam ativa = morto).
+      this._respawnRetry = setInterval(() => {
+        if (!this._active) { this._cleanupTimers(); return; }
+        this._requestRespawn();
+      }, 1500);
+    }, 3500);
+  }
+
+  /** Pede respawn ao server (robusto a cs ausente). */
+  _requestRespawn() {
+    try {
+      this._setBannerText('🔄 RENASCENDO…', '#7efa9a');
+      this.cs?.sendRespawn?.();
+    } catch (_) {}
+  }
+
+  _cleanupTimers() {
+    try { clearTimeout(this._respawnKickTimer); } catch (_) {}
+    try { clearInterval(this._respawnRetry); } catch (_) {}
+    this._respawnKickTimer = null;
+    this._respawnRetry = null;
   }
 
   _buildBanner() {
@@ -121,6 +151,8 @@ export class DeathCam {
 
       if (elapsed > 3000) this._switchToKillcam();
     } else if (this._mode === 'killcam') {
+      // Já entrou na fase de pedir respawn — não sobrescreve o banner "RENASCENDO…".
+      if (this._respawnRetry) return;
       // 2s replayando últimos 2s do buffer
       const playbackDuration = 2000;
       const playbackElapsed = performance.now() - this._modeStartAt;
@@ -167,6 +199,7 @@ export class DeathCam {
   exit() {
     if (!this._active) return;
     this._active = false;
+    this._cleanupTimers();
     if (this._cinematicCam) {
       try { this._cinematicCam.dispose(); } catch (_) {}
       this._cinematicCam = null;
