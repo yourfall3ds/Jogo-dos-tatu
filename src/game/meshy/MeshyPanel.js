@@ -844,8 +844,12 @@ export class MeshyPanel {
       this._stepStatus(2, '💾 Baixando modelo 3D pro PC…');
       const localGlb = await this.client.cacheAsset(this._state.glbUrl, `${sess.id}.glb`);
       if (localGlb) {
-        sess.glbRemote     = this._state.glbUrl;   // CDN original (backup)
+        sess.glbRemote     = this._state.glbUrl;   // CDN original (só backup)
         this._state.glbUrl = localGlb;             // daqui pra frente: LOCAL
+        // TODOS os campos persistidos apontam pro arquivo LOCAL → a sessão
+        //  nunca mais depende da URL da Meshy (que expira / dá CORS).
+        sess.glb3d     = localGlb;
+        sess.glbRemesh = localGlb;
       }
       sess.glbTextured = this._state.glbUrl;
       await this._saveCurrentSession();

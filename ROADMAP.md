@@ -849,7 +849,6 @@ Disponível na cena + no inventário de assets do editor
 | `ebonwumon_xuanwumon_-_digimon_rearise.glb` | Ebonwumon | Royal Knight | 🔴 Boss final Dungeon 4 |
 | `zhuqiaomon_-_digimon_rearise.glb` | Zhuqiaomon | Royal Knight | 🔴 Boss final Dungeon 4 |
 | `hsw_boss_colossal_squid.glb` | Colossal Squid | Boss | 🔴 Boss de dungeon aquática bônus |
-| `drogon__game_of_thrones_dragon.glb` | Dragão | — | 🔴 Boss de dungeon de fogo |
 
 **Também disponíveis como inimigos** (pasta `glTF-20260528T011429Z-3-001/`):
 - Alpaking + Alpaking_Evolved, Armabee + Armabee_Evolved, Dragon + Dragon_Evolved, Ghost + Ghost_Skull, Glub + Glub_Evolved, Goleling + Goleling_Evolved, Hywirl, Pigeon, Squidle, Tribal, Demon

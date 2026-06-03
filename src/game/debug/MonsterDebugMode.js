@@ -14,6 +14,11 @@
 
 import { ASSET_PATHS } from '../../AssetLoader.js';
 import { MonsterPlant, HopState } from '../../Enemy.js';
+import { EnemyCatalog } from '../data/EnemyCatalog.js';
+import { AssetRegistry } from '../data/AssetRegistry.js';
+
+// Encoda path com espaços/acentos pro loader funcionar
+function _encPath(p) { return p ? p.split('/').map(s => encodeURIComponent(s)).join('/') : p; }
 
 // ── Catálogo de monstros disponíveis ─────────────────────────────
 const MONSTER_CATALOG = [
@@ -74,8 +79,25 @@ export class MonsterDebugMode {
   //  Entrada / Saída
   // ════════════════════════════════════════════════════════════════
 
+  // Catálogo de monstros: a Planta (com AI real) + TODOS os monstros do
+  //  EnemyCatalog (digimons etc) como PREVIEW (sem AI ainda). Assim o debug
+  //  lista todos os bichos do jogo; quem tiver classe roda a state machine,
+  //  o resto só mostra o modelo + idle (a gente cria a AI deles depois).
+  _buildCatalog() {
+    const list = [{ key: 'monsterPlant', label: '🌱 Planta', path: ASSET_PATHS.monsterPlant, Class: MonsterPlant, spawnPos: { x:0, y:0, z:0 }, targetHeight: 1.6 }];
+    const icon = { rookie:'🥚', champion:'⭐', ultimate:'🌟', mega:'💫', boss:'👑' };
+    for (const [id, def] of Object.entries(EnemyCatalog)) {
+      if (def.asset === 'monsterPlant') continue;       // já é a Planta (com AI)
+      const raw = AssetRegistry.path(def.category, def.asset);
+      if (!raw) continue;
+      list.push({ key: id, label: `${icon[def.tier] || '👾'} ${def.name}`, path: _encPath(raw), Class: null, spawnPos: { x:0, y:0, z:0 }, targetHeight: def.targetHeight || 1.7 });
+    }
+    return list;
+  }
+
   async enter(monsterKey = 'monsterPlant') {
     this.active = true;
+    this._catalog = this._buildCatalog();
 
     // Cena isolada (não interfere com a cena do jogo)
     this.scene = new BABYLON.Scene(this.engine);
@@ -213,7 +235,7 @@ export class MonsterDebugMode {
   // ════════════════════════════════════════════════════════════════
 
   async _loadMonster(key) {
-    const entry = MONSTER_CATALOG.find(e => e.key === key);
+    const entry = (this._catalog || MONSTER_CATALOG).find(e => e.key === key);
     if (!entry) { console.warn('[MonsterDebug] Chave não encontrada:', key); return; }
 
     this._monsterEntry = entry;
@@ -229,36 +251,77 @@ export class MonsterDebugMode {
     if (this._headSphere) { this._headSphere.dispose(); this._headSphere = null; }
 
     try {
-      const url = ASSET_PATHS[key];
+      const url = entry.path || ASSET_PATHS[key];
       const lastSlash = url.lastIndexOf('/');
       const result = await BABYLON.SceneLoader.ImportMeshAsync(
         '', url.substring(0, lastSlash + 1), url.substring(lastSlash + 1), this.scene
       );
       this._glbRoot = result.meshes[0];
-      this._glbRoot.setEnabled(false); // template — não renderiza direto
 
-      const sp = entry.spawnPos;
-      const spawnPos = new BABYLON.Vector3(sp.x, sp.y, sp.z);
-      this.monster = new entry.Class(this.scene, this.shadowGen, [this._glbRoot], spawnPos);
+      if (entry.Class) {
+        // ── Monstro COM AI (Planta): state machine real + debug completo ──
+        this._glbRoot.setEnabled(false); // template — a classe clona/instancia
+        const sp = entry.spawnPos;
+        const spawnPos = new BABYLON.Vector3(sp.x, sp.y, sp.z);
+        this.monster = new entry.Class(this.scene, this.shadowGen, [this._glbRoot], spawnPos);
 
-      // Callback de ataque → mostra flash
-      this.monster.onAttack = (dmg, type, pos, kb) => {
-        this._dmgFlashT  = 0.6;
-        this._lastDmgInfo = { dmg, type };
-        this._flashDummyRed();
-      };
+        // Callback de ataque → mostra flash
+        this.monster.onAttack = (dmg, type, pos, kb) => {
+          this._dmgFlashT  = 0.6;
+          this._lastDmgInfo = { dmg, type };
+          this._flashDummyRed();
+        };
 
-      this._createHeadSphere();
-      this._createRangeDiscs();
-      this._refreshParamSliders();
-      this._setStatus(null);
+        this._createHeadSphere();
+        this._createRangeDiscs();
+        this._refreshParamSliders();
+        this._setStatus(null);
+        const st = document.getElementById('_dbg_state'); if (st) st.textContent = 'WAIT';
+      } else {
+        // ── Monstro SEM AI ainda → PREVIEW: mostra o modelo e toca idle ──
+        //  (state machine/hitbox/ranges ficam ocultos; a AI desse bicho é
+        //   criada depois). Os botões/sliders já têm guarda p/ monster null.
+        this.monster = null;
+        this._glbRoot.setEnabled(true);
+        this._fitPreview(result.meshes, entry.targetHeight);
+        const groups = result.animationGroups || [];
+        groups.forEach(g => g.stop());
+        (groups.find(g => /idle/i.test(g.name)) || groups[0])?.play(true);
+        const st = document.getElementById('_dbg_state'); if (st) st.textContent = 'PREVIEW';
+        this._setStatus('Sem AI ainda — preview do modelo');
+      }
+
       this._refreshMonsterButtons();
-
       console.log(`[MonsterDebug] ✅ ${entry.label} carregada`);
     } catch (err) {
       console.error('[MonsterDebug] Erro ao carregar monstro:', err);
       this._setStatus(`❌ Erro: ${err.message}`);
     }
+  }
+
+  // Normaliza um modelo de preview: escala pra ~targetH e assenta no chão.
+  _fitPreview(meshes, targetH = 1.7) {
+    const root = this._glbRoot;
+    if (!root) return;
+    let min = new BABYLON.Vector3(Infinity, Infinity, Infinity);
+    let max = new BABYLON.Vector3(-Infinity, -Infinity, -Infinity);
+    let any = false;
+    for (const m of meshes) {
+      if (!m.getTotalVertices || m.getTotalVertices() === 0) continue;
+      m.computeWorldMatrix(true);
+      const bb = m.getBoundingInfo().boundingBox;
+      min = BABYLON.Vector3.Minimize(min, bb.minimumWorld);
+      max = BABYLON.Vector3.Maximize(max, bb.maximumWorld);
+      any = true;
+    }
+    if (!any) return;
+    const h = Math.max(max.y - min.y, 1e-4);
+    const s = targetH / h;
+    root.scaling.scaleInPlace(s);
+    root.computeWorldMatrix(true);
+    root.position.x -= ((min.x + max.x) / 2) * s;
+    root.position.z -= ((min.z + max.z) / 2) * s;
+    root.position.y -= min.y * s;
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -504,9 +567,9 @@ export class MonsterDebugMode {
       </div>`;
 
     // Seletor de monstro
-    const monsterBtns = MONSTER_CATALOG.map(e =>
+    const monsterBtns = (this._catalog || MONSTER_CATALOG).map(e =>
       `<button onclick="window._monsterDebug._loadMonster('${e.key}')"
-        style="padding:5px 8px;background:#1a1a1a;border:1px solid #333;color:#eee;cursor:pointer;font-size:11px;border-radius:4px;flex:1">
+        style="padding:5px 8px;background:#1a1a1a;border:1px solid #333;color:#eee;cursor:pointer;font-size:11px;border-radius:4px">
         ${e.label}
       </button>`
     ).join('');

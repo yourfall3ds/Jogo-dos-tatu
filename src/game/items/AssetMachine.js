@@ -26,6 +26,26 @@ const FALL_START_Y  = 8;
 const GRAVITY       = 24;
 const MACHINE_SCALE = 0.9;
 
+// Cache de download do chassi: 1 fetch por arquivo, reusado (CLONADO) por
+//  TODAS as máquinas. Sem isso, N máquinas × 2 GLBs de ~12MB baixavam em
+//  paralelo e o servidor derrubava as conexões (status 0) → o chassi não
+//  carregava e a máquina ficava só com o feixe ("voando").
+const _glbTemplateCache = {};
+function _loadMachineTemplate(scene, folder, file) {
+  const key = folder + file;
+  if (!_glbTemplateCache[key]) {
+    _glbTemplateCache[key] = BABYLON.SceneLoader.ImportMeshAsync('', folder, file, scene)
+      .then(res => {
+        const root = res.meshes[0];
+        root.name = '__macTpl_' + key;
+        root.setEnabled(false);                 // template oculto (só p/ clonar)
+        return root;
+      })
+      .catch(err => { _glbTemplateCache[key] = null; throw err; });  // permite retry
+  }
+  return _glbTemplateCache[key];
+}
+
 export class AssetMachine {
   constructor(scene, meshyPanel, player, input,
               position = new BABYLON.Vector3(8, 0, 8), id = null) {
@@ -74,7 +94,8 @@ export class AssetMachine {
 
     this._buildPrompt();
     this._buildGlow();
-    this._buildHologram();
+    this._snapToGround();    // define o Y no CHÃO antes de montar o hologram
+    this._buildHologram();   // → feixe/discos nascem alinhados com o chassi
     this._load();
   }
 
@@ -532,20 +553,31 @@ export class AssetMachine {
       const last = sessions[0];   // mais recente primeiro
       if (!last.image && !last.glb3d && !last.glbTextured) return;
 
+      // URLs remotas da Meshy são BLOQUEADAS por CORS no localhost (403, sem
+      //  Access-Control-Allow-Origin) → nem tenta, senão spamma o console todo
+      //  frame. Só restaura assets locais (blob/data/arquivo do projeto).
+      const blocked = (u) => !u || /assets\.meshy\.ai/i.test(u) ||
+        (/^https?:\/\//i.test(u) && !u.startsWith(location.origin));
+      const image = blocked(last.image) ? null : last.image;
+      const glbUrl = [last.glbTextured, last.glbRemesh, last.glb3d].find(u => !blocked(u));
+      if (!image && !glbUrl) {
+        console.log('[AssetMachine] sessão anterior só tinha links remotos da Meshy (CORS) — preview pulado');
+        return;
+      }
+
       console.log('[AssetMachine] 🔄 Restaurando sessão:', last.id);
 
       // Ativa o holograma imediatamente (sem partículas — geração já terminou)
       this._hasContent = true;
       this._holoFadeIn = 1;
-      this._holoColor(last.glbTextured ? 'green' : (last.glb3d ? 'green' : 'green'));
+      this._holoColor('green');
 
       // Restaura imagem 2D primeiro (rápido)
-      if (last.image) {
-        await this.showImage(last.image).catch(() => {});
+      if (image) {
+        await this.showImage(image).catch(() => {});
       }
 
-      // Tenta restaurar o melhor GLB disponível (sem efeito de revelação)
-      const glbUrl = last.glbTextured || last.glbRemesh || last.glb3d;
+      // Tenta restaurar o melhor GLB local disponível (sem efeito de revelação)
       if (glbUrl) {
         await this._restoreGlb(glbUrl).catch(() => {
           // URL expirada — mantém só a imagem
@@ -582,27 +614,45 @@ export class AssetMachine {
     this._holoPs.color2 = pc2;
   }
 
+  // Acha o CHÃO real sob (x,z) e ajusta o Y alvo. Sem isso, uma máquina com
+  //  posição salva no ar "instalava" flutuando. Agora ela sempre cai e assenta
+  //  no piso/plataforma abaixo dela.
+  _snapToGround() {
+    try {
+      const from = new BABYLON.Vector3(this.position.x, this.position.y + FALL_START_Y + 4, this.position.z);
+      const ray  = new BABYLON.Ray(from, BABYLON.Vector3.Down(), FALL_START_Y + 80);
+      const hit  = this.scene.pickWithRay(ray, (m) =>
+        m && (m.getTotalVertices?.() || 0) > 0 && m.isPickable !== false && m.isEnabled?.() !== false &&
+        !/^(__assetMachine|__macTpl|mac_|weaponRoot|fpsCam|tps_|playerCapsule)/i.test(m.name || '')
+      );
+      if (hit?.hit && hit.pickedPoint) this.position.y = hit.pickedPoint.y;
+    } catch (_) {}
+  }
+
   // ── Carrega os dois GLBs ──────────────────────────────────────────
   async _load() {
     const folder = enc(FOLDER);
     try {
-      const [r1, r2] = await Promise.all([
-        BABYLON.SceneLoader.ImportMeshAsync('', folder, encodeURIComponent(FILE_P1), this.scene),
-        BABYLON.SceneLoader.ImportMeshAsync('', folder, encodeURIComponent(FILE_P2), this.scene),
+      // 1 download por arquivo (cache) → clona o chassi por máquina
+      const [tpl1, tpl2] = await Promise.all([
+        _loadMachineTemplate(this.scene, folder, encodeURIComponent(FILE_P1)),
+        _loadMachineTemplate(this.scene, folder, encodeURIComponent(FILE_P2)),
       ]);
 
-      this._p1Root = r1.meshes[0];
-      this._p1Root.name = '__assetMachine_p1';
+      this._p1Root = tpl1.clone('__assetMachine_p1', null);
+      this._p1Root.setEnabled(true);
       this._p1Root.position.set(this.position.x, this.position.y + FALL_START_Y, this.position.z);
       this._p1Root.scaling.setAll(MACHINE_SCALE);
-      r1.meshes.forEach(m => { if (m.getTotalVertices() > 0) this._glow.addIncludedOnlyMesh(m); });
+      [this._p1Root, ...this._p1Root.getChildMeshes(false)]
+        .forEach(m => { if (m.getTotalVertices?.() > 0) this._glow.addIncludedOnlyMesh(m); });
 
-      this._p2Root = r2.meshes[0];
-      this._p2Root.name = '__assetMachine_p2';
+      this._p2Root = tpl2.clone('__assetMachine_p2', null);
+      this._p2Root.setEnabled(true);
       this._p2Root.position.copyFrom(this.position);
       this._p2Root.scaling.setAll(0);
-      this._setEnabled(r2.meshes, false);
-      r2.meshes.forEach(m => { if (m.getTotalVertices() > 0) this._glow.addIncludedOnlyMesh(m); });
+      this._setEnabled([this._p2Root, ...this._p2Root.getChildMeshes(false)], false);
+      [this._p2Root, ...this._p2Root.getChildMeshes(false)]
+        .forEach(m => { if (m.getTotalVertices?.() > 0) this._glow.addIncludedOnlyMesh(m); });
 
       this._phase    = 'falling';
       this._t        = 0;
@@ -804,8 +854,9 @@ export class AssetMachine {
 
   // ── Hologram update (animação dos discos, luz, fade) ──────────────
   _updateHologram(dt) {
-    // Holograma ativo se gerando OU se tem conteúdo (imagem/3D a exibir)
-    const targetAlpha = (this._generating || this._hasContent) ? 1 : 0;
+    // O FEIXE/discos só aparecem enquanto está GERANDO algo (é um efeito de
+    //  geração). Parado, fica oculto — nada de "raio" aceso à toa.
+    const targetAlpha = this._generating ? 1 : 0;
     this._holoFadeIn += (targetAlpha - this._holoFadeIn) * Math.min(1, dt * 4);
     const a = this._holoFadeIn;
 

@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────
 import { LocalDB } from './LocalDB.js';
 import { AssetRegistry } from './AssetRegistry.js';
+import { BUILD_PIECES } from '../build/BuildPieces.js';
 
 const STORE_GROUPS = 'asset_groups';
 const STORE_ASSETS = 'asset_library';
@@ -29,6 +30,20 @@ export const BUILTIN_GROUPS = [
       physics:     false,
       castShadows: true,
       desc: 'Estático · colisão · sombra',
+    },
+  },
+  {
+    id: 'geometria',
+    name: 'Geometria',
+    icon: '🔷',
+    color: '#5fd0e0',
+    builtin: true,
+    props: {
+      collidable:  true,
+      breakable:   false,
+      physics:     false,
+      castShadows: true,
+      desc: 'Primitivas · manipuláveis',
     },
   },
   {
@@ -219,6 +234,22 @@ export class AssetGroups {
           imageUrl: null,
         });
       }
+    }
+
+    // ── Peças PROCEDURAIS (parede/porta/janela/chão/escada/geometria) ──
+    //  Não são GLB — geradas em código. Grupo vem do próprio def (p.groupId).
+    for (const p of BUILD_PIECES) {
+      out.push({
+        id:       p.id,
+        name:     p.name,
+        pieceId:  p.pieceId,            // marca como peça procedural
+        kind:     'piece',
+        drag:     p.drag || null,       // 'wall' | 'floor' → modo arrastar
+        groupId:  overrides[p.id] ?? p.groupId ?? 'construcao',
+        category: 'piece',
+        builtin:  true,
+        imageUrl: p.thumb || null,      // miniatura desenhada
+      });
     }
     return out;
   }

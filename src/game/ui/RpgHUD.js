@@ -101,8 +101,13 @@ export class RpgHUD {
     document.body.appendChild(bar);
     this._bar = bar;
 
-    // Re-renderiza hotbar quando o inventário muda
-    this.inventory.onChange(() => this._renderHotbar());
+    // Re-renderiza hotbar quando o inventário muda + persiste (debounced).
+    //  Sem o save aqui, itens add. fora da UI (ex.: 📌 da Biblioteca) sumiam no F5.
+    this.inventory.onChange(() => {
+      this._renderHotbar();
+      clearTimeout(this._invSaveT);
+      this._invSaveT = setTimeout(() => this._save(), 300);
+    });
     this._thumbs = {};
     this._loadThumbs();      // carrega as fotos/thumbnails dos assets
     this._renderHotbar();
@@ -227,6 +232,14 @@ export class RpgHUD {
         slot.innerHTML = numLabel +
           `<img src="${entry.data.imageUrl}" title="${entry.data.name}"
                 style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`;
+      } else if (entry?.kind === 'buildable') {
+        slot.style.borderColor = '#2ad';
+        const t = entry.data?.thumb;
+        const q = entry.qty || 1;
+        slot.innerHTML = numLabel + (t
+          ? `<img src="${t}" title="🧱 ${entry.data.name}" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML='🧱'">`
+          : `<span title="🧱 ${entry.data?.name||''}" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:20px">🧱</span>`)
+          + `<span style="position:absolute;bottom:1px;right:3px;font-size:9px;color:#bdf;font-weight:bold;text-shadow:0 0 3px #000">×${q}</span>`;
       } else if (id) {
         const def = ItemCatalog[id];
         const qty = this.inventory.count(id);

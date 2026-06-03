@@ -29,8 +29,8 @@ export class GraphicsEnhancer {
     const ip = scene.imageProcessingConfiguration;
     ip.toneMappingEnabled = true;
     ip.toneMappingType = BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES;
-    ip.exposure = 0.95;
-    ip.contrast = 1.1;
+    ip.exposure = 1.01;   // valor escolhido no painel F8
+    ip.contrast = 1.68;   // valor escolhido no painel F8
     ip.vignetteEnabled = true;
     ip.vignetteWeight = 2.2;
     ip.vignetteColor = new BABYLON.Color4(0, 0, 0, 0);
@@ -40,8 +40,8 @@ export class GraphicsEnhancer {
     pl.samples = 4;                 // MSAA
     pl.fxaaEnabled = true;
     pl.bloomEnabled = true;
-    pl.bloomThreshold = 0.92;     // só estoura o que é MUITO brilhante (sol)
-    pl.bloomWeight = 0.18;
+    pl.bloomThreshold = 1.0;       // só brilho REAL (>1) floresce — chão claro não estoura
+    pl.bloomWeight = 0.30;        // calibrado no painel F8
     pl.bloomKernel = 48;
     pl.bloomScale = 0.5;
     pl.imageProcessingEnabled = true;
@@ -53,27 +53,94 @@ export class GraphicsEnhancer {
     this.pipeline = pl;
 
     // ── SSAO2: oclusão de ambiente (profundidade nos contatos) ───────
-    try {
+    //  ⚠️ DESLIGADO no WebGPU. O SSAO2 usa o prePass renderer (textura
+    //     prePass_Depth). Quando a câmera ativa troca — ex: entrar/sair do
+    //     editor de cena, que usa a GhostCamera — o WebGPU DESTRÓI a textura
+    //     de prePass da câmera antiga, mas o pipeline ainda a referencia no
+    //     próximo Submit → spam "Destroyed texture prePass_Depth used in a
+    //     submit" + TELA PRETA. Mesmo motivo pelo qual o SSR está off.
+    //     No WebGL2 (fallback) o SSAO continua ligado normalmente.
+    const ENABLE_SSAO = !window._webgpu;
+    if (ENABLE_SSAO) try {
       const ssao = new BABYLON.SSAO2RenderingPipeline('ssao', scene, { ssaoRatio: 0.75, blurRatio: 1 }, [cam]);
-      ssao.radius = 1.2;
+      ssao.radius = 2.5;            // calibrado no painel F8
       ssao.totalStrength = 1.1;
       ssao.expensiveBlur = true;
       ssao.samples = 16;
       ssao.maxZ = 120;
       this.ssao = ssao;
     } catch (e) { console.warn('[GFX] SSAO2 indisponível:', e?.message); }
+    else console.log('[GFX] SSAO2 desligado no WebGPU (prePass instável em troca de câmera)');
 
-    // ── GlowLayer: brilho dos emissivos (sol, neon, plasma) ──────────
+    // ── GlowLayer: brilho SÓ de quem é pra brilhar (neon/plasma/sol) ──
+    //  Sem filtro, o glow pegava o emissivo leve do PERSONAGEM (rato
+    //  radioativo). Filtramos por nome → só tracers/muzzle/neon/sol brilham.
     try {
       const glow = new BABYLON.GlowLayer('glow', scene, { mainTextureSamples: 2 });
-      glow.intensity = 0.55;
+      glow.intensity = 0.5;
+      const GLOW_OK = /tracer|muzzle|spark|neon|plasma|sunDisc|moonDisc|crystal|beam|glow/i;
+      glow.customEmissiveColorSelector = (mesh, subMesh, material, result) => {
+        if (GLOW_OK.test(mesh.name || '')) {
+          const e = material.emissiveColor || BABYLON.Color3.Black();
+          result.set(e.r, e.g, e.b, 1);
+        } else {
+          result.set(0, 0, 0, 0);   // não brilha (player, cenário, etc)
+        }
+      };
       this.glow = glow;
+    } catch (_) {}
+
+    // — Aberração cromática sutil (lente real) → bordas com franja de cor —
+    try {
+      pl.chromaticAberrationEnabled = true;
+      pl.chromaticAberration.aberrationAmount = 14;
+      pl.chromaticAberration.radialIntensity = 0.7;
     } catch (_) {}
 
     // nitidez: render na resolução nativa
     try { this.engine.setHardwareScalingLevel(1 / (window.devicePixelRatio || 1) <= 0.5 ? 0.5 : 1); } catch (_) {}
 
-    console.log('[GFX] ✨ pós-processamento ligado (Bloom+ACES+SSAO+FXAA+Glow)');
+    console.log(`[GFX] ✨ pós-processamento ligado (Bloom+ACES+FXAA+Glow+CA${this.ssao ? '+SSAO' : ''})`);
+  }
+
+  // ── Realismo extra: IBL (reflexão/ambiente HDR) + SSR (reflexo real) ──
+  //  Chamado depois do boot. IBL dá luz ambiente e reflexos realistas aos
+  //  materiais PBR; SSR espelha a cena em superfícies glossy (ex: chão).
+  enableRealism() {
+    const scene = this.scene, cam = this.camera;
+
+    // IBL — ambiente HDR pré-filtrado → reflexos/brilho realista no PBR
+    try {
+      if (!scene.environmentTexture) {
+        const env = new BABYLON.CubeTexture(
+          'https://playground.babylonjs.com/textures/environment.env', scene);
+        scene.environmentTexture = env;
+        scene.environmentIntensity = 0.55;   // sutil, não ofusca o estilo
+        this.env = env;
+        console.log('[GFX] 🌅 IBL (environment HDR) ligado');
+      }
+    } catch (e) { console.warn('[GFX] IBL falhou:', e?.message); }
+
+    // SSR — reflexões em tempo real (chão/superfícies glossy espelham o mundo).
+    //  ⚠️ DESLIGADO por padrão: no WebGPU o prepass de profundidade do SSR é
+    //     destruído/recriado a cada frame ("Destroyed texture prePass_Depth
+    //     used in a submit") → spam de erro + custo. O reflexo do céu/ambiente
+    //     vem do IBL acima (suficiente). Religar quando o SSR/WebGPU estabilizar.
+    const ENABLE_SSR = false;
+    if (ENABLE_SSR) try {
+      const ssr = new BABYLON.SSRRenderingPipeline('ssr', scene, [cam], false,
+        BABYLON.Constants.TEXTURETYPE_UNSIGNED_BYTE);
+      ssr.strength = 0.85;
+      ssr.reflectionSpecularFalloffExponent = 2.5;
+      ssr.thickness = 0.6;
+      ssr.maxSteps = 800;
+      ssr.maxDistance = 50;
+      ssr.roughnessFactor = 0.25;
+      ssr.enableSmoothReflections = true;
+      ssr.attenuateScreenBorders = true;
+      this.ssr = ssr;
+      console.log('[GFX] 🪞 SSR (reflexões em tempo real) ligado');
+    } catch (e) { console.warn('[GFX] SSR indisponível:', e?.message); }
   }
 
   // ── Presets de qualidade ─────────────────────────────────────────
@@ -137,8 +204,9 @@ export class GraphicsEnhancer {
 
   // Ajusta exposure/bloom conforme a hora (chamado pelo DayNightCycle)
   setDayFactor(dayF) {
+    if (this._lockExposure) return;        // usuário travou no painel F8 / sol manual
     const ip = this.scene.imageProcessingConfiguration;
-    ip.exposure = 0.75 + dayF * 0.30;      // noite escura, dia ~1.05
-    if (this.pipeline) this.pipeline.bloomWeight = 0.15 + dayF * 0.15;
+    ip.exposure = 0.82 + dayF * 0.19;      // noite ~0.82, meio-dia ~1.01 (valor F8)
+    if (this.pipeline) this.pipeline.bloomWeight = 0.12 + dayF * 0.10;   // bloom contido
   }
 }

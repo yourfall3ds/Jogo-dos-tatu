@@ -65,6 +65,53 @@ export class Inventory {
 
   getImages() { return this.bag.filter(s => s.kind === 'image'); }
 
+  // ── Assets construíveis como itens (stack) ───────────────────────
+  //  Um asset da Biblioteca vira um item EMPILHÁVEL do inventário. Ao
+  //  ativar o slot (tecla 1-9) ele vai "pra mão" → modo de colocar; cada
+  //  peça posicionada GASTA 1 do estoque (consumeBuildable). Em 0, some.
+  static BUILD_MAX_STACK = 99;
+  addBuildable({ assetId, name = 'asset', glbUrl, path, groupId, groupProps = {}, thumb, qty = 1, pieceId, drag } = {}) {
+    if (!assetId && !glbUrl && !path && !pieceId) return null;
+    const MAX = Inventory.BUILD_MAX_STACK;
+    // já existe esse asset? empilha a quantidade.
+    const exists = this.bag.find(s => s.kind === 'buildable' && s.data?.assetId === assetId);
+    let id;
+    if (exists) {
+      exists.qty = Math.min(MAX, (exists.qty || 1) + qty);
+      id = exists.id;
+    } else {
+      id = 'build_' + (assetId || Date.now().toString(36)) + '_' + Math.random().toString(36).slice(2, 4);
+      this.bag.push({ id, qty: Math.min(MAX, qty), kind: 'buildable', data: { assetId, name, glbUrl, path, groupId, groupProps, thumb, pieceId, drag } });
+    }
+    if (!this.hotbar.includes(id)) {
+      const free = this.hotbar.indexOf(null);
+      if (free >= 0) this.hotbar[free] = id;
+    }
+    this._notify();
+    return id;
+  }
+
+  /**
+   * Gasta 1 unidade de um construível (ao posicionar no mapa). Em 0, remove
+   * da mochila e libera o slot da hotbar. Retorna o estoque restante
+   * (0 = acabou) ou false se não havia estoque.
+   */
+  consumeBuildable(assetId, n = 1) {
+    const slot = this.bag.find(s => s.kind === 'buildable' && s.data?.assetId === assetId);
+    if (!slot || slot.qty <= 0) return false;
+    slot.qty = Math.max(0, slot.qty - n);
+    const left = slot.qty;
+    if (left <= 0) {
+      const hi = this.hotbar.indexOf(slot.id);
+      if (hi >= 0) this.hotbar[hi] = null;
+      this.bag = this.bag.filter(s => s !== slot);
+    }
+    this._notify();
+    return left;
+  }
+
+  getBuildables() { return this.bag.filter(s => s.kind === 'buildable'); }
+
   // ── Usar consumível ──────────────────────────────────────────────
   use(id) {
     const def = getItemDef(id);
@@ -79,9 +126,14 @@ export class Inventory {
   useHotbar(index) {
     const id = this.hotbar[index];
     if (!id) return false;
+    const entry = this.getEntry(id);
+    // construível → vai "pra mão" (modo de colocar). Não consome.
+    if (entry?.kind === 'buildable') {
+      window._buildMode?.startPlacingInventoryAsset?.(entry.data);
+      return true;
+    }
     const def = getItemDef(id);
     if (def?.type === 'weapon') return this.equipWeapon(id);   // arma → equipa
-    const entry = this.getEntry(id);
     if (entry?.kind === 'image') return false;                 // imagem → não usa pelo número
     const ok = this.use(id);
     if (this.count(id) <= 0) this.hotbar[index] = null;

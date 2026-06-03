@@ -284,9 +284,56 @@ async function init() {
   }
   const canvas = $('renderCanvas');
 
-  const engine = new BABYLON.Engine(canvas, true, {
-    preserveDrawingBuffer: true, stencil: true, adaptToDeviceRatio: true,
-  });
+  // ── Engine: WebGPU (principal) com WebGL2 de fallback ───────────
+  //  WebGPU = shaders rápidos + compute (partículas/água/terreno na GPU),
+  //  melhor pra PBR/reflexões/SSR. WebGL2 = tanque confiável de compat.
+  //
+  //  ⚙️ FALLBACK_WEBGL: enquanto FALSE, roda WebGPU PURO (modo teste solo) —
+  //     se o WebGPU falhar, mostra aviso claro em vez de cair disfarçado.
+  //     Quando o WebGPU estiver aprovado, mude pra TRUE (cai pro WebGL2 só
+  //     em navegador sem suporte). Força WebGL2 a qualquer hora com ?webgl
+  const FALLBACK_WEBGL = false;   // ← teste solo de WebGPU. depois: true
+
+  let engine = null;
+  const forceWebGL = new URLSearchParams(location.search).has('webgl');
+  const webgpuOK = !forceWebGL && BABYLON.WebGPUEngine && await BABYLON.WebGPUEngine.IsSupportedAsync;
+
+  if (webgpuOK) {
+    const gpu = new BABYLON.WebGPUEngine(canvas, {
+      stencil: true, antialias: true, adaptToDeviceRatio: true,
+    });
+    await gpu.initAsync();          // sem try/catch no modo solo: erro aparece
+    engine = gpu;
+    window._engineKind = 'WebGPU';
+    window._webgpu = true;
+    console.log('%c[Engine] 🚀 WebGPU ativo' + (FALLBACK_WEBGL ? '' : ' (SOLO — fallback OFF)'), 'color:#4f8;font-weight:bold');
+  } else if (FALLBACK_WEBGL || forceWebGL) {
+    engine = new BABYLON.Engine(canvas, true, {
+      preserveDrawingBuffer: true, stencil: true, adaptToDeviceRatio: true,
+    });
+    window._engineKind = 'WebGL2';
+    window._webgpu = false;
+    console.log('%c[Engine] 🛡️ WebGL2 ativo (fallback)', 'color:#fc4;font-weight:bold');
+  } else {
+    // Modo solo + sem WebGPU → avisa claramente (não disfarça com WebGL)
+    const msg = 'WebGPU não é suportado neste navegador.\n\n(Modo teste solo: fallback WebGL desligado.)\nAbra com ?webgl pra rodar em WebGL2.';
+    document.body.innerHTML = '<div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0a0e1a;color:#fdd;font:600 18px system-ui;text-align:center;white-space:pre-line;padding:40px">' + msg + '</div>';
+    throw new Error('[Engine] WebGPU indisponível e fallback desligado (teste solo).');
+  }
+
+  // Selo visível: mostra o engine ativo no canto (WebGPU 🚀 ou WebGL2 🛡️)
+  try {
+    const badge = document.createElement('div');
+    const gpu = window._engineKind === 'WebGPU';
+    badge.id = 'engine-badge';
+    badge.textContent = gpu ? '🚀 WebGPU' : '🛡️ WebGL2';
+    badge.title = gpu ? 'Motor de nave: WebGPU ativo' : 'Tanque confiável: WebGL2 (fallback)';
+    badge.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:120;'
+      + 'font:700 12px system-ui;padding:4px 12px;border-radius:20px;letter-spacing:.5px;'
+      + (gpu ? 'background:rgba(20,60,40,.92);color:#7fffba;border:1px solid #2f8'
+             : 'background:rgba(60,50,20,.92);color:#ffd34d;border:1px solid #a83');
+    document.body.appendChild(badge);
+  } catch (_) {}
   _engineRef = engine;  // expõe para enterEngineMode/exitEngineMode
 
   const scene = new BABYLON.Scene(engine);
@@ -314,30 +361,37 @@ async function init() {
   ambient.intensity   = 0.55;
   ambient.groundColor = new BABYLON.Color3(.20, .28, .18);
 
-  // ── Sombras do sol (Blur ESM — comprovado no exemplo oficial) ────
-  //  Frustum ortográfico APERTADO (40u) → resolução alta de sombra perto do
-  //  player. Sem isso, os ~80 casters espalhados pelo mapa explodiam o
-  //  auto-frustum e a sombra sumia (virava pixels invisíveis no shadow map).
-  //  O frustum SEGUE o player (atualizado no loop) pra cobrir onde ele está.
+  // ── Sombras do sol — CascadedShadowGenerator (CSM) ──────────────
+  //  CSM divide o frustum da CÂMERA em cascatas: sombra densa e nítida
+  //  perto do player + cobertura ampla ao longe, sem frustum manual.
+  //  É o setup do exemplo oficial (lambda + soft shadow PCSS), que dá
+  //  aquela sombra "irada" — penumbra macia que endurece no contato.
   sun.position = new BABYLON.Vector3(40, 100, 40);
-  sun.autoUpdateExtends = false;
-  sun.shadowMinZ = 1; sun.shadowMaxZ = 200;
-  sun.orthoLeft = -40; sun.orthoRight = 40;
-  sun.orthoTop = 40;   sun.orthoBottom = -40;
-  // Frustum SEGUE o player: a luz se reposiciona acima dele mantendo a
-  //  direção do sol → sombra sempre nítida onde o jogador está.
-  window._updateShadowFrustum = () => {
-    const pp = window._gamePlayer?.mesh?.position; if (!pp) return;
-    const dir = sun.direction;   // direção do sol (muda com a hora)
-    sun.position.set(pp.x - dir.x * 60, pp.y - dir.y * 60, pp.z - dir.z * 60);
-  };
+  sun.autoUpdateExtends = false;        // CSM cuida do frustum sozinho
+  sun.shadowMinZ = 1; sun.shadowMaxZ = 250;
 
-  const shadowGen = new BABYLON.ShadowGenerator(2048, sun);
-  shadowGen.useBlurExponentialShadowMap = true;
-  shadowGen.useKernelBlur = true;
-  shadowGen.blurKernel = 32;
-  shadowGen.setDarkness(0.3);   // mais escura (0=preto, 1=sem sombra)
+  const shadowGen = new BABYLON.CascadedShadowGenerator(2048, sun);
+  shadowGen.numCascades = 4;
+  shadowGen.lambda = 0.78;              // equilíbrio perto/longe
+  shadowGen.stabilizeCascades = true;   // mata o "swimming" da borda
+  shadowGen.cascadeBlendPercentage = 0.05;
+  shadowGen.shadowMaxZ = 115;           // alcance das cascatas (u) — valor F8
+  shadowGen.depthClamp = true;
+  shadowGen.autoCalcDepthBounds = true; // ajusta profundidade à cena
+  // PCSS: penumbra realista (nítida no contato, suave ao longe)
+  shadowGen.filter = BABYLON.ShadowGenerator.FILTER_PCSS;
+  shadowGen.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM;
+  shadowGen.contactHardeningLightSizeUVRatio = 0.15;   // penumbra — valor F8
+  shadowGen.transparencyShadow = true;
+  shadowGen.enableSoftTransparentShadow = true;
+  shadowGen.bias = 0.002;
+  shadowGen.normalBias = 0.1;
+  shadowGen.setDarkness(0.3);
   window._shadowGen = shadowGen;
+
+  // CSM segue a câmera automaticamente → frustum manual não é mais
+  //  necessário (vira no-op pra não brigar com as cascatas).
+  window._updateShadowFrustum = () => {};
 
   // Helper de teste (rode window.testShadow() no console do jogo): cria um
   //  pilar vermelho 5m à frente — confirma a sombra projetada no chão.
@@ -385,7 +439,7 @@ async function init() {
 
   // ── Sistemas base ────────────────────────────────────────────────
   const input  = new InputManager(canvas);
-  const level  = new Level(scene, shadowGen);
+  const level  = new Level(scene, shadowGen, { clean: true });   // mapa limpo c/ sombra
   const player = new Player(scene, canvas, input, level);
   level.player     = player;   // inimigos precisam de referência ao jogador
   player.onRespawn = () => level.resetEnemies();  // reseta posição dos inimigos ao respawnar
@@ -967,6 +1021,8 @@ async function init() {
   // ── Modo Construção (tecla B) + Máquina de Criação Meshy AI ───────
   const buildMode = new BuildMode(scene, player, level);
   window._buildMode = buildMode;
+  // Limpar terreno colocado (objetos/quadros/máquinas/colisores órfãos) por código
+  window.clearTerrain = () => buildMode.clearAllTerrain();
   const meshyPanel = new MeshyPanel(scene, buildMode);
   window._meshyPanel = meshyPanel;
 
@@ -977,6 +1033,21 @@ async function init() {
 
   // Máquinas gerenciadas globalmente — restauradas do DB em _loadAssetsBackground
   window._assetMachines = [];
+
+  // ── VAT (Baked Vertex Animation) — horda de monstros na GPU ───────
+  //  Assa as animações do GLB numa textura e instancia centenas de
+  //  monstros quase de graça. Teste no console:
+  //    await vatHorde('monsterPlant', 100)        // assa + spawna 100
+  //    vatClearHorde('monsterPlant')              // limpa as instâncias
+  const { MonsterVAT } = await import('./game/animation/MonsterVAT.js');
+  window._monsterVAT = new MonsterVAT(scene);
+  window.vatHorde = async (key = 'monsterPlant', count = 100, opts = {}) => {
+    const c = opts.center
+      ? new BABYLON.Vector3(opts.center[0], opts.center[1], opts.center[2])
+      : (window._gamePlayer?.mesh?.position?.clone?.() || BABYLON.Vector3.Zero());
+    return window._monsterVAT.spawnHorde(key, count, { center: c, radius: opts.radius ?? 12, scale: opts.scale ?? 1, animName: opts.animName ?? null });
+  };
+  window.vatClearHorde = (key = 'monsterPlant') => window._monsterVAT.clearInstances(key);
 
   // ── Anti-lag de colisão ───────────────────────────────────────────
   //  GLBs pesados (escada, estátuas) com colisão de malha-cheia fazem o
@@ -1051,6 +1122,9 @@ async function init() {
     if (window._gamePlayer?._dead) return;   // morto → tela de morte
     if (_engineMode) return;                 // ja em engine mode
     if ($('start-screen').style.display !== 'none') return;
+    // ferramenta/menu aberto (Biblioteca, modo colocar) → não pausa por cima
+    if (window._assetGroupsUI?._visible) return;
+    if (window._buildMode && window._buildMode._state !== 'inactive') return;
     _showGamePause();
   };
 
@@ -1064,7 +1138,9 @@ async function init() {
     // ESC: pause / engine mode handling
     if (e.code === 'Escape' && !e.repeat) {
       if ($('start-screen').style.display !== 'none') return; // jogo nao iniciado
-      if (animatorMode?.active) return;
+      // ferramentas de debug abertas → ESC FECHA elas
+      if (animatorMode?.active)     { window.closeAnimator?.();     return; }
+      if (monsterDebugMode?.active) { window.closeMonsterDebug?.(); return; }
       if (_engineMode) {
         // ESC em engine mode = volta pro jogo
         e.preventDefault();
@@ -1252,7 +1328,8 @@ async function init() {
       player.update(dt);
       level.update(dt);
       stats.update(dt);
-      skills.update(dt, input);
+      // Skills NÃO disparam enquanto posiciona asset (Q/R são p/ escala/rotação)
+      if (buildMode._state !== 'placing') skills.update(dt, input);
     } else if (player._dead) {
       // MORTO com cursor livre → continua a queda/animação + câmera seguindo.
       player.update(dt);
@@ -1584,6 +1661,9 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     //  a sombra do sol — corrige luzes FX consumindo slots e maxLights baixo.
     try { gfx.fixSceneShadows(); } catch (_) {}
     setTimeout(() => { try { gfx.fixSceneShadows(); } catch (_) {} }, 400);
+
+    // Realismo extra: IBL (reflexões/ambiente HDR) + SSR (reflexo em tempo real)
+    try { gfx.enableRealism(); } catch (e) { console.warn('[GFX] realism:', e); }
 
     // POR ÚLTIMO: garante a arma na mão. Roda DEPOIS do applyAllSaved (que
     //  podia jogar o viewmodel no chão ao casar nome genérico __root__).

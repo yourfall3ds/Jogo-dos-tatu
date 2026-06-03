@@ -52,6 +52,10 @@ export class AssetGroupsUI {
           </span>
           <div style="display:flex;gap:8px;align-items:center">
             <span id="agui-total" style="font-size:11px;color:#446"></span>
+            <button id="agui-clear" title="Remove tudo que foi colocado no mapa (mantém o mapa-base)" style="
+              background:#3a1010;border:1px solid #c44;color:#fbb;
+              cursor:pointer;font-size:11px;padding:5px 10px;border-radius:6px
+            ">🧹 Limpar Terreno</button>
             <button id="agui-close" style="
               background:#2a1a3a;border:1px solid #557;color:#a8c;
               cursor:pointer;font-size:18px;padding:2px 10px;border-radius:6px
@@ -211,20 +215,23 @@ export class AssetGroupsUI {
           overflow:hidden;text-overflow:ellipsis;
         }
         .agui-asset-card .cactions {
-          display:none;position:absolute;inset:0;
-          background:rgba(5,5,20,.88);
-          flex-direction:column;align-items:center;justify-content:center;gap:5px;
-          padding:6px;
+          display:none;position:absolute;left:0;right:0;bottom:0;
+          background:linear-gradient(transparent,rgba(5,5,20,.6) 40%,rgba(5,5,20,.96));
+          flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:center;gap:3px;
+          padding:10px 4px 4px;
         }
         .agui-asset-card:hover .cactions { display:flex }
         .agui-asset-card .cactions button {
-          width:100%;background:#1a2a40;border:1px solid #446;
-          color:#adf;cursor:pointer;padding:5px 4px;border-radius:5px;
-          font-family:inherit;font-size:10px;transition:.1s;
+          flex:1;min-width:0;height:24px;background:#1a2a40;border:1px solid #557;
+          color:#cdf;cursor:pointer;padding:0;border-radius:5px;
+          font-family:inherit;font-size:12px;line-height:1;transition:.1s;
+          display:flex;align-items:center;justify-content:center;
         }
-        .agui-asset-card .cactions button:hover { background:#2a3a60 }
-        .agui-asset-card .cactions button.danger { border-color:#633;color:#f88 }
-        .agui-asset-card .cactions button.danger:hover { background:#3a1a1a }
+        .agui-asset-card .cactions button:hover { background:#2a4a78;border-color:#7af;transform:translateY(-1px) }
+        .agui-asset-card .cactions button.btn-inv { background:#13344a;border-color:#2ad;color:#bdf }
+        .agui-asset-card .cactions button.btn-inv:hover { background:#1a4a6a }
+        .agui-asset-card .cactions button.danger { border-color:#733;color:#f88 }
+        .agui-asset-card .cactions button.danger:hover { background:#3a1a1a;border-color:#c55 }
         .agui-asset-card .gbadge {
           position:absolute;top:4px;right:4px;
           font-size:14px;background:rgba(0,0,0,.6);
@@ -236,6 +243,11 @@ export class AssetGroupsUI {
     this._el = el;
 
     el.querySelector('#agui-close').onclick    = () => this.close();
+    el.querySelector('#agui-clear').onclick    = async () => {
+      if (!confirm('Limpar TODO o terreno colocado (objetos, quadros, máquinas e colisores órfãos)?\nO mapa-base é preservado. Não dá pra desfazer.')) return;
+      const c = await window.clearTerrain?.();
+      if (c) this._toast(`🧹 Limpo: ${c.placed} obj · ${c.machines} máq · ${c.bodies} corpo(s)`);
+    };
     el.querySelector('#agui-new-group').onclick = () => this._openGroupModal(null);
     el.querySelector('#agui-modal-cancel').onclick = () => this._closeGroupModal();
     el.querySelector('#agui-modal-save').onclick   = () => this._saveGroupModal();
@@ -371,14 +383,14 @@ export class AssetGroupsUI {
 
     // Editar abre o editor isolado pra TODOS; built-in não deleta/renomeia
     // (escala padrão fica dentro do Editor, junto do Gameplay)
-    const actions = asset.builtin
-      ? `<button class="btn-edit">✎ Editar</button>
-         <button class="btn-spawn">▶ Spawnar</button>
-         <button class="btn-move">→ Mover grupo</button>`
-      : `<button class="btn-edit">✎ Editar</button>
-         <button class="btn-spawn">▶ Spawnar</button>
-         <button class="btn-move">→ Mover grupo</button>
-         <button class="btn-delete danger">🗑 Excluir</button>`;
+    // Botões compactos (só ícone + tooltip) numa faixa na BASE → a miniatura
+    //  continua visível no hover (antes o overlay cobria o card inteiro).
+    const actions = `
+      <button class="btn-inv"   title="Adicionar ao inventário (+1 · Shift = +10)">📌</button>
+      <button class="btn-spawn" title="Spawnar agora (mira)">▶</button>
+      <button class="btn-edit"  title="Editar asset">✎</button>
+      <button class="btn-move"  title="Mover de grupo">→</button>
+      ${asset.builtin ? '' : `<button class="btn-delete danger" title="Excluir da biblioteca">🗑</button>`}`;
 
     div.innerHTML = `
       ${thumb}
@@ -389,12 +401,16 @@ export class AssetGroupsUI {
     `;
 
     div.querySelector('.btn-edit').onclick   = () => { this.close(); window._assetEditor?.open?.(asset); };
-    div.querySelector('.btn-spawn').onclick  = () => this._spawn(asset);
+    const spawnBtn = div.querySelector('.btn-spawn');
+    if (spawnBtn) spawnBtn.onclick = () => this._spawn(asset);
+    div.querySelector('.btn-inv').onclick    = (e) => { e.stopPropagation(); this._addToInventory(asset, e.shiftKey ? 10 : 1); };
     div.querySelector('.btn-move')?.addEventListener('click', () => this._openMoveModal(asset));
     div.querySelector('.btn-delete')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this._deleteAsset(asset);
     });
+    // Clique no corpo do card (fora dos ícones) = ação principal: inventário
+    div.onclick = (e) => { if (e.target.closest('button')) return; this._addToInventory(asset, e.shiftKey ? 10 : 1); };
     return div;
   }
 
@@ -412,13 +428,53 @@ export class AssetGroupsUI {
     const props = await AssetGroups.getAssetProps(asset).catch(() => ({}));
     this.close();
     this.buildMode?.spawnAsset?.({
-      kind:      'generated',
+      kind:      asset.kind === 'piece' ? 'piece' : 'generated',
       id:        asset.id,
       name:      asset.name,
       glbUrl:    asset.glbUrl,
+      pieceId:   asset.pieceId,
+      drag:      asset.drag,
       groupId:   asset.groupId,
       groupProps: props,
     });
+  }
+
+  /** Adiciona o asset ao INVENTÁRIO como item construível empilhável. */
+  async _addToInventory(asset, qty = 1) {
+    const inv = window._gameInventory;
+    if (!inv) { this._toast('⚠ inventário indisponível'); return; }
+    const props = await AssetGroups.getAssetProps(asset).catch(() => ({}));
+    const thumb = this._thumbs?.[asset.id] || asset.imageUrl || null;
+    inv.addBuildable({
+      assetId:    asset.id,
+      name:       asset.name,
+      glbUrl:     asset.glbUrl,
+      pieceId:    asset.pieceId,        // peça procedural (parede/porta/janela/chão)
+      drag:       asset.drag,           // modo arrastar (parede/chão)
+      groupId:    asset.groupId,
+      groupProps: props,
+      thumb,
+      qty,
+    });
+    const total = inv.getBuildables().find(s => s.data?.assetId === asset.id)?.qty || qty;
+    this._toast(`📌 "${asset.name}" ×${total} no inventário · Shift = +10 · tecla 1-9 pra colocar`);
+  }
+
+  /** Mensagem flutuante rápida (feedback de ação). */
+  _toast(msg) {
+    let t = this._el.querySelector('#agui-toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'agui-toast';
+      t.style.cssText = `position:absolute;bottom:18px;left:50%;transform:translateX(-50%);
+        background:#0a1a2a;border:1px solid #2ad;color:#bdf;padding:8px 18px;border-radius:8px;
+        font-size:12px;z-index:9700;pointer-events:none;transition:opacity .25s;box-shadow:0 0 18px rgba(40,160,220,.4)`;
+      this._el.querySelector('#agui-panel').appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.opacity = '1';
+    clearTimeout(this._toastT);
+    this._toastT = setTimeout(() => { t.style.opacity = '0'; }, 1800);
   }
 
   async _deleteAsset(asset) {

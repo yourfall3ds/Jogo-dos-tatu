@@ -62,7 +62,7 @@ export class GraphicsDebugPanel {
 
     // — Câmera / tonemapping —
     el.append(this._sec('☀️ Exposição & cor'));
-    el.append(this._row('Exposure', 0.2, 2, 0.01, ip.exposure, v => { ip.exposure = v; this._lockExposure = true; }));
+    el.append(this._row('Exposure', 0.2, 2, 0.01, ip.exposure, v => { ip.exposure = v; this.gfx._lockExposure = true; }));
     el.append(this._row('Contraste', 0.5, 2, 0.01, ip.contrast, v => ip.contrast = v));
     el.append(this._toggle('Tonemapping ACES', ip.toneMappingEnabled, v => ip.toneMappingEnabled = v));
     el.append(this._toggle('Vinheta', ip.vignetteEnabled, v => ip.vignetteEnabled = v));
@@ -80,15 +80,43 @@ export class GraphicsDebugPanel {
       el.append(this._row('Raio SSAO', 0.1, 4, 0.05, this.gfx.ssao.radius, v => this.gfx.ssao.radius = v));
     }
 
+    // ─── ☀️ CONTROLE COMPLETO DO SOL ───────────────────────────────
+    const dn = this.dayNight, sg = this.sg;
+    const reapply = () => { try { dn._apply(); } catch (_) {} };
+    el.append(this._sec('☀️ SOL — controle completo'));
+
+    // Toggle: assume o sol manualmente (congela o ciclo dia/noite)
+    const manualCb = document.createElement('input'); manualCb.type='checkbox'; manualCb.checked = dn.manual;
+    const manualLbl = document.createElement('label');
+    manualLbl.style.cssText = 'display:flex;align-items:center;gap:6px;margin:3px 0;font:12px system-ui;color:#9fe;cursor:pointer;font-weight:600';
+    manualLbl.append(manualCb, document.createTextNode('🔆 Sol MANUAL (congela ciclo)'));
+    manualCb.onchange = () => { dn.setManual(manualCb.checked); this._manualHint.style.display = manualCb.checked ? 'block' : 'none'; };
+    el.append(manualLbl);
+    this._manualHint = document.createElement('div');
+    this._manualHint.textContent = '✓ Manual ON — sliders abaixo mandam no sol e sombra.';
+    this._manualHint.style.cssText = 'font:10px system-ui;color:#9fe;margin:2px 0 4px;display:' + (dn.manual ? 'block' : 'none');
+    el.append(this._manualHint);
+
+    // mexer em QUALQUER slider do sol liga o manual automaticamente
+    const sunCtl = (set) => (v) => {
+      if (!dn.manual) { dn.setManual(true); manualCb.checked = true; this._manualHint.style.display = 'block'; }
+      set(v); reapply();
+    };
+
+    //  Ângulo
+    el.append(this._row('🌗 Elevação (°)', 3, 89, 1, dn.sunElevDeg, sunCtl(v => dn.sunElevDeg = v)));
+    el.append(this._row('🧭 Azimute (°)', 0, 360, 1, dn.sunAzimDeg, sunCtl(v => dn.sunAzimDeg = v)));
+    //  Luz
+    el.append(this._row('💡 Intensidade sol', 0, 4, 0.05, dn.sunIntensity, sunCtl(v => { dn.sunIntensity = v; this.sun.intensity = v; })));
+    el.append(this._row('🌫️ Luz ambiente', 0, 1, 0.02, dn.ambientInt, sunCtl(v => dn.ambientInt = v)));
+
     // — Sombra —
-    el.append(this._sec('🕶️ Sombra do sol'));
-    el.append(this._row('Darkness', 0, 1, 0.01, this.sg.darkness, v => this.sg.darkness = v));
-    el.append(this._row('Bias', 0, 0.005, 0.00005, this.sg.bias, v => this.sg.bias = v));
-    el.append(this._row('Normal bias', 0, 0.1, 0.001, this.sg.normalBias, v => this.sg.normalBias = v));
-    el.append(this._row('Ortho size', 20, 150, 1, Math.abs(this.sun.orthoRight || 80), v => {
-      this.sun.orthoLeft=-v; this.sun.orthoRight=v; this.sun.orthoTop=v; this.sun.orthoBottom=-v;
-    }));
-    el.append(this._toggle('Auto frustum', this.sun.autoUpdateExtends, v => this.sun.autoUpdateExtends = v));
+    el.append(this._sec('🕶️ Sombra'));
+    el.append(this._row('Escuridão', 0, 1, 0.01, sg.darkness, sunCtl(v => { sg.darkness = v; dn.shadowDark = v; })));
+    el.append(this._row('Suavidade (penumbra)', 0, 0.2, 0.005, sg.contactHardeningLightSizeUVRatio ?? 0.06, v => { sg.contactHardeningLightSizeUVRatio = v; }));
+    el.append(this._row('Alcance (maxZ)', 30, 250, 5, sg.shadowMaxZ ?? 130, v => { sg.shadowMaxZ = v; }));
+    el.append(this._row('Bias', 0, 0.005, 0.00005, sg.bias, v => sg.bias = v));
+    el.append(this._row('Normal bias', 0, 0.1, 0.001, sg.normalBias, v => sg.normalBias = v));
 
     // — ISOLAR (liga/desliga sistemas pra achar o que mata a sombra) —
     el.append(this._sec('🔬 Isolar (debug sombra)'));
@@ -103,7 +131,7 @@ export class GraphicsDebugPanel {
       this._ppOff = !v;
       try { mgr[v ? 'attachCamerasToRenderPipeline' : 'detachCamerasFromRenderPipeline']('mainPipeline', cam()); } catch (_) {}
     }));
-    el.append(this._toggle('🌑 SSAO', !this._ssaoOff, v => {
+    if (this.gfx.ssao) el.append(this._toggle('🌑 SSAO', !this._ssaoOff, v => {
       this._ssaoOff = !v;
       try { mgr[v ? 'attachCamerasToRenderPipeline' : 'detachCamerasFromRenderPipeline']('ssao', cam()); } catch (_) {}
     }));
@@ -117,11 +145,20 @@ export class GraphicsDebugPanel {
     tb.onclick = () => window.testShadow?.();
     el.append(tb);
 
-    // — Sol / hora —
-    el.append(this._sec('🌅 Hora do dia'));
+    // — Hora do dia (ciclo automático) —
+    el.append(this._sec('🌅 Hora do dia (ciclo auto)'));
     el.append(this._row('Hora (0-1)', 0, 1, 0.005, this.dayNight.t, v => { this.dayNight.pause(true); this.dayNight.setTime(v); }));
-    el.append(this._row('Intensidade sol', 0, 4, 0.05, this.sun.intensity, v => { this.sun.intensity = v; this._lockSun = true; }));
-    el.append(this._row('Névoa', 0, 0.01, 0.0002, this.scene.fogDensity, v => this.scene.fogDensity = v));
+    // presets rápidos de hora
+    const presets = document.createElement('div');
+    presets.style.cssText = 'display:flex;gap:4px;margin:4px 0';
+    [['🌅 amanhecer',0.22],['☀️ meio-dia',0.5],['🌇 pôr-do-sol',0.78],['🌙 noite',0.95]].forEach(([t,val])=>{
+      const b=document.createElement('button'); b.textContent=t;
+      b.style.cssText='flex:1;font:10px system-ui;background:#1a2440;border:1px solid #345;color:#bcd;border-radius:5px;padding:4px 2px;cursor:pointer';
+      b.onclick=()=>{ this.dayNight.pause(true); this.dayNight.setTime(val); };
+      presets.append(b);
+    });
+    el.append(presets);
+    el.append(this._row('Densidade névoa', 0, 0.01, 0.0002, this.scene.fogDensity, v => this.scene.fogDensity = v));
 
     // botão: imprime os valores atuais no console pra eu fixar
     const btn = document.createElement('button');
@@ -145,16 +182,18 @@ export class GraphicsDebugPanel {
   }
 
   _dump() {
-    const ip = this.scene.imageProcessingConfiguration, pl = this.gfx.pipeline, sg = this.sg, sun = this.sun;
+    const ip = this.scene.imageProcessingConfiguration, pl = this.gfx.pipeline, sg = this.sg, dn = this.dayNight;
     const txt = [
       `exposure: ${ip.exposure.toFixed(2)}`,
       `contrast: ${ip.contrast.toFixed(2)}`,
       `bloom: ${pl.bloomEnabled} thr ${pl.bloomThreshold.toFixed(2)} w ${pl.bloomWeight.toFixed(2)}`,
       this.gfx.ssao ? `ssao: str ${this.gfx.ssao.totalStrength.toFixed(2)} r ${this.gfx.ssao.radius.toFixed(2)}` : 'ssao: off',
-      `shadow: dark ${sg.darkness.toFixed(2)} bias ${sg.bias} nbias ${sg.normalBias}`,
-      `ortho: ${Math.abs(sun.orthoRight||0)} autoExt ${sun.autoUpdateExtends}`,
-      `fog: ${this.scene.fogDensity}`,
-      `hora: ${this.dayNight.t.toFixed(3)} sunInt ${sun.intensity.toFixed(2)}`,
+      `--- SOL ${dn.manual ? '(MANUAL)' : '(auto)'} ---`,
+      `elev: ${dn.sunElevDeg}°  azim: ${dn.sunAzimDeg}°`,
+      `sunInt: ${dn.sunIntensity.toFixed(2)}  ambient: ${dn.ambientInt.toFixed(2)}`,
+      `shadow: dark ${sg.darkness.toFixed(2)} penumbra ${(sg.contactHardeningLightSizeUVRatio??0).toFixed(3)} maxZ ${sg.shadowMaxZ}`,
+      `bias ${sg.bias} nbias ${sg.normalBias}`,
+      `fog: ${this.scene.fogDensity}  hora: ${dn.t.toFixed(3)}`,
     ].join('\n');
     this._dumpOut.textContent = txt;
     console.log('=== VALORES GFX ===\n' + txt);

@@ -188,18 +188,22 @@ class GhostCamera {
 
 import { LocalDB }    from '../data/LocalDB.js';
 import { TemplateDB } from '../data/TemplateDB.js';
+import { optimizeCollider } from './ColliderOptimizer.js';
 
 // ════════════════════════════════════════════════════════════════
 //  GhostCamera — câmera de voo livre (Unreal-style)
 // ════════════════════════════════════════════════════════════════
 export class SceneEditor {
   static STORAGE_KEY = 'scene';
+  static DELETED_KEY = 'scene_deleted';
 
   constructor(scene) {
     this.scene       = scene;
     this._sel        = null;
     this._visible    = false;
     this._saved      = {};
+    this._deleted    = [];   // nomes de objetos removidos (persistido)
+    this._tKeys      = {};   // teclas de transform (Q/R) ativas
     this._hlLayer    = null;
     this._hlMeshes   = [];   // lista dos meshes realmente adicionados ao HighlightLayer
     this._gm         = null;
@@ -222,6 +226,7 @@ export class SceneEditor {
     this._buildSpeedOverlay();
     this._setupGizmos();
     this._setupPointer();
+    this._setupTransformInput();   // segurar Q/R + mouse pra escalar/rotacionar
 
     // Loop: atualiza câmera + inputs
     this._frameCtr = 0;
@@ -245,7 +250,8 @@ export class SceneEditor {
   async _init() {
     await TemplateDB.init();
     this._saved = await LocalDB.get(SceneEditor.STORAGE_KEY, {});
-    DEBUG.log(`[SceneEditor] ${Object.keys(this._saved).length} objetos carregados do DB.`);
+    this._deleted = await LocalDB.get(SceneEditor.DELETED_KEY, []);
+    DEBUG.log(`[SceneEditor] ${Object.keys(this._saved).length} objetos carregados do DB${this._deleted.length ? `, ${this._deleted.length} removidos` : ''}.`);
     this._refreshTemplateSelect();
   }
 
@@ -266,7 +272,8 @@ export class SceneEditor {
 
     const q = id => this._rightPanel?.querySelector(`#${id}`);
     if (q('sed-chk-breakable')) q('sed-chk-breakable').checked = tpl.isBreakable ?? false;
-    if (q('sed-chk-physics'))   q('sed-chk-physics').checked   = tpl.hasPhysics ?? false;
+    if (q('sed-chk-gravity'))   q('sed-chk-gravity').checked   = tpl.hasPhysics ?? false;
+    if (q('sed-chk-collider'))  q('sed-chk-collider').checked  = (tpl.collider ?? tpl.hasPhysics) ?? false;
     if (q('sed-chk-collect'))   q('sed-chk-collect').checked   = tpl.isCollectable ?? false;
     if (q('sed-num-hp'))        q('sed-num-hp').value          = tpl.hp ?? 3;
     if (q('sed-num-bounce'))    q('sed-num-bounce').value      = tpl.bounce ?? 0.22;
@@ -286,6 +293,7 @@ export class SceneEditor {
   }
 
   applyAllSaved() {
+    this._applyDeletions();   // remove o que foi deletado no editor
     let n = 0, g = 0;
     for (const [name, t] of Object.entries(this._saved)) {
       // NUNCA aplica em nomes GENÉRICOS (__root__, etc): vários GLBs usam
@@ -307,19 +315,25 @@ export class SceneEditor {
       if (t.r) m.rotation.set(t.r[0], t.r[1], t.r[2]);
       if (t.s) m.scaling.set(t.s[0], t.s[1], t.s[2]);
 
-      // ── Re-aplica gameplay salvo (física/quebrável/coletável) ───────
-      // applyAllSaved só restaurava transform → física/quebrável era
-      // perdida no F5. Agora recria o GameObject a partir das flags.
+      // ── Re-aplica gameplay/colisão salvos ───────────────────────────
+      // Sem isso, no F5 a física/quebrável E o COLISOR (sólido) se perdiam
+      // → objeto voltava atravessável. Agora recria tudo a partir das flags.
+      // Backward-compat: saves antigos sem 'collider' → colisor se tinha física.
+      const wantCollider = (t.collider ?? t.physics) || !!t.physics;
       if ((t.physics || t.breakable || t.collect) && !m._gameObject) {
         this._createGameObjectFor(m, {
           isBreakable:   !!t.breakable,
           hasPhysics:    !!t.physics,
           isCollectable: !!t.collect,
+          collider:      wantCollider,
           hp:            t.hp     ?? 3,
           bounce:        t.bounce ?? 0.22,
           itemId:        t.itemId || '',
         });
         g++;
+      } else if (wantCollider && !t.physics) {
+        // "só colisor" (sólido estático, sem gameplay) → corpo Havok
+        this._applyCollision(this._resolveRoot(m), { collider: true, gravity: false });
       }
       n++;
     }
@@ -511,6 +525,125 @@ export class SceneEditor {
     this._syncAllSections(this._sel);
   }
 
+  // ── Segurar Q (escala) ou R (rotação) + mexer o mouse (igual o BuildMode) ─
+  //  + tecla Delete remove o objeto selecionado.
+  _setupTransformInput() {
+    const SCALE_SENS = 0.004, ROT_SENS = 0.008;
+    window.addEventListener('keydown', (e) => {
+      if (!this._visible) return;
+      const tag = (e.target?.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      this._tKeys[e.code] = true;
+      if ((e.code === 'Delete' || e.code === 'Backspace') && this._sel) {
+        e.preventDefault();
+        this._deleteSelected();
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      this._tKeys[e.code] = false;
+      // ao soltar Q/R, persiste o transform
+      if ((e.code === 'KeyQ' || e.code === 'KeyR') && this._visible && this._sel) {
+        this._saveTransform(this._sel);
+      }
+    });
+    // Movimento do mouse: Q=escala (Y), R=rotação (X). RMB = olhar (não transforma).
+    this.scene.onPointerObservable.add((pi) => {
+      if (!this._visible || !this._sel) return;
+      if (pi.type !== BABYLON.PointerEventTypes.POINTERMOVE) return;
+      const ev = pi.event;
+      if (ev.buttons & 2) return;                 // botão direito = câmera
+      const q = !!this._tKeys['KeyQ'], r = !!this._tKeys['KeyR'];
+      if (!q && !r) return;
+      const dx = ev.movementX || 0, dy = ev.movementY || 0;
+      if (q) {                                     // mouse pra cima = maior
+        const f = Math.min(1.1, Math.max(0.9, 1 - dy * SCALE_SENS));
+        const s = this._sel.scaling;
+        s.scaleInPlace(f);
+        // clamp pra não sumir/explodir
+        const mag = Math.max(s.x, s.y, s.z);
+        if (mag < 0.02) s.scaleInPlace(0.02 / mag);
+        if (mag > 200)  s.scaleInPlace(200 / mag);
+      }
+      if (r) this._sel.rotation.y += dx * ROT_SENS;
+      this._syncInputs?.();
+    });
+  }
+
+  // ── Deleta o objeto selecionado (e persiste a remoção) ───────────────
+  _deleteSelected() {
+    const mesh = this._sel;
+    if (!mesh) return;
+    const name = mesh.name;
+    this._clearHighlight();
+    this._gm?.attachToMesh(null);
+
+    // ── Máquina de Assets: apaga o GRUPO INTEIRO (chassi + feixe + discos +
+    //    partículas + prompt), não só a peça clicada. E tira do DB pra não
+    //    voltar no reload. ──
+    const machine = this._findOwningMachine(mesh);
+    if (machine) {
+      try { machine.dispose(); } catch (_) {}
+      try { machine._unpersist?.(); } catch (_) {}
+      this._sel = null;
+      this._gm?.attachToMesh(null);
+      const nEl = this._rightPanel?.querySelector('#sed-sel-name');
+      if (nEl) nEl.textContent = '— clique na cena —';
+      this._refreshHierarchy();
+      this._toast?.('🗑️ Máquina de Assets removida (com feixe e tudo)', '#5a2a2a');
+      return;
+    }
+
+    try { mesh._gameObject?.dispose?.(); } catch (_) {}
+    try { mesh.dispose(false, true); } catch (_) {}     // dispõe filhos tb
+    if (name) {
+      if (!this._deleted.includes(name)) this._deleted.push(name);
+      delete this._saved[name];
+      this._writeStorage();
+      LocalDB.save(SceneEditor.DELETED_KEY, this._deleted);
+    }
+    this._sel = null;
+    const n = this._rightPanel?.querySelector('#sed-sel-name');
+    if (n) n.textContent = '— clique na cena —';
+    this._refreshHierarchy();
+    this._toast?.(`🗑️ '${name}' removido`, '#5a2a2a');
+  }
+
+  // ── Acha a AssetMachine dona de um mesh (chassi/feixe/disco/imagem) ──
+  //  As peças do feixe/disco são meshes soltas na cena (não filhas do chassi),
+  //  então deletar o chassi não as remove. Aqui achamos a máquina via
+  //  identidade de objeto (sobe a hierarquia) p/ deletar o grupo todo.
+  _findOwningMachine(mesh) {
+    const machines = window._assetMachines || [];
+    if (!machines.length || !mesh) return null;
+    const chain = []; let n = mesh; while (n) { chain.push(n); n = n.parent; }
+    for (const m of machines) {
+      const parts = [m._p1Root, m._p2Root, m._beam, m._disc, m._disc2,
+                     m._imgPlane, m._imgBg, m._imgFrame, m._preview3DRoot];
+      if (parts.some(p => p && chain.includes(p))) return m;
+    }
+    // fallback por nome (mac_beam / __assetMachine_*) → máquina mais próxima
+    if (/^(__assetMachine|mac_)/.test(mesh.name || '')) {
+      let best = null, bestD = Infinity;
+      for (const m of machines) {
+        const d = BABYLON.Vector3.DistanceSquared(mesh.getAbsolutePosition?.() || mesh.position, m.position);
+        if (d < bestD) { bestD = d; best = m; }
+      }
+      return best;
+    }
+    return null;
+  }
+
+  // ── Re-aplica remoções salvas (chamado no applyAllSaved após o load) ──
+  _applyDeletions() {
+    if (!this._deleted?.length) return;
+    let n = 0;
+    for (const name of this._deleted) {
+      const m = this.scene.getMeshByName(name) ?? this.scene.getNodeByName(name);
+      if (m) { try { m._gameObject?.dispose?.(); m.dispose(false, true); n++; } catch (_) {} }
+    }
+    if (n) console.log(`[SceneEditor] 🗑️ ${n} objeto(s) removido(s) (persistido).`);
+  }
+
   _saveTransform(mesh) {
     const p = mesh.position, r = mesh.rotation, s = mesh.scaling;
     const config = {
@@ -536,7 +669,8 @@ export class SceneEditor {
       // Se não tem GameObject ainda, tenta pegar dos inputs do editor
       const q = id => this._rightPanel?.querySelector(`#${id}`);
       config.breakable = q('sed-chk-breakable')?.checked ?? false;
-      config.physics   = q('sed-chk-physics')?.checked   ?? false;
+      config.physics   = q('sed-chk-gravity')?.checked   ?? false;   // física = gravidade (dinâmico)
+      config.collider  = (q('sed-chk-collider')?.checked ?? false) || config.physics;
       config.collect   = q('sed-chk-collect')?.checked   ?? false;
       config.bounce    = parseFloat(q('sed-num-bounce')?.value) || 0.22;
       config.hp        = parseInt(q('sed-num-hp')?.value)       || 3;
@@ -546,6 +680,77 @@ export class SceneEditor {
     this._saved[mesh.name] = config;
     this._writeStorage();
     this._refreshHierarchy();
+    this._refreshCollider(mesh);   // colisor acompanha o novo move/scale
+  }
+
+  /**
+   * Reconstrói o colisor após mover/escalar no editor.
+   *
+   * PROBLEMA: o colisor é "assado" UMA vez (corpo estático Havok CONVEX_HULL
+   * em root._staticBody, ou caixa-proxy invisível). A forma e a posição são
+   * fixadas na criação — NÃO acompanham move/scale. Resultado: depois de
+   * editar, o visual anda mas o colisor fica parado → objeto ATRAVESSÁVEL.
+   *
+   * SOLUÇÃO: destrói o colisor antigo e refaz na transform NOVA. Só age se o
+   * objeto JÁ tinha colisor otimizado (senão não há nada a refazer).
+   */
+  _refreshCollider(mesh) {
+    const root = this._resolveRoot(mesh);
+    if (!root || (!root._staticBody && !root._colliderOptimized)) return;
+
+    this._teardownCollider(root);
+
+    // religa colisão nas malhas reais e reconstrói na transform NOVA
+    const meshes = [root, ...(root.getChildMeshes?.(false) || [])]
+      .filter(m => (m.getTotalVertices?.() || 0) > 0);
+    meshes.forEach(m => { m.checkCollisions = true; });
+    root.computeWorldMatrix(true);
+    try { optimizeCollider(root, this.scene); }
+    catch (e) { console.warn('[SceneEditor] refresh collider falhou:', e?.message); }
+  }
+
+  /** Destrói o colisor de um objeto: corpo estático Havok + caixas-proxy. */
+  _teardownCollider(root) {
+    if (!root) return;
+    try { root._staticBody?.dispose?.(); } catch (_) {}
+    root._staticBody = null;
+    const names = [`${root.name}_scol`, `${root.name}_boxcol`, `${root.name}_col`];
+    this.scene.meshes
+      .filter(m => (m._isBoxCol && (m.name || '').startsWith(root.name)) || names.includes(m.name))
+      .forEach(px => {
+        try { px.physicsBody?.dispose?.(); } catch (_) {}
+        try { px.dispose(); } catch (_) {}
+      });
+    root._colliderOptimized = false;
+  }
+
+  /**
+   * Aplica a COLISÃO física de um objeto conforme colisor/gravidade:
+   *  • gravidade  → corpo DINÂMICO (cai, reage à física) — via GameObject
+   *  • colisor    → corpo ESTÁTICO Havok (sólido, não cai) — o player colide
+   *  • nenhum     → FANTASMA (sem colisão, o player atravessa)
+   * Refaz sempre do zero na transform atual (resolve o "movi e atravesso").
+   */
+  _applyCollision(root, { collider, gravity }) {
+    if (!root) return;
+    this._teardownCollider(root);
+    const meshes = [root, ...(root.getChildMeshes?.(false) || [])].filter(m => (m.getTotalVertices?.() || 0) > 0);
+
+    if (gravity) {
+      // dinâmico: o corpo é criado pelo GameObject (em _createGameObjectFor)
+      meshes.forEach(m => { m.checkCollisions = true; });
+      return;
+    }
+    if (collider) {
+      // sólido estático na posição/escala atuais → corpo Havok que o player respeita
+      meshes.forEach(m => { m.checkCollisions = true; });
+      root.computeWorldMatrix(true);
+      try { optimizeCollider(root, this.scene); }
+      catch (e) { console.warn('[SceneEditor] colisor falhou:', e?.message); }
+      return;
+    }
+    // fantasma: sem colisão
+    meshes.forEach(m => { m.checkCollisions = false; });
   }
 
   _applyInputs() {
@@ -1088,21 +1293,27 @@ export class SceneEditor {
       </div>
       <hr class="ins-sep">
       <div class="ins-row">
-        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex:1">
-          <input type="checkbox" id="sed-chk-breakable">
-          <span style="font-size:10px;color:#f88">É Quebrável?</span>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex:1" title="Objeto fica SÓLIDO (o player não atravessa). Sem gravidade = não cai.">
+          <input type="checkbox" id="sed-chk-collider">
+          <span style="font-size:10px;color:#8fd">🧱 Ativar Colisor</span>
+        </label>
+      </div>
+      <div class="ins-row">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex:1" title="Objeto CAI e reage à física (dinâmico). Liga o colisor automaticamente.">
+          <input type="checkbox" id="sed-chk-gravity">
+          <span style="font-size:10px;color:#fc8">🪂 Ativar Gravidade</span>
         </label>
       </div>
       <div class="ins-row">
         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex:1">
-          <input type="checkbox" id="sed-chk-physics">
-          <span style="font-size:10px;color:#8f8">Tem Física?</span>
+          <input type="checkbox" id="sed-chk-breakable">
+          <span style="font-size:10px;color:#f88">💥 É Quebrável?</span>
         </label>
       </div>
       <div class="ins-row">
         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex:1">
           <input type="checkbox" id="sed-chk-collect">
-          <span style="font-size:10px;color:#88f">É Coletável?</span>
+          <span style="font-size:10px;color:#88f">🎁 É Coletável?</span>
         </label>
       </div>
       <hr class="ins-sep">
@@ -1217,7 +1428,7 @@ export class SceneEditor {
 
     // Gameplay — aplica E salva imediatamente ao marcar (sem precisar do
     // botão "Aplicar"). Resolve a confusão de marcar e clicar "Salvar".
-    ['sed-chk-breakable','sed-chk-physics','sed-chk-collect',
+    ['sed-chk-collider','sed-chk-gravity','sed-chk-breakable','sed-chk-collect',
      'sed-num-hp','sed-num-bounce','sed-txt-itemid'].forEach(id =>
       p.querySelector(`#${id}`)?.addEventListener('change', () => {
         if (this._sel) this._applyGameplay();
@@ -1384,18 +1595,27 @@ export class SceneEditor {
     if (!this._sel) return;
     const q = id => this._rightPanel?.querySelector(`#${id}`);
 
+    const gravity  = q('sed-chk-gravity')?.checked   ?? false;
+    const collider = (q('sed-chk-collider')?.checked ?? false) || gravity;   // gravidade implica colisor
     const config = {
       isBreakable:   q('sed-chk-breakable')?.checked ?? false,
-      hasPhysics:    q('sed-chk-physics')?.checked   ?? false,
       isCollectable: q('sed-chk-collect')?.checked   ?? false,
+      hasPhysics:    gravity,        // "física" interna = dinâmico/gravidade
+      collider,
       hp:            parseInt(q('sed-num-hp')?.value) || 3,
       bounce:        parseFloat(q('sed-num-bounce')?.value) || 0.22,
       itemId:        q('sed-txt-itemid')?.value || '',
     };
 
     const target = this._resolveRoot(this._sel);
-    let go = target._gameObject || this._sel._gameObject;
 
+    // 1) COLISÃO física conforme colisor/gravidade (cria/destrói corpo Havok
+    //    na posição ATUAL → resolve o "movi e to atravessando").
+    this._applyCollision(target, { collider, gravity });
+
+    // 2) GameObject p/ gameplay (dinâmico/quebrável/coletável). Estático puro
+    //    (só colisor) não precisa de GameObject — o corpo Havok já basta.
+    let go = target._gameObject || this._sel._gameObject;
     if (go) {
       go.isBreakable   = config.isBreakable;
       go.hasPhysics    = config.hasPhysics;
@@ -1403,25 +1623,25 @@ export class SceneEditor {
       go.hp            = config.hp;
       go.BOUNCE        = config.bounce;
       go.itemId        = config.itemId;
-      // reacorda pra física voltar a rodar
-      go._sleeping = false; go._sleepT = 0;
-    } else if (window._gameLevel) {
+      go._sleeping = false; go._sleepT = 0;   // reacorda
+    } else if ((gravity || config.isBreakable || config.isCollectable) && window._gameLevel) {
       go = this._createGameObjectFor(target, config);
     }
 
-    // ── Persiste as flags de gameplay no DB (junto do transform) ──────
+    // 3) Persiste as flags no DB (junto do transform)
     this._saved[target.name] = this._saved[target.name] || {};
     Object.assign(this._saved[target.name], {
-      breakable: config.isBreakable, physics: config.hasPhysics,
+      breakable: config.isBreakable, physics: gravity, collider,
       collect: config.isCollectable, hp: config.hp, bounce: config.bounce, itemId: config.itemId,
     });
-    this._saveTransform(target);   // já chama _scheduleSave() → grava no LocalDB
+    this._saveTransform(target);
+
     const bits = [];
-    if (config.hasPhysics)  bits.push('física');
-    if (config.isBreakable) bits.push('quebrável');
+    if (collider) bits.push(gravity ? 'gravidade' : 'colisor');
+    if (config.isBreakable)   bits.push('quebrável');
     if (config.isCollectable) bits.push('coletável');
-    const what = bits.length ? bits.join(' + ') : 'config';
-    this._toast(`✅ ${what} salvo! Clique ▶ Jogar para testar`, '#0a2a0a');
+    const what = bits.length ? bits.join(' + ') : 'fantasma (sem colisão)';
+    this._toast(`✅ ${what}`, '#0a2a0a');
   }
 
   _syncGameplaySection(mesh) {
@@ -1433,14 +1653,17 @@ export class SceneEditor {
 
     // Prioriza o que está no GameObject real, senão o que está salvo
     const brk = go ? go.isBreakable   : (saved.breakable ?? false);
-    const phy = go ? go.hasPhysics    : (saved.physics   ?? false);
+    const grv = go ? go.hasPhysics    : (saved.physics   ?? false);   // gravidade (dinâmico)
     const col = go ? go.isCollectable : (saved.collect   ?? false);
+    // colisor: flag salva OU corpo Havok presente OU checkCollisions ligado
+    const colliderOn = saved.collider ?? !!(root._staticBody || root._colliderOptimized || root.checkCollisions) ?? false;
     const hp  = go ? go.hp            : (saved.hp        ?? 3);
     const bnc = go ? go.BOUNCE        : (saved.bounce    ?? 0.22);
     const itm = go ? go.itemId        : (saved.itemId    ?? '');
 
     if (q('sed-chk-breakable')) q('sed-chk-breakable').checked = brk;
-    if (q('sed-chk-physics'))   q('sed-chk-physics').checked   = phy;
+    if (q('sed-chk-gravity'))   q('sed-chk-gravity').checked   = grv;
+    if (q('sed-chk-collider'))  q('sed-chk-collider').checked  = colliderOn || grv;
     if (q('sed-chk-collect'))   q('sed-chk-collect').checked   = col;
     if (q('sed-num-hp'))        q('sed-num-hp').value          = hp;
     if (q('sed-num-bounce'))    q('sed-num-bounce').value      = bnc;
@@ -1450,7 +1673,8 @@ export class SceneEditor {
   _clearGameplaySection() {
     const q = id => this._rightPanel?.querySelector(`#${id}`);
     if (q('sed-chk-breakable')) q('sed-chk-breakable').checked = false;
-    if (q('sed-chk-physics'))   q('sed-chk-physics').checked   = false;
+    if (q('sed-chk-gravity'))   q('sed-chk-gravity').checked   = false;
+    if (q('sed-chk-collider'))  q('sed-chk-collider').checked  = false;
     if (q('sed-chk-collect'))   q('sed-chk-collect').checked   = false;
     if (q('sed-num-hp'))        q('sed-num-hp').value          = 3;
     if (q('sed-num-bounce'))    q('sed-num-bounce').value      = 0.22;
@@ -1695,6 +1919,9 @@ export class SceneEditor {
     if (!confirm('⚠️ Apagar TODAS as modificações?\nOs objetos voltam ao original após F5.')) return;
     localStorage.removeItem(SceneEditor.STORAGE_KEY);
     this._saved = {};
+    this._deleted = [];                                   // traz deletados de volta
+    LocalDB.save(SceneEditor.STORAGE_KEY, this._saved);
+    LocalDB.save(SceneEditor.DELETED_KEY, this._deleted);
     this._refreshHierarchy();
     this._toast('🔄 Resetado. Recarregue para ver.', '#3a0a00');
   }

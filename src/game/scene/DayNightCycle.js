@@ -23,6 +23,18 @@ export class DayNightCycle {
     this.dayLengthSec = 240;   // 4 min por ciclo completo (ajustável)
     this.paused = false;
 
+    // ── Controle MANUAL do sol (painel F8) ──────────────────────────
+    //  Quando manual=true, o ciclo PARA de sobrescrever sol/sombra/ambiente
+    //  e usa estes valores — assim os ajustes do painel não são desfeitos.
+    this.manual = false;
+    this.sunElevDeg = 42;      // altura do sol (0=horizonte, 90=vertical)
+    this.sunAzimDeg = 35;      // direção (giro do sol no horizonte)
+    this.sunIntensity = 1.0;   // intensidade da luz do sol
+    this.ambientInt = 0.32;    // luz ambiente (céu) — BAIXA = sombra nítida
+    this.shadowDark = 0.18;    // 0=sombra preta, 1=sem sombra
+    // limites do ciclo AUTO pra sombra nunca sumir (sol nunca 100% vertical)
+    this.maxAutoElev = 0.80;   // teto da altura do sol no auto (~58°)
+
     // ── Céu procedural HD ────────────────────────────────────────────
     this._buildSky();
 
@@ -32,6 +44,33 @@ export class DayNightCycle {
     this.moon.intensity = 0;
     this.moon.diffuse = new BABYLON.Color3(0.6, 0.7, 1.0);
     this.moon.specular = new BABYLON.Color3(0.3, 0.4, 0.6);
+    this.moon.shadowEnabled = true;
+
+    // ── Sombra da LUA ────────────────────────────────────────────────
+    //  A sombra do SOL some abaixo do horizonte → à noite o mapa ficava
+    //  sem sombra nenhuma. A lua ganha o PRÓPRIO gerador (CSM), que:
+    //   • reaproveita EXATAMENTE os mesmos casters do sol (renderList);
+    //   • só renderiza quando a lua é o astro dominante (noite) → 0 custo
+    //     de GPU durante o dia (renderList vazia = nada pra desenhar).
+    try {
+      const CSM = BABYLON.CascadedShadowGenerator;
+      const mg = new CSM(1024, this.moon);
+      mg.numCascades = 4;
+      mg.lambda = 0.8;
+      mg.stabilizeCascades = true;
+      mg.cascadeBlendPercentage = 0.05;
+      mg.shadowMaxZ = 115;
+      mg.depthClamp = true;
+      mg.autoCalcDepthBounds = true;
+      mg.filter = BABYLON.ShadowGenerator.FILTER_PCF;
+      mg.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM;
+      mg.bias = 0.003;
+      mg.normalBias = 0.12;
+      mg.setDarkness(0.5);                  // sombra de luar é suave, não preta
+      mg.getShadowMap().renderList = [];    // começa desativada (de dia)
+      this.moonShadowGen = mg;
+      window._moonShadowGen = mg;
+    } catch (e) { console.warn('[DayNight] gerador de sombra da lua falhou', e); }
 
     // Discos visuais de sol e lua no céu (billboard emissivo)
     this._buildCelestials();
@@ -129,7 +168,16 @@ export class DayNightCycle {
   }
   pause(v = true) { this.paused = v; }
 
+  // Liga/desliga o controle manual do sol. Ao ligar, congela o tempo e passa
+  //  a usar sunElevDeg/sunAzimDeg/sunIntensity/ambientInt/shadowDark.
+  setManual(v = true) {
+    this.manual = v;
+    if (v && this.gfx) this.gfx._lockExposure = true;   // painel controla exposição
+    this._apply();
+  }
+
   update(dt) {
+    if (this.manual) { this._apply(); return; }   // re-impõe o sol manual
     if (this.paused) return;
     this.t = (this.t + dt / this.dayLengthSec) % 1;
     this._apply();
@@ -137,17 +185,31 @@ export class DayNightCycle {
 
   // ── Aplica iluminação/céu/cores conforme o tempo ─────────────────
   _apply() {
-    // Ângulo do sol: t=0 nascente (leste), sobe ao meio-dia, põe no oeste.
-    //  elevation: -1 (meia-noite) .. +1 (meio-dia)
-    const ang = this.t * Math.PI * 2 - Math.PI / 2;   // -90° em t=0
-    const elev = Math.sin(ang);          // altura do sol no céu
-    const cosA = Math.cos(ang);
+    let elev, cosA, sunDir;
 
-    // Direção do SOL (de onde a luz vem → aponta pra baixo quando alto)
-    const sunDir = new BABYLON.Vector3(-cosA, -Math.max(0.05, Math.abs(elev)) * (elev >= 0 ? 1 : -1), -0.35).normalize();
-    // posição visual do disco do sol (longe)
+    if (this.manual) {
+      // MANUAL: ângulo vem dos sliders (elevação + azimute), não do tempo.
+      const el = this.sunElevDeg * Math.PI / 180;
+      const az = this.sunAzimDeg * Math.PI / 180;
+      elev = Math.sin(el);
+      cosA = Math.cos(az);                         // pro disco/azul do céu
+      const hx = Math.cos(el) * Math.cos(az);      // componente horizontal
+      const hz = Math.cos(el) * Math.sin(az);
+      // direção da LUZ: aponta do sol pra cena (pra baixo)
+      sunDir = new BABYLON.Vector3(-hx, -Math.max(0.05, Math.sin(el)), -hz).normalize();
+    } else {
+      // AUTO: ângulo do sol pelo tempo. t=0 nascente, sobe, põe no oeste.
+      const ang = this.t * Math.PI * 2 - Math.PI / 2;   // -90° em t=0
+      elev = Math.sin(ang);
+      cosA = Math.cos(ang);
+      // teto na altura → sol nunca 100% vertical → sombra sempre projeta
+      const ySun = Math.min(this.maxAutoElev, Math.max(0.05, Math.abs(elev))) * (elev >= 0 ? 1 : -1);
+      sunDir = new BABYLON.Vector3(-cosA, -ySun, -0.35).normalize();
+    }
+    // posição do disco do sol + halo do céu — alinhados com a direção da luz
     const dist = 400;
-    const sunPos = new BABYLON.Vector3(cosA * dist, elev * dist, 0.35 * dist);
+    const sunWorldDir = sunDir.negate();              // aponta PRA o sol
+    const sunPos = sunWorldDir.scale(dist);
 
     // ── DIA vs NOITE ──────────────────────────────────────────────────
     const isDay = elev > -0.05;
@@ -157,7 +219,7 @@ export class DayNightCycle {
     //  POSIÇÃO da luz é controlada por _updateShadowFrustum (segue o player)
     //  pra manter a sombra nítida. Aqui só atualizamos a direção.
     this.sun.direction = sunDir.clone();
-    this.sun.intensity = 0.15 + dayF * 1.7;
+    this.sun.intensity = this.manual ? this.sunIntensity : (0.12 + dayF * 0.88);
     // cor do sol: alaranjada perto do horizonte, branca alto
     const horizon = 1 - Math.min(1, Math.abs(elev) / 0.35);   // 1 no horizonte
     this.sun.diffuse = new BABYLON.Color3(
@@ -179,13 +241,29 @@ export class DayNightCycle {
         // ShadowGenerator é fixo numa luz; em vez de trocar, ajustamos a
         //  intensidade — sombra some suavemente na transição.
       }
-      this.shadowGen.darkness = 0.35 + (1 - dayF) * 0.25;   // sombra mais fraca à noite
+      // darkness: MENOR = sombra mais escura. Forte de dia (0.3), suave à noite.
+      this.shadowGen.darkness = this.manual ? this.shadowDark : (0.3 + (1 - dayF) * 0.35);
+    }
+
+    // ── Sombra da LUA: liga só quando a lua domina (noite) ────────────
+    if (this.moonShadowGen && this.shadowGen?.getShadowMap) {
+      const sunSM  = this.shadowGen.getShadowMap();
+      const moonSM = this.moonShadowGen.getShadowMap();
+      const moonActive = moonF > 0.05 && moonF >= dayF;   // lua é o astro dominante
+      if (moonActive) {
+        // compartilha os MESMOS casters do sol (fica em sincronia automática)
+        if (moonSM.renderList !== sunSM.renderList) moonSM.renderList = sunSM.renderList;
+        // sombra mais marcada quando a lua está alta
+        this.moonShadowGen.setDarkness(0.45 + (1 - moonF) * 0.4);
+      } else if (moonSM.renderList && moonSM.renderList.length) {
+        moonSM.renderList = [];   // de dia: nada a renderizar → custo ~zero
+      }
     }
 
     // AMBIENTE: claro de dia, azul-escuro à noite
-    this.ambient.intensity = 0.18 + dayF * 0.45;
+    this.ambient.intensity = this.manual ? this.ambientInt : (0.15 + dayF * 0.28);
     this.ambient.diffuse = new BABYLON.Color3(
-      0.5 + dayF * 0.5, 0.55 + dayF * 0.45, 0.7 + dayF * 0.3
+      0.45 + dayF * 0.40, 0.50 + dayF * 0.38, 0.60 + dayF * 0.32   // céu suave (não branco puro)
     );
     this.ambient.groundColor = new BABYLON.Color3(0.10 + dayF*0.12, 0.12 + dayF*0.16, 0.10 + dayF*0.10);
 
@@ -193,8 +271,8 @@ export class DayNightCycle {
     if (this._hasSkyMat) {
       // SkyMaterial: posição do sol ALINHADA com a esfera visual (mesma
       //  direção), pra não desenhar um halo deslocado (o triângulo branco).
-      this.skyMat.sunPosition = new BABYLON.Vector3(cosA, Math.max(-0.35, elev), 0.35).normalize();
-      this.skyMat.luminance = 0.5 + dayF * 0.5;
+      this.skyMat.sunPosition = sunWorldDir.clone();
+      this.skyMat.luminance = 0.4 + dayF * 0.4;
       this.skyMat.turbidity = 4 + (1 - dayF) * 6;
       this.skyMat.rayleigh = 1.5 + dayF * 1.2;
     } else {
@@ -220,8 +298,9 @@ export class DayNightCycle {
       this.moonDisc.setEnabled(moonElev > -0.2);
     }
 
-    // Acabamento gráfico acompanha a hora (exposure/bloom)
-    if (this.gfx?.setDayFactor) this.gfx.setDayFactor(dayF);
+    // Acabamento gráfico acompanha a hora (exposure/bloom). No modo manual
+    //  o painel controla a exposição → não sobrescreve.
+    if (!this.manual && this.gfx?.setDayFactor) this.gfx.setDayFactor(dayF);
 
     this._phase = this._phaseName(elev, cosA);
   }

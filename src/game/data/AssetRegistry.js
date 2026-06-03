@@ -33,6 +33,7 @@ export const AssetRegistry = {
     growlmon:     DIGI + 'digimon_linkz_-_growlmon.glb',
     dracomon:     DIGI + 'dracomon_digimon_linkz_sleuth_with_animation.glb',
     filmon:       DIGI + 'filmon_-_digimon.glb',
+    monsterPlant: 'assets/itens 3d/ExternalAssets/Sketchfab/RiftfallTheme/Creatures/monster_plant.glb',  // planta carnívora = Blossomon
     biyomon:      DIGI + 'mobile_-_digimon_linkz_-_biyomon.glb',
     gabumon:      DIGI + 'mobile_-_digimon_linkz_-_gabumon.glb',
     exveemon:     DIGI + 'xv-mon_exveemon_-_digimon_story_cyber_sleuth.glb',
@@ -46,7 +47,6 @@ export const AssetRegistry = {
     ebonwumon:    DIGI + 'ebonwumon_xuanwumon_-_digimon_rearise.glb',
     zhuqiaomon:   DIGI + 'zhuqiaomon_-_digimon_rearise.glb',
     colossalSquid:DIGI + 'hsw_boss_colossal_squid.glb',
-    drogon:       DIGI + 'drogon__game_of_thrones_dragon.glb',
   },
 
   // ── Inimigos: creature pack (com formas Evolved) ────────────────

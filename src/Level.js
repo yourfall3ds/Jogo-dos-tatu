@@ -16,27 +16,59 @@ function enc(p) {
 }
 
 export class Level {
-  constructor(scene, shadowGen) {
+  constructor(scene, shadowGen, opts = {}) {
     this.scene     = scene;
     this.shadowGen = shadowGen;
     this.dynamics  = [];   // lista de GameObject
     this.enemies   = [];   // lista de inimigos ativos
     this.player    = null; // referência ao Player (setada em main.js)
+    this.clean     = opts.clean ?? false;   // mapa limpo (sombra HD garantida)
 
     this._mats = {};
     this._createMaterials();
     this._createSky();
     this._createGround();
-    this._createWallJumpAlley();
-    this._createPlatformTower();
-    this._createCombatZone();
-    this._createObstacles();
-    this._createCheese();
-    // Sem paredes de borda: o jogador PODE cair do mapa e morrer (kill plane no Player).
-    // this._createBoundaries();
 
-    // Restaura posições salvas pelo SceneEditor (se existirem) via LocalDB
-    this._applySavedTransforms();
+    if (this.clean) {
+      // ── MAPA LIMPO: só chão + poucos obstáculos como shadow casters ──
+      //  Sem o entulho do mapa antigo. Sombra do sol projeta limpa aqui.
+      this._createCleanArena();
+    } else {
+      this._createWallJumpAlley();
+      this._createPlatformTower();
+      this._createCombatZone();
+      this._createObstacles();
+      this._createCheese();
+      // Restaura posições salvas pelo SceneEditor só no mapa antigo
+      this._applySavedTransforms();
+    }
+  }
+
+  // Arena de jogo LIMPA: chão grande + obstáculos variados (todos casters).
+  //  É a base nova pra construir em cima, com sombra funcionando.
+  _createCleanArena() {
+    const mat = (r, g, b) => { const m = new BABYLON.StandardMaterial('clean_m' + Math.random(), this.scene); m.diffuseColor = new BABYLON.Color3(r, g, b); m.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05); return m; };
+    const block = (name, w, h, d, x, z, m) => {
+      const b = BABYLON.MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, this.scene);
+      b.position.set(x, h / 2, z);
+      b.material = m; b.checkCollisions = true; b.receiveShadows = true;
+      this.shadowGen.addShadowCaster(b);
+      try { new BABYLON.PhysicsAggregate(b, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.6 }, this.scene); } catch (_) {}
+      return b;
+    };
+    // alguns prédios/caixas espalhados — referência visual + cobertura
+    block('clean_wall1', 8, 6, 1.5, -12, 8, mat(0.7, 0.5, 0.4));
+    block('clean_wall2', 1.5, 5, 10, 14, 2, mat(0.5, 0.6, 0.7));
+    block('clean_box1', 4, 4, 4, -6, -8, mat(0.8, 0.35, 0.3));
+    block('clean_box2', 3, 3, 3, 5, -10, mat(0.4, 0.7, 0.45));
+    const pillar = BABYLON.MeshBuilder.CreateCylinder('clean_pillar', { diameter: 2.5, height: 9 }, this.scene);
+    pillar.position.set(0, 4.5, 12); pillar.material = mat(0.85, 0.75, 0.3);
+    pillar.checkCollisions = true; pillar.receiveShadows = true;
+    this.shadowGen.addShadowCaster(pillar);
+    try { new BABYLON.PhysicsAggregate(pillar, BABYLON.PhysicsShapeType.CYLINDER, { mass: 0, friction: 0.6 }, this.scene); } catch (_) {}
+    // duas plataformas pra pular
+    block('clean_plat1', 6, 1, 6, -18, -2, mat(0.6, 0.6, 0.65)).position.y = 2;
+    block('clean_plat2', 6, 1, 6, 18, 6, mat(0.6, 0.6, 0.65)).position.y = 4;
   }
 
   /** Lê o LocalDB e aplica transforms + configs de gameplay salvos */
@@ -159,7 +191,27 @@ export class Level {
 
   // ── Chão ──────────────────────────────────────────────────────────
   _createGround() {
-    this._box('ground', 100, 0.5, 100, 0, -0.25, 0, this._mats.ground);
+    if (this.clean) {
+      // Chão SIMPLES: plano + material liso (sem textura/bump) — igual a cena
+      //  de teste que recebe sombra perfeitamente. Nada de StandardMaterial
+      //  texturizado que possa atrapalhar o shadow map.
+      const g = BABYLON.MeshBuilder.CreateGround('ground', { width: 160, height: 160, subdivisions: 1 }, this.scene);
+      // Chão PBR levemente GLOSSY → reflete o céu/objetos (IBL+SSR) sem virar
+      //  espelho. Cor dessaturada → sombra lê como CINZA neutro.
+      const gm = new BABYLON.PBRMaterial('groundClean', this.scene);
+      gm.albedoColor = new BABYLON.Color3(0.56, 0.585, 0.55);
+      gm.metallic = 0.0;
+      gm.roughness = 0.55;            // glossy o bastante p/ reflexo suave
+      gm.specularIntensity = 0.5;
+      gm.environmentIntensity = 0.6;  // pega o IBL
+      g.material = gm;
+      g.receiveShadows = true;
+      g.checkCollisions = true;
+      try { new BABYLON.PhysicsAggregate(g, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.7 }, this.scene); } catch (_) {}
+      return;
+    }
+
+    this._box('ground', 120, 0.5, 120, 0, -0.25, 0, this._mats.ground);
 
     // Elevações suaves
     for (const [x,z,w,d,h] of [

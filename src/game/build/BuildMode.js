@@ -119,6 +119,17 @@ export class BuildMode {
 
     let n = 0;
     for (const rec of records) {
+      // Peça procedural (sem url) → reconstrói em código
+      if (rec.kind === 'piece' && rec.pieceId) {
+        try {
+          await this._placePieceAt(
+            new BABYLON.Vector3(rec.p[0], rec.p[1], rec.p[2]),
+            rec.ry || 0, rec.sc ?? 1, { pieceId: rec.pieceId }, false, rec.s || null,
+          );
+          n++;
+        } catch (e) { console.warn('[BuildMode] peça falhou ao restaurar:', rec.pieceId, e.message); }
+        continue;
+      }
       const url = rec.url;
       if (!url) continue;   // assetMachine (sem url) é restaurado à parte
       try {
@@ -181,6 +192,9 @@ export class BuildMode {
         <button id="build-library" class="bm-btn" style="background:#1a1a40;border-color:#66f;color:#aaf;flex:1">📚 Biblioteca</button>
         <button id="build-undo" class="bm-btn" style="background:#3a1a1a;flex:1">↩ Desfazer (Del)</button>
       </div>
+      <div style="display:flex;gap:5px;margin-bottom:8px">
+        <button id="build-clear" class="bm-btn" style="background:#3a1010;border-color:#c44;color:#fbb;flex:1">🧹 Limpar Terreno</button>
+      </div>
 
       <div style="color:#5fc;font-weight:bold;margin:4px 0 6px">📦 Catálogo</div>
       <div id="build-catalog" style="display:grid;grid-template-columns:1fr 1fr;gap:5px"></div>
@@ -205,6 +219,10 @@ export class BuildMode {
     el.querySelector('#build-library').onclick = () => window._assetGroupsUI?.open?.();
     el.querySelector('#build-grid').onclick  = () => this._cycleGrid();
     el.querySelector('#build-undo').onclick  = () => this._undo();
+    el.querySelector('#build-clear').onclick = () => {
+      if (confirm('Limpar TODO o terreno colocado (objetos, quadros, máquinas e colisores órfãos)?\nO mapa-base é preservado. Não dá pra desfazer.'))
+        this.clearAllTerrain();
+    };
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -225,12 +243,12 @@ export class BuildMode {
       <span id="bh-item" style="color:#5fc;font-weight:bold"></span>
       <span id="bh-mode" style="color:#fa6;margin:0 8px"></span>
       &nbsp;|&nbsp;
-      <b style="color:#aef">🖱 Roda</b> girar&nbsp;
-      <b style="color:#aef">Hold Q</b>+🖱↑↓ escala&nbsp;
-      <b style="color:#aef">Setas</b> fino&nbsp;
+      <b style="color:#aef">🖱 mira</b> superfície&nbsp;
+      <b style="color:#aef">Hold R</b>/🖱Roda girar&nbsp;
+      <b style="color:#aef">Hold Q</b>+🖱 escala&nbsp;
+      <b style="color:#aef">Setas</b> orientar&nbsp;
       <b style="color:#aef">LMB</b> colocar&nbsp;
-      <b style="color:#fa6">Tab</b> catálogo&nbsp;
-      <b style="color:#fa6">Del</b> desfazer
+      <b style="color:#fa6">Tab/ESC</b> sair
     `;
     document.body.appendChild(el);
     this._hud = el;
@@ -353,7 +371,30 @@ export class BuildMode {
     try { const ds = await AssetGroups.getDefaultScale(item.id); if (ds != null) defScale = ds; } catch (_) {}
     this._scaleM   = defScale;
     this._offX = this._offY = this._offZ = 0;
+    this._dragTool = null;
+    this._dragA    = null;
     this._disposeGhost();
+
+    // ── Peça PROCEDURAL (parede/porta/janela/chão) → ghost gerado ──────
+    if (item.kind === 'piece' || item.pieceId) {
+      this._dragTool   = item.drag || null;   // 'wall' | 'floor' → arrastar A→B
+      this._dragA      = null;
+      this._floorRemove = false;
+      const { buildPiece } = await import('./BuildPieces.js');
+      const root = buildPiece(item.pieceId, this.scene, '_ghost_' + item.id);
+      if (!root) return;
+      const meshes = [root, ...root.getChildMeshes(false)];
+      const gm = new BABYLON.StandardMaterial('_ghostMat_' + item.id, this.scene);
+      gm.diffuseColor = new BABYLON.Color3(0.3, 1.0, 0.5);
+      gm.emissiveColor = new BABYLON.Color3(0.1, 0.45, 0.2);
+      gm.alpha = 0.5; gm.disableLighting = true;
+      root.getChildMeshes(false).forEach(m => { m.material = gm; m.isPickable = false; });
+      this._ghost       = root;
+      this._ghostMat    = gm;
+      this._ghostMeshes = meshes;
+      this._enterPlacing();
+      return;
+    }
 
     const url = item.glbUrl || item.path;
     const ld  = await this._resolveLoadable(url);
@@ -427,27 +468,11 @@ export class BuildMode {
 
   _leavePlacing() {
     this._disposeGhost();
-    this._state = 'catalog';
-    this._el.style.display  = 'flex';
+    this._state = 'inactive';
+    if (this._el)  this._el.style.display  = 'none';
     this._hud.style.display = 'none';
     this._ch.style.display  = 'none';
     this._preDX = this._preDY = 0;
-
-    const inp = window._gameInput;
-    if (inp && this._savedOnDeactivated !== undefined) {
-      inp.onDeactivated      = this._savedOnDeactivated;
-      this._savedOnDeactivated = undefined;
-    }
-    inp?.deactivate?.();
-  }
-
-  show() { if (this._state === 'inactive') this._enterCatalog(); }
-  hide() {
-    this._disposeGhost();
-    this._state = 'inactive';
-    this._el.style.display  = 'none';
-    this._hud.style.display = 'none';
-    this._ch.style.display  = 'none';
     this._ghostSrc = null;
 
     const inp = window._gameInput;
@@ -455,9 +480,30 @@ export class BuildMode {
       inp.onDeactivated      = this._savedOnDeactivated;
       this._savedOnDeactivated = undefined;
     }
-    inp?.activate?.();
+    // Não força lock/unlock: por Tab o jogo segue (pointer-lock mantido),
+    //  por ESC o browser já liberou o mouse.
   }
-  toggle() { this._state === 'inactive' ? this.show() : this.hide(); }
+
+  /** Asset do inventário → "na mão" (modo de colocar). Chamado por useHotbar. */
+  async startPlacingInventoryAsset(data) {
+    if (!data) return;
+    await this._selectItem({
+      kind:          data.pieceId ? 'piece' : 'generated',
+      id:            data.assetId || ('inv_' + Date.now().toString(36)),
+      name:          data.name || 'asset',
+      glbUrl:        data.glbUrl,
+      path:          data.path,
+      pieceId:       data.pieceId,          // peça procedural (parede/etc.)
+      drag:          data.drag,             // modo arrastar (parede/chão)
+      groupProps:    data.groupProps || {},
+      _fromInventory: true,                 // gasta do estoque ao colocar
+      assetId:        data.assetId,
+    });
+  }
+
+  show()   { window._assetGroupsUI?.open?.(); }     // B / externo → Biblioteca
+  hide()   { if (this._state === 'placing') this._leavePlacing(); }
+  toggle() { this.show(); }
 
   // ── Helpers de HUD ────────────────────────────────────────────────
   _setHUDItem(name) {
@@ -467,7 +513,9 @@ export class BuildMode {
   _setHUDMode(mode) {
     const el = this._hud?.querySelector('#bh-mode');
     if (!el) return;
-    const labels = { T: '[ MOVER ]', R: '[ GIRAR 🔄 ]', Q: '[ ESCALA ↕ ]' };
+    const labels = { T: '[ MOVER ]', R: '[ GIRAR 🔄 ]', Q: '[ ESCALA ↕ ]',
+      WALL: '[ PAREDE: clica A→B · 45° ]', FLOOR: '[ CHÃO: clica canto→canto · X=apagar ]',
+      FLOORDEL: '[ CHÃO 🗑 apagar: clica canto→canto · X=preencher ]' };
     el.textContent = labels[mode] ?? '';
   }
 
@@ -513,15 +561,16 @@ export class BuildMode {
   //  update — chamado todo frame (após player.update)
   // ══════════════════════════════════════════════════════════════════
   update() {
-    // ── Toggle B ──────────────────────────────────────────────────────
-    if (this._edge('KeyB')) this.toggle();
-    if (this._state === 'inactive') return;
+    // ── B → abre a Biblioteca de Assets (ou sai do placing) ────────────
+    if (this._edge('KeyB')) {
+      if (this._state === 'placing') this._leavePlacing();
+      else window._assetGroupsUI?.open?.();
+    }
+    if (this._state !== 'placing') return;
 
-    // ── Del / G — acessíveis em ambos estados ──────────────────────────
+    // ── Del / G — durante o placing ────────────────────────────────────
     if (this._edge('Delete')) this._undo();
     if (this._edge('KeyG'))   this._cycleGrid();
-
-    if (this._state === 'catalog') return;
 
     // ══════════════════════════════════════════════════════════════════
     //  PLACING
@@ -530,7 +579,13 @@ export class BuildMode {
 
     // ── Navegação ─────────────────────────────────────────────────────
     if (this._edge('Tab'))    { this._leavePlacing(); return; }
-    if (this._edge('Escape')) { this._leavePlacing(); return; }
+    if (this._edge('Escape')) {
+      if (this._dragTool && this._dragA) { this._dragA = null; return; }   // cancela só o ponto A
+      this._leavePlacing(); return;
+    }
+
+    // ── Ferramentas de ARRASTAR (parede A→B / chão em blocos) ──────────
+    if (this._dragTool) { this._updateDrag(); return; }
 
     const rHeld = !!this._keys['KeyR'];
     const qHeld = !!this._keys['KeyQ'];
@@ -588,9 +643,147 @@ export class BuildMode {
     // ── LMB (click pré-consumido no preUpdate) ─────────────────────
     if (this._pendingClick) {
       this._pendingClick = false;
+      const src = this._ghostSrc;
       this._placeAt(this._ghost.position.clone(), this._rotY, this._scaleM);
       this._offX = this._offY = this._offZ = 0;   // reset offsets
+      // veio do inventário → gasta 1 do estoque; acabou → sai do placing
+      if (src?._fromInventory) {
+        const left = window._gameInventory?.consumeBuildable?.(src.assetId);
+        if (left === false || left === 0) this._leavePlacing();
+      }
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  //  Ferramentas de ARRASTAR (parede A→B em 45° · chão/teto em blocos)
+  // ══════════════════════════════════════════════════════════════════
+  _consumePlaceClick() { if (this._pendingClick) { this._pendingClick = false; return true; } return false; }
+  _snapVec(v, step) { return new BABYLON.Vector3(Math.round(v.x / step) * step, v.y, Math.round(v.z / step) * step); }
+  _buildableStock(assetId) { return window._gameInventory?.getBuildables?.().find(s => s.data?.assetId === assetId)?.qty || 0; }
+
+  _updateDrag() {
+    const PW  = 4;                         // largura da peça (parede / azulejo)
+    const raw = this._groundPoint();
+    if (!raw) return;
+
+    if (this._dragTool === 'floor' && this._edge('KeyX')) this._floorRemove = !this._floorRemove;
+    this._setHUDMode(this._dragTool === 'wall' ? 'WALL' : (this._floorRemove ? 'FLOORDEL' : 'FLOOR'));
+
+    if (this._dragTool === 'wall') {
+      const gp = this._snapVec(raw, 1);
+      if (!this._dragA) {
+        this._previewWall(gp, gp);
+        if (this._consumePlaceClick()) this._dragA = gp.clone();
+      } else {
+        const B = this._wallEndSnap(this._dragA, gp);
+        this._previewWall(this._dragA, B);
+        if (this._consumePlaceClick()) { this._commitWall(this._dragA, B); this._dragA = B.clone(); }  // encadeia
+      }
+    } else {                               // floor
+      const cell = this._snapVec(raw, PW);
+      if (!this._dragA) {
+        this._previewFloor(cell, cell);
+        if (this._consumePlaceClick()) this._dragA = cell.clone();
+      } else {
+        this._previewFloor(this._dragA, cell);
+        if (this._consumePlaceClick()) { this._commitFloor(this._dragA, cell); this._dragA = null; }
+      }
+    }
+  }
+
+  // Ponta B da parede: ângulo travado em 45° + comprimento em passos de 1u
+  _wallEndSnap(A, gp) {
+    const PW = 4;
+    let len = Math.hypot(gp.x - A.x, gp.z - A.z);
+    if (len < 0.5) return A.clone();
+    let ang = Math.round(Math.atan2(gp.z - A.z, gp.x - A.x) / (Math.PI / 4)) * (Math.PI / 4);
+    len = Math.max(1, Math.round(len));
+    const src = this._ghostSrc;
+    if (src?._fromInventory) {              // clampa ao estoque
+      const maxLen = this._buildableStock(src.assetId) * PW;
+      if (maxLen > 0) len = Math.min(len, maxLen);
+    }
+    return new BABYLON.Vector3(A.x + Math.cos(ang) * len, A.y, A.z + Math.sin(ang) * len);
+  }
+
+  _previewWall(A, B) {
+    if (!this._ghost) return;
+    const len = Math.hypot(B.x - A.x, B.z - A.z);
+    const ang = Math.atan2(B.z - A.z, B.x - A.x);
+    this._ghost.position.set((A.x + B.x) / 2, A.y, (A.z + B.z) / 2);
+    this._ghost.rotation.y = (len < 0.3) ? 0 : -ang;
+    this._ghost.scaling.set(len < 0.3 ? 1 : len / 4, 1, 1);
+  }
+
+  _commitWall(A, B) {
+    const len = Math.hypot(B.x - A.x, B.z - A.z);
+    if (len < 0.5) return;
+    const ang = Math.atan2(B.z - A.z, B.x - A.x);
+    const mid = new BABYLON.Vector3((A.x + B.x) / 2, A.y, (A.z + B.z) / 2);
+    this._placePieceAt(mid, -ang, 1, { pieceId: 'wall' }, true, [len / 4, 1, 1]);
+    const src = this._ghostSrc;
+    if (src?._fromInventory) {
+      const units = Math.max(1, Math.round(len / 4));
+      const left  = window._gameInventory?.consumeBuildable?.(src.assetId, units);
+      if (left === false || left === 0) this._leavePlacing();
+    }
+  }
+
+  // Retângulo de células (canto-a-canto) → preview de laje cobrindo a área
+  _floorRect(A, B) {
+    const PW = 4;
+    const ax = Math.round(A.x / PW), az = Math.round(A.z / PW);
+    const bx = Math.round(B.x / PW), bz = Math.round(B.z / PW);
+    return { x0: Math.min(ax, bx), x1: Math.max(ax, bx), z0: Math.min(az, bz), z1: Math.max(az, bz), PW };
+  }
+
+  _previewFloor(A, B) {
+    if (!this._ghost) return;
+    const r = this._floorRect(A, B);
+    const cols = r.x1 - r.x0 + 1, rows = r.z1 - r.z0 + 1;
+    this._ghost.position.set((r.x0 + r.x1) / 2 * r.PW, A.y, (r.z0 + r.z1) / 2 * r.PW);
+    this._ghost.rotation.y = 0;
+    this._ghost.scaling.set(cols, 1, rows);
+    if (this._ghostMat) this._ghostMat.emissiveColor = this._floorRemove
+      ? new BABYLON.Color3(0.5, 0.1, 0.12) : new BABYLON.Color3(0.1, 0.45, 0.2);
+  }
+
+  _floorAt(pos, tol = 1.8) {
+    return this._placed.some(e => e.record?.pieceId === 'floor' && e.root?.position &&
+      Math.abs(e.root.position.x - pos.x) < tol && Math.abs(e.root.position.z - pos.z) < tol &&
+      Math.abs(e.root.position.y - pos.y) < 2);
+  }
+
+  _commitFloor(A, B) {
+    const r = this._floorRect(A, B);
+    const src = this._ghostSrc, fromInv = !!src?._fromInventory;
+    for (let ix = r.x0; ix <= r.x1; ix++) {
+      for (let iz = r.z0; iz <= r.z1; iz++) {
+        const pos = new BABYLON.Vector3(ix * r.PW, A.y, iz * r.PW);
+        if (this._floorRemove) {
+          this._removeFloorAt(pos);
+        } else {
+          if (this._floorAt(pos)) continue;                  // já tem laje aqui
+          if (fromInv && this._buildableStock(src.assetId) <= 0) { this._leavePlacing(); return; }
+          this._placePieceAt(pos, 0, 1, { pieceId: 'floor' }, true);
+          if (fromInv) window._gameInventory?.consumeBuildable?.(src.assetId, 1);
+        }
+      }
+    }
+  }
+
+  _removeFloorAt(pos, tol = 1.8) {
+    for (let i = this._placed.length - 1; i >= 0; i--) {
+      const e = this._placed[i];
+      if (e.record?.pieceId !== 'floor' || !e.root?.position) continue;
+      const p = e.root.position;
+      if (Math.abs(p.x - pos.x) < tol && Math.abs(p.z - pos.z) < tol && Math.abs(p.y - pos.y) < 2) {
+        this._disposeColliderArtifacts(e.root);
+        try { e.root.dispose(); } catch (_) {}
+        this._placed.splice(i, 1);
+      }
+    }
+    this._save();
   }
 
   /** @deprecated — mantido para compat; use preUpdate + update no lugar */
@@ -611,6 +804,12 @@ export class BuildMode {
     // ── Quadro / Picture Frame ─────────────────────────────────────
     if (item.kind === 'frame') {
       await this._buildFrameAt(pos, rotY, scale, item.imageUrl, item.prompt);
+      return;
+    }
+
+    // ── Peça PROCEDURAL de construção ──────────────────────────────
+    if (item.kind === 'piece' || item.pieceId) {
+      await this._placePieceAt(pos, rotY, scale, item);
       return;
     }
 
@@ -781,6 +980,35 @@ export class BuildMode {
     return window._gameLevel.addInteractiveObject({ mesh: root, ...config });
   }
 
+  /**
+   * Coloca uma PEÇA procedural (parede/porta/janela/chão) no mundo, com
+   * colisor estático (Havok BOX por caixa → vão da porta atravessável),
+   * sombra e persistência. @param save false durante restauração.
+   */
+  async _placePieceAt(pos, rotY, scale, item, save = true, scl3 = null) {
+    const { buildPiece, makePieceBodies } = await import('./BuildPieces.js');
+    const uid  = `placed_${item.pieceId}_${this._placed.length}_${Date.now().toString(36)}`;
+    const root = buildPiece(item.pieceId, this.scene, uid);
+    if (!root) return null;
+    root.position.copyFrom(pos);
+    root.rotation.y = rotY;
+    if (scl3) root.scaling.set(scl3[0], scl3[1], scl3[2]);     // parede esticada (A→B)
+    else      root.scaling.setAll(scale);
+    root.computeWorldMatrix(true);
+    root.getChildMeshes(false).forEach(m => m.computeWorldMatrix(true));
+
+    makePieceBodies(root, this.scene);                         // colisor estático
+    this.level?.shadowGen?.addShadowCaster?.(root, true);      // projeta sombra
+
+    const record = { kind: 'piece', pieceId: item.pieceId, name: uid,
+                     p: [pos.x, pos.y, pos.z], ry: rotY, sc: scale };
+    if (scl3) record.s = scl3;
+    const entry = { record, root };
+    this._placed.push(entry);
+    if (save) this._save();
+    return entry;
+  }
+
   async _save() {
     // Quadros têm seu próprio bucket (placed_frames); filtra aqui
     try { await LocalDB.save('placed', this._placed.filter(p => p.record?.kind !== 'frame').map(p => p.record)); } catch (_) {}
@@ -788,9 +1016,96 @@ export class BuildMode {
     window._navMesh?.markDirty?.();
   }
 
+  /**
+   * Remove os colisores/corpos físicos gerados por um objeto colocado:
+   *  • corpo Havok estático (root._staticBody)
+   *  • GameObject (corpo dinâmico/quebrável/coletável)
+   *  • caixas colisoras invisíveis nomeadas (_scol / _boxcol / _col)
+   * Sem isso, o VISUAL some mas o colisor INVISÍVEL fica → "algo me bloqueia".
+   */
+  _disposeColliderArtifacts(root) {
+    if (!root) return;
+    try { root._staticBody?.dispose?.(); } catch (_) {}
+    root._staticBody = null;
+    // corpos físicos de peça procedural (parede/porta/etc.)
+    if (root._pieceBodies) { for (const a of root._pieceBodies) { try { a.dispose(); } catch (_) {} } root._pieceBodies = null; }
+    try { root._gameObject?.dispose?.(); } catch (_) {}
+    root._gameObject = null;
+    const nm = root.name || '';
+    for (const sfx of ['_scol', '_boxcol', '_col']) {
+      const m = this.scene.getMeshByName(nm + sfx);
+      if (m) { try { m.physicsBody?.dispose?.(); } catch (_) {} try { m.dispose(); } catch (_) {} }
+    }
+  }
+
+  /**
+   * Varre a cena por colisores/ghosts ÓRFÃOS de placement (proxy invisível
+   * cujo dono sumiu, ghosts esquecidos). NÃO toca no mapa-base (clean_*,
+   * ground, etc.) — só em coisas de placement. Devolve quantos removeu.
+   */
+  _sweepOrphanColliders() {
+    let n = 0;
+    const isPlacementName = nm =>
+      /^(placed_|mac_|__assetMachine|_ghost|_gf_|_gfm|_gfbm)/.test(nm);
+    for (const m of this.scene.meshes.slice()) {
+      const nm = m.name || '';
+      // proxy de colisão de placement OU mesh de placement com corpo Havok
+      const isProxy = (m._isBoxCol || /_(scol|boxcol|col)$/.test(nm)) && isPlacementName(nm.replace(/_(scol|boxcol|col)$/, ''));
+      const isStrayPlacement = isPlacementName(nm) && (m.physicsBody || m._staticBody || m.checkCollisions);
+      if (isProxy || isStrayPlacement || nm.startsWith('_ghost')) {
+        try { m.physicsBody?.dispose?.(); } catch (_) {}
+        try { m._staticBody?.dispose?.(); } catch (_) {}
+        try { m.dispose(); } catch (_) {}
+        n++;
+      }
+    }
+    return n;
+  }
+
+  /**
+   * LIMPA TODO O TERRENO colocado pelo jogador: objetos do [B], quadros,
+   * máquinas de criação e corpos/colisores órfãos. Zera a persistência
+   * (LocalDB) pra não voltarem no F5. Mantém o mapa-base intacto.
+   * @returns {Promise<object>} contagem do que foi removido
+   */
+  async clearAllTerrain() {
+    const counts = { placed: 0, machines: 0, bodies: 0 };
+
+    // 1) Objetos colocados (inclui quadros) + seus colisores
+    for (const entry of this._placed) {
+      try { this._disposeColliderArtifacts(entry.root); } catch (_) {}
+      try { entry.root?.dispose(false, true); } catch (_) {}
+      counts.placed++;
+    }
+    this._placed = [];
+
+    // 2) Máquinas de criação (grupo inteiro: chassi, raio, holograma…)
+    //  NÃO chamamos mac._unpersist() aqui: ele é async e faz read-modify-write
+    //  concorrente que sobrescreveria o save([]) abaixo (corrida). O save([])
+    //  no passo 4 já zera tudo de uma vez.
+    for (const mac of (window._assetMachines || []).slice()) {
+      try { mac.dispose(); } catch (_) {}
+      counts.machines++;
+    }
+
+    // 3) Colisores/ghosts órfãos deixados por edições/saves antigos
+    counts.bodies = this._sweepOrphanColliders();
+
+    // 4) Zera a persistência (senão volta tudo no F5)
+    try { await LocalDB.save('placed', []); }          catch (_) {}
+    try { await LocalDB.save('placed_frames', []); }   catch (_) {}
+    try { await LocalDB.save('machines_placed', []); } catch (_) {}
+
+    window._navMesh?.markDirty?.();
+    console.log(`[BuildMode] 🧹 terreno limpo — ${counts.placed} objeto(s), ${counts.machines} máquina(s), ${counts.bodies} corpo(s)/colisor(es) órfão(s)`);
+    this._renderCatalog?.();
+    return counts;
+  }
+
   _undo() {
     const last = this._placed.pop();
     if (!last) return;
+    this._disposeColliderArtifacts(last.root);   // corpos da peça/colisor
     try { last.root?.dispose(); } catch (_) {}
     // Quadros têm persitência separada
     if (last.record?.kind === 'frame') {
@@ -818,6 +1133,8 @@ export class BuildMode {
       id:         item.id,
       name:       item.name,
       glbUrl:     item.glbUrl,
+      pieceId:    item.pieceId,
+      drag:       item.drag,
       groupProps: item.groupProps || {},
     });
   }
