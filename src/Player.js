@@ -443,28 +443,53 @@ export class Player {
       });
     }
 
-    // ── 5.2 Dash (double-tap W) — fluido, encadeável no ar ──────────
-    //  Chão: dash livre (cd curto).
-    //  Ar: consome airCharge (2 disponíveis, recarrega no chão).
-    //  Cada dash aéreo dá leve "lift" pra sustentar planagem — controla
-    //  altura usando sequência de dashes (skill ceiling alto).
-    if (this.input.consumeDoubleTapW() && canMove && this._dashT <= 0 && this._dodgeT <= 0 && this._dashCdT <= 0) {
+    // ── 5.2 Dash 360 — double-tap WASD em qualquer direção ──────────
+    //  W = pra frente · S = pra trás · A = esquerda · D = direita
+    //  W+S double-tap simultâneo (≤80ms) = dash PRA CIMA (evasão vertical)
+    //  Chão: dash livre (cd curto). Ar: consome airCharge.
+    const dashDir = this.input.consumeDashDir?.();
+    if (dashDir && canMove && this._dashT <= 0 && this._dodgeT <= 0 && this._dashCdT <= 0) {
       const canDash = this.isGrounded || this._airDashesLeft > 0;
       if (canDash) {
         this._dashT = this.DASH_DUR;
-        this._dashCdT = 0.22;   // cooldown bem curto = combos fluidos
-        const dashDir = moveDir.length() > 0.01 ? moveDir : fwd;
-        this._vx = dashDir.x * this.DASH_FORCE;
-        this._vz = dashDir.z * this.DASH_FORCE;
-        if (this.isGrounded) {
-          this.velY = 4;   // hop pequeno no chão (como antes)
+        this._dashCdT = 0.22;
+        // Calcula vetor de dash baseado na direção
+        let dx = 0, dz = 0, dy = 0;
+        const right = new BABYLON.Vector3(fwd.z, 0, -fwd.x); // perpendicular horizontal
+        if (dashDir === 'up') {
+          // Dash vertical: empurrão grande pra cima, sem componente horizontal
+          dy = 1;
+          this._vx *= 0.4; this._vz *= 0.4;  // freia horizontal
+        } else if (dashDir === 'forward') {
+          dx = fwd.x; dz = fwd.z;
+        } else if (dashDir === 'back') {
+          dx = -fwd.x; dz = -fwd.z;
+        } else if (dashDir === 'right') {
+          dx = right.x; dz = right.z;
+        } else if (dashDir === 'left') {
+          dx = -right.x; dz = -right.z;
+        }
+        if (dashDir !== 'up') {
+          this._vx = dx * this.DASH_FORCE;
+          this._vz = dz * this.DASH_FORCE;
+          if (this.isGrounded) {
+            this.velY = 4;
+          } else {
+            this.velY = Math.max(this.velY, 0) + this.DASH_AIR_LIFT;
+            this._airDashesLeft = Math.max(0, this._airDashesLeft - 1);
+          }
         } else {
-          // Aéreo: empurrão suave pra cima — sustenta planagem com sequência
-          this.velY = Math.max(this.velY, 0) + this.DASH_AIR_LIFT;
-          this._airDashesLeft = Math.max(0, this._airDashesLeft - 1);
+          // Dash UP: empurrão vertical forte
+          this.velY = Math.max(this.velY, 0) + 18;
+          if (!this.isGrounded) {
+            this._airDashesLeft = Math.max(0, this._airDashesLeft - 1);
+          }
         }
         this._dashFovT = 0.18;
-        this._spawnDashFX(dashDir);
+        // FX baseada na direção (Vector3 só pra função existente não quebrar)
+        const fxDir = new BABYLON.Vector3(dx, dy * 0.5, dz);
+        if (fxDir.lengthSquared() < 0.001) fxDir.set(0, 1, 0);
+        this._spawnDashFX(fxDir);
         this.sounds?.playNow?.('dash');
       }
     }

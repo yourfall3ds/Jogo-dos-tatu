@@ -18,6 +18,8 @@ import { LandingImpact } from './LandingImpact.js';
 import { StormZone } from './StormZone.js';
 import { BattleRoyaleHUD } from './BattleRoyaleHUD.js';
 import { TakeoffSequence } from './TakeoffSequence.js';
+import { BattleBus } from './BattleBus.js';
+import { Minimap } from './Minimap.js';
 import { LoadingSkinGallery, applyToOverlay } from './LoadingScreenSkin.js';
 
 export class BattleRoyaleMode {
@@ -33,7 +35,10 @@ export class BattleRoyaleMode {
     this.storm = new StormZone(scene, cs, auth);
     this.hud = new BattleRoyaleHUD(cs, auth);
     this.takeoff = new TakeoffSequence(scene);
+    this.bus = new BattleBus(scene);
+    this.minimap = new Minimap(cs, auth);
     this.skinGallery = new LoadingSkinGallery();
+    this._charSelectShown = false;
 
     window._skydiveController = this.skydive;
     window._brMode = this;
@@ -42,6 +47,9 @@ export class BattleRoyaleMode {
   }
 
   _wireEvents() {
+    // Auto-abre CharSelect3D 1x quando entra em sala BR (state.mode === 'BATTLE_ROYALE')
+    // O cliente fica monitorando state em update().
+
     // br_takeoff → cinemática local (eu também sou avatar)
     this.cs.on('br_takeoff', ({ skydive_at }) => {
       console.log('[BR] takeoff em', new Date(skydive_at));
@@ -84,14 +92,22 @@ export class BattleRoyaleMode {
     // Aplica skin no LoadingOverlay (Frente J de FlowGuard)
     try { applyToOverlay(document.getElementById('loading-overlay')); } catch (_) {}
 
-    // Dispara takeoff
-    this.takeoff.trigger(avatars, () => {
-      // Mostra loading screen estilo BR
-      this.loadingOverlay?.show('SAINDO DA ATMOSFERA', 'preparando posição de queda…', true);
-      this.loadingOverlay?.setProgress(20, 'gerando zona segura…');
-      setTimeout(() => this.loadingOverlay?.setProgress(60, 'sincronizando players…'), 400);
-      setTimeout(() => this.loadingOverlay?.setProgress(90, 'liberando queda livre…'), 900);
-    });
+    // BATTLE BUS: avião cruza o mapa em alta + ejeta players em fila.
+    // Substitui o "todos saltam juntos" do TakeoffSequence.
+    try {
+      this.bus.run(avatars, () => {
+        console.log('[BR] bus ejection complete');
+      });
+    } catch (e) {
+      console.warn('[BR] BattleBus falhou, fallback Takeoff:', e);
+      this.takeoff.trigger(avatars, () => {});
+    }
+
+    // Mostra loading screen estilo BR em paralelo
+    this.loadingOverlay?.show('SAINDO DA ATMOSFERA', 'preparando posição de queda…', true);
+    this.loadingOverlay?.setProgress(20, 'gerando zona segura…');
+    setTimeout(() => this.loadingOverlay?.setProgress(60, 'sincronizando players…'), 400);
+    setTimeout(() => this.loadingOverlay?.setProgress(90, 'liberando queda livre…'), 900);
 
     // Tempo até skydive (server diz)
     const ms = Math.max(1500, skydiveAt - Date.now());
@@ -131,7 +147,22 @@ export class BattleRoyaleMode {
     this._hudT = (this._hudT || 0) - dt;
     if (this._hudT <= 0) {
       this.hud.update();
+      this.minimap.update();
       this._hudT = 0.2;
+    }
+    // Auto-abre CharSelect3D ao entrar em sala BR (1x)
+    if (!this._charSelectShown && this.cs?.state?.mode === 'BATTLE_ROYALE' &&
+        this.cs.state.br_phase === 'LOBBY') {
+      this._charSelectShown = true;
+      try {
+        if (window._charSelect3D) {
+          setTimeout(() => window._charSelect3D.open(), 800);
+        }
+      } catch (_) {}
+    }
+    // Reseta quando sai da sala
+    if (this._charSelectShown && !this.cs?.state) {
+      this._charSelectShown = false;
     }
   }
 

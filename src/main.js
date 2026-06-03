@@ -68,8 +68,11 @@ import { RemoteProp }          from './game/multiplayer/RemoteProp.js';
 import { RemoteFx }            from './game/multiplayer/RemoteFx.js';
 import { ChatHud, Scoreboard, PingDisplay, DeathTimer } from './game/ui/IngameHud.js';
 import { attachTransfpsSocial } from './game/ui/TransfpsSocial.js';
+import { BootLoadGuard } from './game/ui/BootLoadGuard.js';
 import { attachTransfpsFlowGuard } from './game/ui/TransfpsFlowGuard.js';
 import { BattleRoyaleMode } from './game/br/BattleRoyaleMode.js';
+import { CharacterSelect3D } from './game/br/CharacterSelect3D.js';
+import { LobbyHall } from './game/br/LobbyHall.js';
 import { BloodTrail }          from './game/combat/BloodTrail.js';
 import { DeathCam }            from './game/multiplayer/DeathCam.js';
 import { PvpToggle }           from './game/ui/PvpToggle.js';
@@ -144,7 +147,15 @@ function setFocusUI(active) {
 
 let _loadReachedFull = false;   // sticky: uma vez 100%, JOGAR fica liberado
 
+// BootLoadGuard tranca a UI durante o boot inteiro
+const _bootGuard = new BootLoadGuard();
+window._bootGuard = _bootGuard;
+
 function setLoadingUI(pct, label = '') {
+  // Atualiza tranca de boot em paralelo às barras antigas
+  try { _bootGuard.update(pct, label); } catch (_) {}
+  if (pct >= 100) try { _bootGuard.done(); } catch (_) {}
+
   const wrap = $('loading-bar-wrap');
   const bar  = $('loading-bar');
   const lbl  = $('loading-label');
@@ -671,6 +682,23 @@ async function init() {
     loadingOverlay: flowGuard.loading,
   });
   window._brMode = brMode;
+  // CharacterSelect3D global (auto-abre em sala BR)
+  const charSelect3D = new CharacterSelect3D({
+    scene, cs, auth,
+    swapper: null, // setado tarde pelo CharacterSwapper init
+  });
+  window._charSelect3D = charSelect3D;
+  // LobbyHall global (saguão 3D)
+  const lobbyHall = new LobbyHall(scene, window._chibataMaps || null);
+  window._lobbyHall = lobbyHall;
+  // Auto-entra no saguão quando entra em sala mas match ainda não começou
+  cs.on('player_add', () => {
+    if (cs.state?.mode === 'BATTLE_ROYALE' && cs.state.br_phase === 'LOBBY' && !lobbyHall.isActive()) {
+      try { lobbyHall.enter('spaceStation').catch(()=>{}); } catch (_) {}
+    }
+  });
+  cs.on('lobby_reset', () => { try { lobbyHall.exit(); } catch (_) {} });
+  cs.on('br_takeoff', () => { try { lobbyHall.exit(); } catch (_) {} });
   // Tutorial check ao receber profile
   cs.on('profile_loaded', (p) => {
     try { social.tutorial.maybeStart(p); } catch (_) {}
@@ -781,6 +809,8 @@ async function init() {
   // ── Troca de personagem (player) reusando as animações ────────────
   const charSwapper = new CharacterSwapper(player, scene, shadowGen);
   window._charSwapper = charSwapper;
+  // Injeta swapper no CharSelect3D (foi criado antes)
+  if (charSelect3D) charSelect3D.swapper = charSwapper;
   //  API de debug/experimento: troca o player por qualquer GLB e mostra a
   //  taxa de compatibilidade de rig (quantas anims casaram).
   window.setPlayerModel = async (url) => {

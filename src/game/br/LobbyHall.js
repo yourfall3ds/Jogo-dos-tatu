@@ -37,6 +37,52 @@ export class LobbyHall {
     this._addAmbientLights();
     this._addCentralBeacon();
     this._startAmbientHum();
+    this._setupPlayerPositions();
+    this._startPedestalGlow();
+  }
+
+  /** Coloca players em círculo ao redor do beacon central. */
+  _setupPlayerPositions() {
+    if (!window._remotePlayers) return;
+    const players = Array.from(window._remotePlayers.values());
+    const radius = 6;
+    players.forEach((rp, i) => {
+      const angle = (i / Math.max(1, players.length)) * Math.PI * 2;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      if (rp.root?.position) {
+        rp.root.position.set(x, 0, z);
+        // Olha pro centro
+        rp.yaw = (Math.atan2(-x, -z)) * 180 / Math.PI;
+        if (rp.root.rotation) rp.root.rotation.y = rp.yaw * Math.PI / 180;
+      }
+      // Marca como pose lobby (sem combate, idle)
+      if (rp._lobbyMode !== undefined) rp._lobbyMode = true;
+    });
+  }
+
+  /** Pedestal de luz cyan embaixo dos pés de cada player. */
+  _startPedestalGlow() {
+    this._pedestalObserver = this.scene.onBeforeRenderObservable.add(() => {
+      const players = window._remotePlayers ? Array.from(window._remotePlayers.values()) : [];
+      players.forEach(rp => {
+        if (!rp.root || rp._pedestal) return;
+        try {
+          const ped = BABYLON.MeshBuilder.CreateDisc('lobbyPed_' + (rp.playerId || Math.random()),
+            { radius: 0.7, tessellation: 24 }, this.scene);
+          ped.rotation.x = Math.PI / 2;
+          ped.position.y = 0.02;
+          ped.parent = rp.root;
+          const m = new BABYLON.StandardMaterial('pedMat', this.scene);
+          m.emissiveColor = new BABYLON.Color3(0.18, 0.93, 0.71);
+          m.alpha = 0.45;
+          m.disableLighting = true;
+          ped.material = m;
+          ped.isPickable = false;
+          rp._pedestal = ped;
+        } catch (_) {}
+      });
+    });
   }
 
   _addAmbientLights() {
@@ -124,6 +170,14 @@ export class LobbyHall {
     if (this._beam) { try { this._beam.dispose(); } catch (_) {} this._beam = null; }
     if (this._spotObserver) { try { this.scene.onBeforeRenderObservable.remove(this._spotObserver); } catch (_) {} }
     if (this._beamObserver) { try { this.scene.onBeforeRenderObservable.remove(this._beamObserver); } catch (_) {} }
+    if (this._pedestalObserver) { try { this.scene.onBeforeRenderObservable.remove(this._pedestalObserver); } catch (_) {} }
+    // Cleanup pedestals
+    if (window._remotePlayers) {
+      window._remotePlayers.forEach(rp => {
+        if (rp._pedestal) { try { rp._pedestal.dispose(); } catch (_) {} rp._pedestal = null; }
+        rp._lobbyMode = false;
+      });
+    }
     if (this._ambientHum) {
       try { this._ambientHum.osc.stop(); this._ambientHum.gain.disconnect(); } catch (_) {}
       this._ambientHum = null;

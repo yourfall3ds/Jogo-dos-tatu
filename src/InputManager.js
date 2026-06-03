@@ -16,9 +16,18 @@ export class InputManager {
     this._wheelDelta   = 0;     // acumula scroll p/ trocar de arma
     this.gameActive    = false;
 
-    // Double-tap W para dash
+    // Double-tap WASD para dash 360 + W+S simultâneo = dash pra cima
     this._lastWPressTime = 0;
+    this._lastAPressTime = 0;
+    this._lastSPressTime = 0;
+    this._lastDPressTime = 0;
     this._wDoubleTap     = false;
+    this._aDoubleTap     = false;
+    this._sDoubleTap     = false;
+    this._dDoubleTap     = false;
+    this._upDoubleTap    = false; // dash pra cima (W+S double-tap simultaneo)
+    this.DASH_WINDOW_MS  = 320;
+    this.DASH_PAIR_MS    = 80;    // janela pra detectar W+S juntos
 
     // Callback chamado quando o jogo é desativado (pointer lock perdido, ESC, etc.)
     // Definido externamente: input.onDeactivated = () => { ... }
@@ -45,16 +54,53 @@ export class InputManager {
       if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))
         e.preventDefault();
 
-      // Double-tap W → dash. Só conta como NOVO toque se a tecla estava
-      // solta antes (wasDown=false) E gameActive. Segurar W não dispara.
-      if (e.code === 'KeyW' && this.gameActive && !wasDown) {
+      // Double-tap WASD → dash 360. Só conta como NOVO toque se a tecla estava
+      // solta antes (wasDown=false) E gameActive. Segurar não dispara.
+      // W+S simultâneo (mesmo double-tap, dentro de 80ms) → dash pra cima.
+      if (this.gameActive && !wasDown) {
         const now = performance.now();
-        // Janela mais permissiva (320ms) — feel The Duel, dá pra encadear.
-        if (now - this._lastWPressTime < 320) {
-          this._wDoubleTap = true;
-          this._lastWPressTime = 0;
-        } else {
-          this._lastWPressTime = now;
+        const win = this.DASH_WINDOW_MS;
+        const pair = this.DASH_PAIR_MS;
+        if (e.code === 'KeyW') {
+          if (now - this._lastWPressTime < win) {
+            this._wDoubleTap = true;
+            this._lastWPressTime = 0;
+            // Dash pra cima: 2 vezes W e 2 vezes S quase ao mesmo tempo.
+            // Verifica se S também acabou de double-tappear (≤ 80ms).
+            if (this._sDoubleTap && now - (this._sDoubleTapAt || 0) < pair) {
+              this._upDoubleTap = true;
+              this._wDoubleTap = false; this._sDoubleTap = false;
+            }
+            this._wDoubleTapAt = now;
+          } else {
+            this._lastWPressTime = now;
+          }
+        } else if (e.code === 'KeyS') {
+          if (now - this._lastSPressTime < win) {
+            this._sDoubleTap = true;
+            this._lastSPressTime = 0;
+            if (this._wDoubleTap && now - (this._wDoubleTapAt || 0) < pair) {
+              this._upDoubleTap = true;
+              this._wDoubleTap = false; this._sDoubleTap = false;
+            }
+            this._sDoubleTapAt = now;
+          } else {
+            this._lastSPressTime = now;
+          }
+        } else if (e.code === 'KeyA') {
+          if (now - this._lastAPressTime < win) {
+            this._aDoubleTap = true;
+            this._lastAPressTime = 0;
+          } else {
+            this._lastAPressTime = now;
+          }
+        } else if (e.code === 'KeyD') {
+          if (now - this._lastDPressTime < win) {
+            this._dDoubleTap = true;
+            this._lastDPressTime = 0;
+          } else {
+            this._lastDPressTime = now;
+          }
         }
       }
     });
@@ -189,6 +235,28 @@ export class InputManager {
     const c = this._wDoubleTap;
     this._wDoubleTap = false;
     return c;
+  }
+  consumeDoubleTapS() { const c = this._sDoubleTap; this._sDoubleTap = false; return c; }
+  consumeDoubleTapA() { const c = this._aDoubleTap; this._aDoubleTap = false; return c; }
+  consumeDoubleTapD() { const c = this._dDoubleTap; this._dDoubleTap = false; return c; }
+  consumeDoubleTapUp() {
+    const c = this._upDoubleTap;
+    this._upDoubleTap = false;
+    if (c) {
+      // Limpa W/S de double-tap pra não disparar dash extra horizontal
+      this._wDoubleTap = false;
+      this._sDoubleTap = false;
+    }
+    return c;
+  }
+  /** Retorna direção do dash double-tap consumido: 'forward'|'back'|'left'|'right'|'up'|null */
+  consumeDashDir() {
+    if (this.consumeDoubleTapUp()) return 'up';
+    if (this._wDoubleTap) { this._wDoubleTap = false; return 'forward'; }
+    if (this._sDoubleTap) { this._sDoubleTap = false; return 'back'; }
+    if (this._aDoubleTap) { this._aDoubleTap = false; return 'left'; }
+    if (this._dDoubleTap) { this._dDoubleTap = false; return 'right'; }
+    return null;
   }
 
   /** Retorna o acumulado de scroll desde a última chamada (-n / +n) e zera */
