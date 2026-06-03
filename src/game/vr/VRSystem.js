@@ -347,6 +347,28 @@ export class VRSystem {
       this.player.yaw = Math.atan2(f.x, f.z) * 180 / Math.PI;
     } catch (_) {}
 
+    // 2.5) Anima o ANDAR: o corpo seguia a câmera em pose PARADA (parecia voar).
+    //  Medimos o quanto a câmera andou e setamos W/A/S/D (relativo ao facing) →
+    //  o player.update toca a animação de caminhada/corrida na direção certa.
+    //  (As teclas só dirigem a ANIMAÇÃO; a posição é a da câmera, setada acima.)
+    if (cam) {
+      const dt = Math.min((this.scene.getEngine?.()?.getDeltaTime?.() || 16) / 1000, 0.05);
+      if (this._lastCamPos && dt > 0) {
+        const dx = cam.x - this._lastCamPos.x, dz = cam.z - this._lastCamPos.z;
+        const sp = Math.hypot(dx, dz) / dt;          // m/s horizontal
+        if (sp > 0.5 && k) {
+          const yr = this.player.yaw * Math.PI / 180;
+          const fwd = dx * Math.sin(yr) + dz * Math.cos(yr);   // componente p/ frente
+          const rgt = dx * Math.cos(yr) - dz * Math.sin(yr);   // componente lateral
+          const t = Math.max(Math.abs(fwd), Math.abs(rgt)) * 0.35;
+          k.KeyW = fwd > t; k.KeyS = fwd < -t;
+          k.KeyD = rgt > t; k.KeyA = rgt < -t;
+          k.ShiftLeft = sp > 4.5;                    // rápido → corre
+        }
+      }
+      this._lastCamPos = { x: cam.x, y: cam.y, z: cam.z };
+    }
+
     // Painel VR aberto → pausa o tiro (gatilho fecha o painel).
     if (this._vrMenuActive) {
       this._vrMenuT = (this._vrMenuT || 0) + ((this.scene.getEngine?.()?.getDeltaTime?.() || 16) / 1000);
