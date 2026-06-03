@@ -130,7 +130,7 @@ export class PlayerAnimator {
    * para servir de "socket" (ponto de montagem) estável.
    */
   getSocketNode(boneName) {
-    if (!this.root || !this.scene) return null;
+    if (!this.root || !this.scene || !boneName) return null;
 
     // Busca exaustiva nos descendentes (TransformNodes e Meshes)
     const nodes = this.root.getDescendants();

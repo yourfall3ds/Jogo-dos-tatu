@@ -366,14 +366,18 @@ export class CombatSystem {
                 : critLevel === 1 ? Math.max(baseKb, 4.5)
                 : baseKb;
 
-    const activeHitbox = this.limbHitboxes[hitDef.bone] || this.limbHitboxes['RightHand'];
+    // Garante um osso válido: vários hitDefs não definem .bone, o que
+    // quebrava getSocketNode (toLowerCase de undefined). Default p/ RightHand,
+    // igual ao fallback da hitbox abaixo.
+    const boneName = hitDef.bone || 'RightHand';
+    const activeHitbox = this.limbHitboxes[boneName] || this.limbHitboxes['RightHand'];
     
     // Anexa as hitboxes aos ossos reais do Animator copiando a Posição Absoluta
     // Mantemos as caixas parentadas à cena (null) ou ao playerMesh para não herdar distorções/escalas de ossos,
     // mas forçamos elas a ficarem exatamente onde o osso está no espaço 3D real.
     let socket = null;
     if (this.playerMesh._playerRef && this.playerMesh._playerRef.animator) {
-      socket = this.playerMesh._playerRef.animator.getSocketNode(hitDef.bone);
+      socket = this.playerMesh._playerRef.animator.getSocketNode(boneName);
     }
 
     if (socket) {
