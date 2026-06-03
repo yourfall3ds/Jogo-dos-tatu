@@ -220,6 +220,7 @@ export class ColyseusClient {
     this.room.onMessage('error', (m) => this._notify('error', m));
     this.room.onMessage('hit_confirmed', (m) => this._notify('hit_confirmed', m));
     this.room.onMessage('pickup', (m) => this._notify('pickup', m));
+    this.room.onMessage('pickup_denied', (m) => this._notify('pickup_denied', m));
     this.room.onMessage('skill_cast', (m) => this._notify('skill_cast', m));
     this.room.onMessage('xp_gain', (m) => this._notify('xp_gain', m));
     this.room.onMessage('level_up', (m) => this._notify('level_up', m));

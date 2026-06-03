@@ -1418,6 +1418,22 @@ export class Player {
   }
 
   /**
+   * MULTIPLAYER: knockback de PvP autoritativo. O servidor manda o vetor
+   * (direção atacante→eu já normalizado * força) no hit_confirmed. Aqui só
+   * injetamos nas velocidades de knockback que o move() já consome (drag +
+   * gravidade tratados no update). Sem isto o golpe "não tem impacto".
+   */
+  applyServerKnockback(kbx, kby, kbz) {
+    if (this._dead) return;
+    if (Number.isFinite(kbx)) this._kbVx = kbx;
+    if (Number.isFinite(kbz)) this._kbVz = kbz;
+    if (Number.isFinite(kby) && kby > 0) {
+      // pop vertical só se estiver no chão (não somar em pleno pulo)
+      if (this.isGrounded || this.velY <= 0.1) this.velY = Math.max(this.velY, kby);
+    }
+  }
+
+  /**
    * Inicia a morte. SEM auto-respawn — o jogador renasce clicando em Renascer.
    * @param {'fall'|'enemy'} type
    *   'fall'  → caiu do mapa: CONTINUA caindo (anim de queda), tela de morte.

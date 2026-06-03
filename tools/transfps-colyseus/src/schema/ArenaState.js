@@ -114,6 +114,10 @@ type('number')(DropState.prototype, 'x');
 type('number')(DropState.prototype, 'y');
 type('number')(DropState.prototype, 'z');
 type('number')(DropState.prototype, 'expires_at');
+// Prioridade do matador: quem matou pode pegar primeiro por alguns segundos;
+// depois (spawn_at + janela) qualquer um pega. Drop é único (um dono).
+type('string')(DropState.prototype, 'killer_id');
+type('number')(DropState.prototype, 'spawn_at');
 
 export class MobState extends Schema {}
 type('string')(MobState.prototype, 'id');

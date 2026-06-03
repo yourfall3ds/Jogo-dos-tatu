@@ -14,6 +14,7 @@
 import { getItemDef } from './ItemCatalog.js';
 import { resolveItemGlb } from './AssetLink.js';
 import { physicsReady } from '../physics/PhysicsWorld.js';
+import { MpGuard } from '../multiplayer/MpGuard.js';
 
 const PICKUP_R = 1.6;
 const MAGNET_R = 4.2;
@@ -30,6 +31,9 @@ export class DropSystem {
 
   // ── Rola e solta os drops de um inimigo morto ────────────────────
   spawnFromEnemy(position, def = {}) {
+    // Em sala MP os drops são do SERVIDOR (DropState, compartilhado p/ todos).
+    // Nada de loot local aqui, senão dobra o drop (um sincroniza, o outro não).
+    if (MpGuard.isInMpRoom()) return;
     const tier = def.tier || 'rookie';
     const mult = { rookie: 1, champion: 2, ultimate: 3, mega: 5, boss: 10 }[tier] || 1;
 

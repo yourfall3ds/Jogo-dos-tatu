@@ -629,6 +629,8 @@ export class ArenaRoom extends Room {
     const attacker = this.state.players.get(pid);
     const target = this.state.players.get(String(payload.to || ''));
     if (!attacker || !target) return;
+    // Guard: alvo já morto não leva mais hit (evita hp negativo / kill-steal).
+    if (target.dead) return;
 
     // ⚠️ SERVIDOR é dono do dano. Cliente envia só weapon+target.
     const weaponId = String(payload.weapon || attacker.weapon || 'unarmed').slice(0, 32);
@@ -647,11 +649,23 @@ export class ArenaRoom extends Room {
     }
 
     target.hp = Math.max(0, target.hp - v.dmg);
-    // Broadcast pra clientes mostrarem dmg number/sangue
+
+    // ── KNOCKBACK: empurra o alvo na direção atacante→alvo (plano XZ) ──
+    //  Vetor normalizado * força (melee empurra mais que tiro). O cliente
+    //  da vítima aplica o impulso; o servidor manda só a direção+força.
+    let kbx = target.x - attacker.x;
+    let kbz = target.z - attacker.z;
+    const kbLen = Math.hypot(kbx, kbz) || 1;
+    kbx /= kbLen; kbz /= kbLen;
+    const melee = String(weaponId).startsWith('sword') || v.melee === true;
+    const kbForce = melee ? 6.5 : 3.0;
+
+    // Broadcast pra clientes mostrarem dmg number/sangue + knockback + som
     this.broadcast('hit_confirmed', {
-      from: attacker.id, to: target.id,
+      from: attacker.id, to: target.id, target_id: target.id,
       from_x: attacker.x, from_y: attacker.y, from_z: attacker.z,
       weapon: weaponId, dmg: v.dmg,
+      kbx: kbx * kbForce, kby: melee ? 2.2 : 1.2, kbz: kbz * kbForce,
     });
 
     if (target.hp <= 0) {
@@ -708,8 +722,8 @@ export class ArenaRoom extends Room {
       // Quest tracking
       this._trackQuestProgress(attacker.id, 'kill_mob', 1);
       this.broadcast('mob_killed', { mob_id: mob.id, by: attacker.id });
-      // Drops server-authoritative
-      this._spawnDropsFromMob(mob);
+      // Drops server-authoritative (quem matou tem prioridade de coleta)
+      this._spawnDropsFromMob(mob, attacker.id);
       setTimeout(() => {
         if (this.state.mobs.has(mob.id)) this.state.mobs.delete(mob.id);
       }, 2000);
@@ -764,7 +778,7 @@ export class ArenaRoom extends Room {
   }
 
   /** RNG de loot do servidor. Tier do mob define quantidade e raridade. */
-  _spawnDropsFromMob(mob) {
+  _spawnDropsFromMob(mob, killerId = '') {
     const tier = mob.tier || 'rookie';
     const tierBonus = { rookie: 1, champion: 1.6, ultimate: 2.4, mega: 3.5, boss: 5, chibata: 1.4 }[tier] || 1;
 
@@ -774,7 +788,7 @@ export class ArenaRoom extends Room {
       this._spawnDrop({
         kind: 'coin',
         value: Math.ceil((3 + Math.random() * 6) * tierBonus),
-        x: mob.x, z: mob.z, scatter: 1.5,
+        x: mob.x, z: mob.z, scatter: 1.5, killerId,
       });
     }
 
@@ -783,7 +797,7 @@ export class ArenaRoom extends Room {
       this._spawnDrop({
         kind: 'hp_potion',
         value: 30 + Math.floor(Math.random() * 20),
-        x: mob.x, z: mob.z, scatter: 1.0,
+        x: mob.x, z: mob.z, scatter: 1.0, killerId,
       });
     }
     // Chance de poção de MP (15%)
@@ -791,7 +805,7 @@ export class ArenaRoom extends Room {
       this._spawnDrop({
         kind: 'mp_potion',
         value: 25 + Math.floor(Math.random() * 15),
-        x: mob.x, z: mob.z, scatter: 1.0,
+        x: mob.x, z: mob.z, scatter: 1.0, killerId,
       });
     }
     // Chance de gem raro (8% base, multiplicado pelo tier)
@@ -799,16 +813,17 @@ export class ArenaRoom extends Room {
       this._spawnDrop({
         kind: 'gem',
         value: Math.ceil(20 * tierBonus),
-        x: mob.x, z: mob.z, scatter: 0.8,
+        x: mob.x, z: mob.z, scatter: 0.8, killerId,
       });
     }
   }
 
-  _spawnDrop({ kind, value, x, z, scatter = 1.0 }) {
+  _spawnDrop({ kind, value, x, z, scatter = 1.0, killerId = '' }) {
     if (this.state.drops.size >= 80) return; // cap defensivo
     const id = `drop_${++_dropUid}`;
     const ang = Math.random() * Math.PI * 2;
     const r = Math.random() * scatter;
+    const now = Date.now();
     const d = new DropState();
     d.id = id;
     d.kind = kind;
@@ -816,7 +831,9 @@ export class ArenaRoom extends Room {
     d.x = x + Math.cos(ang) * r;
     d.y = 0.3;
     d.z = z + Math.sin(ang) * r;
-    d.expires_at = Date.now() + 120000; // 2 min
+    d.expires_at = now + 120000; // 2 min
+    d.killer_id = killerId || '';
+    d.spawn_at = now;
     this.state.drops.set(id, d);
   }
 
@@ -1148,6 +1165,19 @@ export class ArenaRoom extends Room {
     if (dist > 2.5) {
       console.log(`[pickup rejected] ${player.nickname} too far (${dist.toFixed(1)}u)`);
       return;
+    }
+
+    // ── PRIORIDADE DO MATADOR ──────────────────────────────────────────
+    //  Quem matou pode pegar primeiro nos PRIMEIROS 4s. Depois disso, ou se
+    //  ninguém é dono, qualquer um pega. Drop é único (delete atômico abaixo).
+    const PRIORITY_MS = 4000;
+    if (drop.killer_id && drop.killer_id !== pid) {
+      const within = Date.now() < (drop.spawn_at || 0) + PRIORITY_MS;
+      if (within) {
+        // Ainda na janela do matador → só ele pega; avisa o cliente p/ liberar o request.
+        client.send('pickup_denied', { drop_id: drop.id, reason: 'killer_priority' });
+        return;
+      }
     }
 
     // Aplica efeito server-side

@@ -714,6 +714,12 @@ async function init() {
     }
   });
 
+  // ── Pickup negado (prioridade do matador): libera o request p/ tentar de novo ──
+  cs.on('pickup_denied', (m) => {
+    const d = _remoteDrops.get(m?.drop_id);
+    if (d) d._requested = false; // depois da janela do matador, F volta a funcionar
+  });
+
   // ── HIT CONFIRMADO pelo servidor (dmg autoritativo) ──
   cs.on('hit_confirmed', (m) => {
     const myId = auth.getUserId();
@@ -725,6 +731,10 @@ async function init() {
     } else if (m.to === myId) {
       targetPos = player.mesh?.position;
       targetMesh = player.mesh;
+      // KNOCKBACK autoritativo: o servidor mandou o vetor — empurra meu corpo.
+      if (Number.isFinite(m.kbx) || Number.isFinite(m.kbz)) {
+        player.applyServerKnockback?.(m.kbx, m.kby, m.kbz);
+      }
     } else {
       const rp = _remotePlayers.get(m.to);
       if (rp) { targetPos = rp.root?.getAbsolutePosition?.(); targetMesh = rp.body; }
@@ -1392,6 +1402,26 @@ async function init() {
     setTimeout(() => { f.style.opacity = "0"; }, 140);
   }
 
+  // ── Hint "[F] Pegar" pros drops do servidor (coleta manual, sem auto) ──
+  let _fPrev = false;
+  function _updatePickupHint(drop) {
+    let h = document.getElementById("pickup-hint");
+    if (!drop) { if (h) h.style.opacity = "0"; return; }
+    if (!h) {
+      h = document.createElement("div");
+      h.id = "pickup-hint";
+      h.style.cssText = "position:fixed;left:50%;bottom:22%;transform:translateX(-50%);" +
+        "z-index:9001;pointer-events:none;font-family:Segoe UI,monospace;font-weight:800;" +
+        "background:rgba(8,12,24,0.82);color:#ffe;border:1px solid #ffd24a;border-radius:10px;" +
+        "padding:7px 14px;font-size:0.95em;letter-spacing:.5px;opacity:0;transition:opacity .12s;" +
+        "box-shadow:0 3px 16px rgba(0,0,0,.5);";
+      document.body.appendChild(h);
+    }
+    const label = { coin: 'moedas', gem: 'gema', hp_potion: 'poção HP', mp_potion: 'poção MP' }[drop.kind] || 'item';
+    h.innerHTML = `<span style="color:#ffd24a">[F]</span> Pegar ${label}`;
+    h.style.opacity = "1";
+  }
+
   // Overlay especifico pra usuarios chegando do Meta Quest browser.
   // Mostra botao gigante ENTRAR EM VR (captura user gesture pra requestSession).
   function _showQuestVRPrompt(vrSystem) {
@@ -1909,15 +1939,25 @@ async function init() {
       }
       for (const rp of _remotePlayers.values()) rp.update(dt, player.camera);
       for (const m of _remoteMobs.values()) m.update(dt, player.camera);
-      // Drops: anima + auto-pickup quando player chega perto
+      // Drops (server-auth): anima + COLETA COM TECLA F (sem auto-pickup).
+      // Acha o drop mais próximo no alcance; mostra hint; pega na borda de
+      // subida do F. O servidor valida alcance + prioridade do matador.
       const playerPos = player.mesh?.position;
+      let _nearDrop = null, _nearDist = 2.2;
       for (const d of _remoteDrops.values()) {
         d.update(dt);
-        if (!d._requested && playerPos && d.distanceTo(playerPos) < 1.6) {
-          d._requested = true; // evita spam de requests
-          cs.sendPickup(d.id);
+        if (playerPos) {
+          const dd = d.distanceTo(playerPos);
+          if (dd < _nearDist) { _nearDist = dd; _nearDrop = d; }
         }
       }
+      _updatePickupHint(_nearDrop);
+      const _fDown = input.isDown?.('KeyF');
+      if (_fDown && !_fPrev && _nearDrop && !_nearDrop._requested) {
+        _nearDrop._requested = true;          // anti-spam; server limpa via pickup_denied
+        cs.sendPickup(_nearDrop.id);
+      }
+      _fPrev = _fDown;
     }
     // HUD multiplayer: atualiza sempre (try/catch isolado pra um erro nao travar renderloop)
     try { pingDisplay.update(); } catch (e) { console.error('[HUD] pingDisplay:', e); }
