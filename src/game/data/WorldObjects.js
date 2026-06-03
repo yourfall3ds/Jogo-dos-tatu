@@ -107,15 +107,24 @@ export const WorldObjects = {
     }
   },
 
-  /** Marca um objeto como quebrado (destruição compartilhada — F3). */
+  /**
+   * Marca um objeto como quebrado (destruição compartilhada — F3).
+   * ATÔMICO: o UPDATE só casa se `broken=false` (ainda inteiro). Quando dois
+   * players batem no mesmo objeto, só UM consegue virar false→true e recebe
+   * linhas no retorno — esse é o único que ganha o drop (sem duplicação).
+   * Retorna true SOMENTE para o cliente que efetivamente destruiu.
+   */
   async markBroken(worldId) {
     if (!worldId) return false;
     try {
       const supa = await getSupabase();
-      const { error } = await supa.schema('transfps')
-        .from('world_objects').update({ broken: true, updated_at: new Date().toISOString() }).eq('id', worldId);
+      const { data, error } = await supa.schema('transfps')
+        .from('world_objects')
+        .update({ broken: true, updated_at: new Date().toISOString() })
+        .eq('id', worldId).eq('broken', false)
+        .select('id');
       if (error) throw error;
-      return true;
+      return Array.isArray(data) && data.length > 0;
     } catch (e) {
       console.warn('[WorldObjects] markBroken falhou:', e?.message || e);
       return false;

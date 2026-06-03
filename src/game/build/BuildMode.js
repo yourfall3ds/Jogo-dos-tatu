@@ -246,34 +246,44 @@ export class BuildMode {
   /** Objeto quebrou → dropa o asset pro inventário + remove do mundo. */
   _onObjectBroken(entry) {
     if (!entry) return;
-    try {
-      const rec = entry.record || {};
-      if (rec.kind === 'piece' && rec.pieceId) {
-        // Peça (parede/chão/…) → dropa o construível certo de volta.
-        const s = rec.src || {};
-        const label = rec.pieceId === 'wall' ? 'Parede'
-                    : rec.pieceId === 'floor' ? 'Chão' : rec.pieceId;
-        window._gamePlayer?.inventory?.addBuildable?.({
-          assetId: s.assetId || ('piece_' + rec.pieceId),
-          name:    s.name || label,
-          pieceId: rec.pieceId,
-          drag:    s.drag || (rec.pieceId === 'wall' ? 'wall'
-                            : rec.pieceId === 'floor' ? 'floor' : undefined),
-        });
-        window._gamePlayer?.sounds?.playNow?.('pickup_item', 0.5);
-      } else if (rec.id || rec.url) {
-        window._gamePlayer?.inventory?.addBuildable?.({
-          assetId: rec.id, name: rec.name || rec.id || 'asset',
-          glbUrl: rec.url, groupProps: rec.groupProps || {},
-        });
-        window._gamePlayer?.sounds?.playNow?.('pickup_item', 0.5);
-      }
-    } catch (_) {}
+    const rec = entry.record || {};
+    // Concede o construível de volta ao inventário. NO MUNDO COMPARTILHADO isto
+    // só roda para quem REALMENTE destruiu (markBroken atômico) — senão dois
+    // players batendo no mesmo objeto dobravam o item.
+    const award = () => {
+      try {
+        if (rec.kind === 'piece' && rec.pieceId) {
+          const s = rec.src || {};
+          const label = rec.pieceId === 'wall' ? 'Parede'
+                      : rec.pieceId === 'floor' ? 'Chão' : rec.pieceId;
+          window._gamePlayer?.inventory?.addBuildable?.({
+            assetId: s.assetId || ('piece_' + rec.pieceId),
+            name:    s.name || label,
+            pieceId: rec.pieceId,
+            drag:    s.drag || (rec.pieceId === 'wall' ? 'wall'
+                              : rec.pieceId === 'floor' ? 'floor' : undefined),
+          });
+          window._gamePlayer?.sounds?.playNow?.('pickup_item', 0.5);
+        } else if (rec.id || rec.url) {
+          window._gamePlayer?.inventory?.addBuildable?.({
+            assetId: rec.id, name: rec.name || rec.id || 'asset',
+            glbUrl: rec.url, groupProps: rec.groupProps || {},
+          });
+          window._gamePlayer?.sounds?.playNow?.('pickup_item', 0.5);
+        }
+      } catch (_) {}
+    };
     // remove os colisores/corpos (peça: _pieceBodies Havok; senão some o
     //  VISUAL mas o colisor INVISÍVEL fica → "parede fantasma" bloqueando).
     try { this._disposeColliderArtifacts(entry.root); } catch (_) {}
-    // mundo compartilhado: marca quebrado (some pra todos via Realtime)
-    if (entry.worldId) { this._worldEntries?.delete(entry.worldId); WorldObjects.markBroken(entry.worldId); }
+    // mundo compartilhado: marca quebrado (some pra todos via Realtime). Só o
+    // vencedor da corrida atômica ganha o drop; o perdedor remove via Realtime.
+    if (entry.worldId) {
+      this._worldEntries?.delete(entry.worldId);
+      WorldObjects.markBroken(entry.worldId).then((won) => { if (won) award(); });
+    } else {
+      award(); // single-player: sempre concede
+    }
     const i = this._placed.indexOf(entry);
     if (i >= 0) this._placed.splice(i, 1);
     if (!this._sharedWorld) this._save();
