@@ -13,6 +13,7 @@
 import { LocalDB } from './LocalDB.js';
 import { AssetRegistry } from './AssetRegistry.js';
 import { BUILD_PIECES } from '../build/BuildPieces.js';
+import { GeneratedAssets } from './GeneratedAssets.js';
 
 const STORE_GROUPS = 'asset_groups';
 const STORE_ASSETS = 'asset_library';
@@ -255,11 +256,23 @@ export class AssetGroups {
   }
 
   // ── Assets ──────────────────────────────────────────────────────
+  //  GLOBAIS: mescla o catálogo do Supabase (todos os players) com o cache
+  //  local. Em empate de id, o LOCAL vence (preserva rename/move do dono);
+  //  os gerados pelos OUTROS entram como read-only. Offline → só local.
   static async getAssets(groupId = undefined) {
-    const all = await LocalDB.get(STORE_ASSETS, []);
-    if (groupId === undefined) return all;
-    if (groupId === null)      return all.filter(a => !a.groupId);
-    return all.filter(a => a.groupId === groupId);
+    const local = await LocalDB.get(STORE_ASSETS, []);
+    let merged = local;
+    try {
+      if (await GeneratedAssets.available()) {
+        const global = await GeneratedAssets.loadAll();
+        const byId = new Map(local.map(a => [a.id, a]));
+        for (const g of global) if (!byId.has(g.id)) byId.set(g.id, g);
+        merged = Array.from(byId.values());
+      }
+    } catch (_) { /* offline → segue com local */ }
+    if (groupId === undefined) return merged;
+    if (groupId === null)      return merged.filter(a => !a.groupId);
+    return merged.filter(a => a.groupId === groupId);
   }
 
   static async saveAsset(asset) {
@@ -267,6 +280,7 @@ export class AssetGroups {
     const idx = all.findIndex(a => a.id === asset.id);
     if (idx >= 0) all[idx] = asset; else all.unshift(asset);
     await LocalDB.save(STORE_ASSETS, all);
+    try { await GeneratedAssets.add(asset); } catch (_) {}   // catálogo GLOBAL (todos veem)
     return asset;
   }
 
@@ -321,6 +335,7 @@ export class AssetGroups {
     let all = await LocalDB.get(STORE_ASSETS, []);
     all     = all.filter(a => a.id !== assetId);
     await LocalDB.save(STORE_ASSETS, all);
+    try { await GeneratedAssets.remove(assetId); } catch (_) {}   // some do catálogo GLOBAL (só dono)
   }
 
   static async renameAsset(assetId, newName) {
