@@ -58,6 +58,18 @@ import { SettingsUI }          from './game/ui/SettingsUI.js';
 import { MusicSystem }         from './game/audio/MusicSystem.js';
 import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
 import { AuthSystem }          from './game/auth/AuthSystem.js';
+
+// OAuth callback handler — roda ANTES do init normal.
+// Se essa janela for o popup de login (tem #access_token=... E window.opener),
+// fecha sozinha e manda tokens pro opener. Flag global pra init() abortar.
+window.__transfpsIsOAuthPopup = false;
+try {
+  if (typeof window !== 'undefined' && window.location.hash.includes('access_token=')) {
+    if (AuthSystem.handleOAuthCallback()) {
+      window.__transfpsIsOAuthPopup = true;
+    }
+  }
+} catch (e) { console.warn('[Auth] callback hook:', e); }
 import { LoginScreen }         from './game/ui/LoginScreen.js';
 import { LobbyUI }             from './game/ui/LobbyUI.js';
 import { ColyseusClient }      from './game/multiplayer/ColyseusClient.js';
@@ -199,6 +211,11 @@ function setLoadingUI(pct, label = '') {
 
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
+  // Se a janela é o popup OAuth, NÃO inicializa o jogo (vai fechar)
+  if (window.__transfpsIsOAuthPopup) {
+    console.log('[Auth] popup OAuth — skipping game init');
+    return;
+  }
   const canvas = $('renderCanvas');
 
   const engine = new BABYLON.Engine(canvas, true, {
