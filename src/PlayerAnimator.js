@@ -28,6 +28,7 @@
 //  Idle_5                         │ Pulo parado
 //  Roll_Dodge_1                   │ Mirando e andando
 // ─────────────────────────────────────────────────────────────────
+import { DEBUG } from './utils/debug.js';
 
 // ── ANIM_MAP_START ──
 // Mapeamento para os nomes limpos do AnimationLibrary (chaves do MOVESETS).
@@ -213,7 +214,7 @@ export class PlayerAnimator {
     // (tpsPosition, tpsRotation) no método applyToMesh() e não devem ser sobrescritas aqui.
 
     this._weaponSocket = socket;
-    console.log(`[PlayerAnimator] ✅ Arma "${weaponMesh.name}" fixada no osso: ${socket.parent.name}`);
+    DEBUG.log(`[PlayerAnimator] ✅ Arma "${weaponMesh.name}" fixada no osso: ${socket.parent.name}`);
   }
 
   // ── API do AnimConfigUI ──────────────────────────────────────────
@@ -246,7 +247,7 @@ export class PlayerAnimator {
       }
     }
 
-    console.log(
+    DEBUG.log(
       `🐭 PlayerAnimator setup:\n` +
       `   root: "${this.root.name}" (${this.root.getClassName?.() ?? 'Node'})\n` +
       `   meshes: ${meshes.length} | _allMeshes: ${this._allMeshes.length}`
@@ -263,7 +264,7 @@ export class PlayerAnimator {
         this._anims[ag.name] = ag;
       }
     }
-    console.log('🐭 Animações disponíveis:', Object.keys(this._anims));
+    DEBUG.log('🐭 Animações disponíveis:', Object.keys(this._anims));
 
     // Zera peso de todas as animações (blend system manual)
     for (const ag of Object.values(this._anims)) {
@@ -541,7 +542,7 @@ export class PlayerAnimator {
       removed += before - ag.targetedAnimations.length;
     }
 
-    console.log(
+    DEBUG.log(
       `🐭 Root motion stripped: ${removed} track(s) removidos de ` +
       `${Object.keys(this._anims).length} AnimationGroup(s)`
     );

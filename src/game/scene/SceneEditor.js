@@ -16,6 +16,7 @@
 //    • localStorage — automático ao salvar
 //    • Export JSON  — arquivo permanente para versionamento
 // ─────────────────────────────────────────────────────────────────
+import { DEBUG } from '../../utils/debug.js';
 
 // ════════════════════════════════════════════════════════════════
 //  GhostCamera — câmera de voo livre (Unreal-style)
@@ -244,7 +245,7 @@ export class SceneEditor {
   async _init() {
     await TemplateDB.init();
     this._saved = await LocalDB.get(SceneEditor.STORAGE_KEY, {});
-    console.log(`[SceneEditor] ${Object.keys(this._saved).length} objetos carregados do DB.`);
+    DEBUG.log(`[SceneEditor] ${Object.keys(this._saved).length} objetos carregados do DB.`);
     this._refreshTemplateSelect();
   }
 
@@ -322,7 +323,7 @@ export class SceneEditor {
       }
       n++;
     }
-    if (n) console.log(`[SceneEditor] ✅ ${n} objeto(s) restaurados${g ? ` (${g} com gameplay)` : ''}.`);
+    if (n) DEBUG.log(`[SceneEditor] ✅ ${n} objeto(s) restaurados${g ? ` (${g} com gameplay)` : ''}.`);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -1364,7 +1365,7 @@ export class SceneEditor {
       const go = this._makeBodyFor(child, config);
       if (!first) first = go;
     }
-    console.log(`[SceneEditor] 💥 scatter dividido em ${children.length} peças independentes`);
+    DEBUG.log(`[SceneEditor] 💥 scatter dividido em ${children.length} peças independentes`);
     return first;
   }
 

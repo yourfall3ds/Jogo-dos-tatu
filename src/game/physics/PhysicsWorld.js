@@ -9,6 +9,8 @@
 //  do mundo/player serem criados.
 // ─────────────────────────────────────────────────────────────────
 
+import { DEBUG } from '../../utils/debug.js';
+
 const HAVOK_CDN = 'https://cdn.babylonjs.com/havok/HavokPhysics_umd.js';
 
 let _havok  = null;   // instância do módulo WASM
@@ -42,7 +44,7 @@ export async function initPhysics(scene, gravityY = -28) {
     scene.enablePhysics(new BABYLON.Vector3(0, gravityY, 0), _plugin);
     scene._havokPlugin = _plugin;
     _ready = true;
-    console.log('[Physics] ⚙️ Havok ativo (gravidade', gravityY + ')');
+    DEBUG.log('[Physics] ⚙️ Havok ativo (gravidade', gravityY + ')');
     return _plugin;
   } catch (e) {
     console.error('[Physics] Havok falhou ao iniciar:', e.message);

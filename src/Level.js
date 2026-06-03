@@ -8,6 +8,7 @@ import { MonsterPlant } from './Enemy.js';
 import { GameObject }   from './game/scene/GameObject.js';
 import { LocalDB }      from './game/data/LocalDB.js';
 import { AssetGroups }  from './game/data/AssetGroups.js';
+import { DEBUG }        from './utils/debug.js';
 
 // Codifica espaços e acentos em caminhos de textura
 function enc(p) {
@@ -68,7 +69,7 @@ export class Level {
 
       count++;
     }
-    if (count) console.log(`[Level] ✅ ${count} objetos restaurados via LocalDB.`);
+    if (count) DEBUG.log(`[Level] ✅ ${count} objetos restaurados via LocalDB.`);
   }
 
   // ── Materiais ─────────────────────────────────────────────────────
@@ -504,7 +505,7 @@ export class Level {
     // Log das dimensões para ajudar a calibrar scale
     const bb = glbRoot.getHierarchyBoundingVectors();
     const sz = bb.max.subtract(bb.min);
-    console.log(`🏗️ decor [${type}]: bounds=(${sz.x.toFixed(1)},${sz.y.toFixed(1)},${sz.z.toFixed(1)}) scale=${cfg.scale} → altura≈${(sz.y * cfg.scale).toFixed(2)}u`);
+    DEBUG.log(`🏗️ decor [${type}]: bounds=(${sz.x.toFixed(1)},${sz.y.toFixed(1)},${sz.z.toFixed(1)}) scale=${cfg.scale} → altura≈${(sz.y * cfg.scale).toFixed(2)}u`);
 
     // Escala padrão da biblioteca (multiplicador sobre a base do GLB).
     //  type é o assetId em decor (neonSign, obelisk, crystals, ...).

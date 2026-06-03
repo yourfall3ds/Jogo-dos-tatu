@@ -1,3 +1,5 @@
+import { DEBUG } from '../../utils/debug.js';
+
 export class AnimationLibrary {
   constructor(scene) {
     this.scene = scene;
@@ -72,7 +74,7 @@ export class AnimationLibrary {
         );
         newAg.dispose(); // descarta grupo vazio para não poluir a cena
       } else {
-        console.log(`[AnimLib] ✅ "${name}": ${matched}/${total} ossos mapeados`);
+        DEBUG.log(`[AnimLib] ✅ "${name}": ${matched}/${total} ossos mapeados`);
         newAg.stop();
         this.animations.set(name, newAg);
       }
@@ -119,7 +121,7 @@ export class AnimationLibrary {
         }
         stripped++;
       }
-      console.log(`[AnimLib] 🔒 "${name}" root motion XZ travado (${stripped} track).`);
+      DEBUG.log(`[AnimLib] 🔒 "${name}" root motion XZ travado (${stripped} track).`);
     }
 
     // ── 2. Trim (limita os frames reproduzidos) ────────────────────
@@ -129,7 +131,7 @@ export class AnimationLibrary {
       const newTo   = ag.from + full * (cfg.trimEnd   ?? 1);
       try {
         ag.normalize(newFrom, newTo);
-        console.log(`[AnimLib] ✂️ "${name}" trim → frames ${newFrom.toFixed(0)}..${newTo.toFixed(0)}`);
+        DEBUG.log(`[AnimLib] ✂️ "${name}" trim → frames ${newFrom.toFixed(0)}..${newTo.toFixed(0)}`);
       } catch (e) {
         console.warn(`[AnimLib] trim falhou em "${name}":`, e.message);
       }
@@ -152,12 +154,12 @@ export class AnimationLibrary {
   }
 
   list() {
-    console.log("=== Animações Registradas ===");
+    DEBUG.log("=== Animações Registradas ===");
     let i = 0;
     this.animations.forEach((ag, key) => {
-      console.log(`${i} - [${key}] (Original: ${ag.name})`);
+      DEBUG.log(`${i} - [${key}] (Original: ${ag.name})`);
       i++;
     });
-    console.log("=============================");
+    DEBUG.log("=============================");
   }
 }

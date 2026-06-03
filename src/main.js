@@ -58,15 +58,29 @@ import { SettingsUI }          from './game/ui/SettingsUI.js';
 import { MusicSystem }         from './game/audio/MusicSystem.js';
 import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
 import { AuthSystem }          from './game/auth/AuthSystem.js';
+import { DEBUG }               from './utils/debug.js';
 
 // OAuth callback handler — roda ANTES do init normal.
-// Se essa janela for o popup de login (tem #access_token=... E window.opener),
-// fecha sozinha e manda tokens pro opener. Flag global pra init() abortar.
+// Se essa janela for o popup de login (tem ?code= [PKCE] ou #access_token=
+// [implicit] no URL), troca por session, manda tokens pro opener via
+// BroadcastChannel('transfps-auth') e fecha sozinha. Flag global pra
+// init() abortar e nao bootar o jogo dentro do popup.
 window.__transfpsIsOAuthPopup = false;
 try {
-  if (typeof window !== 'undefined' && window.location.hash.includes('access_token=')) {
-    if (AuthSystem.handleOAuthCallback()) {
+  if (typeof window !== 'undefined') {
+    const _qs = new URLSearchParams(window.location.search || '');
+    const _isPopupCallback =
+      _qs.has('code') ||
+      _qs.get('auth') === 'callback' ||
+      _qs.has('error') ||
+      window.location.hash.includes('access_token=');
+    if (_isPopupCallback) {
+      // Flag IMEDIATA pra impedir o init() de rodar enquanto o exchange
+      // assincrono acontece (handleOAuthCallback agora eh async).
       window.__transfpsIsOAuthPopup = true;
+      AuthSystem.handleOAuthCallback().catch((e) => {
+        console.warn('[Auth] callback async erro:', e);
+      });
     }
   }
 } catch (e) { console.warn('[Auth] callback hook:', e); }
@@ -159,61 +173,87 @@ function setFocusUI(active) {
 
 let _loadReachedFull = false;   // sticky: uma vez 100%, JOGAR fica liberado
 
-// BootLoadGuard tranca a UI durante o boot inteiro
-const _bootGuard = new BootLoadGuard();
-window._bootGuard = _bootGuard;
+// ─────────────────────────────────────────────────────────────────
+// Boot silencioso: BootLoadGuard NÃO é criado de cara.
+// Tela de login aparece imediatamente. Loading acontece no fundo,
+// mas sem barra visível, até o usuário clicar JOGAR ou ENTRAR EM SALA.
+// Se nesse momento os essenciais ainda não terminaram, aí sim mostra
+// o BootLoadGuard com a barra real. Caso contrário, vai direto.
+// ─────────────────────────────────────────────────────────────────
+let _bootGuard = null;                       // instanciado sob demanda
+let _uiGateOpen = false;                     // só true quando user agir
+let _lastSilentPct = 0;
+let _lastSilentLabel = '';
+
+// Promise pública: resolve quando TIER 1 (essenciais) terminar.
+let _essentialReadyResolve;
+window._essentialReady = new Promise(res => { _essentialReadyResolve = res; });
+
+/**
+ * Cria o BootLoadGuard sob demanda (idempotente).
+ */
+function _ensureBootGuard(reason = 'jogar') {
+  if (_bootGuard) return _bootGuard;
+  try {
+    _bootGuard = new BootLoadGuard();
+    window._bootGuard = _bootGuard;
+    _bootGuard.update(_lastSilentPct, _lastSilentLabel || ('preparando ' + reason + '…'));
+  } catch (_) {}
+  return _bootGuard;
+}
+
+/**
+ * Abre o portão da UI de loading. Chamado por window.startGame e
+ * por lobbyUI.onEnterGame ANTES de qualquer await em assets.
+ * - Marca _uiGateOpen=true para liberar render de UI.
+ * - NÃO cria o guard imediatamente: o guard só aparece se essenciais
+ *   demorarem mais de 200ms a partir desse momento (ver _awaitEssentials).
+ */
+window._openLoadGate = function _openLoadGate(reason = 'jogar') {
+  if (_uiGateOpen) return;
+  _uiGateOpen = true;
+};
+
+/**
+ * Espera essenciais com janela de tolerância: se em até 200ms já estiver
+ * pronto, entra direto SEM mostrar barra. Caso contrário, instancia o
+ * BootLoadGuard só nesse momento e aguarda terminar.
+ */
+async function _awaitEssentials(reason = 'jogar') {
+  let resolved = false;
+  window._essentialReady.then(() => { resolved = true; });
+  await new Promise(r => setTimeout(r, 200));
+  if (resolved) return;
+  _ensureBootGuard(reason);
+  await window._essentialReady;
+}
+window._awaitEssentials = _awaitEssentials;
 
 function setLoadingUI(pct, label = '') {
-  // Atualiza tranca de boot em paralelo às barras antigas
-  try { _bootGuard.update(pct, label); } catch (_) {}
-  if (pct >= 100) try { _bootGuard.done(); } catch (_) {}
-
-  const wrap = $('loading-bar-wrap');
-  const bar  = $('loading-bar');
-  const lbl  = $('loading-label');
-
-  // ── Tela de entrada: barra grande + botão JOGAR refletindo o loading ──
-  const sFill = $('ss-load-fill'), sLbl = $('ss-load-label'), sPct = $('ss-load-pct');
-  const play  = $('ss-play'), pbFill = $('ss-play-fill'), pbText = $('ss-play-text');
   const p = Math.max(0, Math.min(100, Math.round(pct)));
+
+  // Antes do user clicar JOGAR/ENTRAR EM SALA, o load roda em SILÊNCIO.
+  // Guarda só o último valor — nada de tocar em DOM ou BootLoadGuard.
+  if (!_uiGateOpen) {
+    _lastSilentPct = Math.max(_lastSilentPct, p);
+    if (label) _lastSilentLabel = label;
+    if (pct >= 100) _loadReachedFull = true;
+    return;
+  }
+
+  // Portão aberto: atualiza APENAS o BootLoadGuard. Sem mexer em
+  // start-screen (já está oculta nesse ponto) nem na barra inferior
+  // antiga — assim NADA pisca além do guard quando ele é necessário.
   if (pct >= 100) _loadReachedFull = true;
-
-  // ── Start screen (só relevante até ficar pronto) ──────────────────
-  // O loading tem VÁRIAS fases (assets → animações → máquinas) e o pct não
-  // é monotônico. Uma vez 100%, o botão JOGAR fica liberado pra sempre.
-  if (!_loadReachedFull) {
-    if (sFill) sFill.style.width = p + '%';
-    if (sPct)  sPct.textContent  = p + '%';
-    if (sLbl && label) sLbl.textContent = '📦 ' + label;
-    if (pbFill) pbFill.style.width = p + '%';
-    if (pbText) pbText.textContent = '⏳ Carregando ' + p + '%';
-  } else if (pct >= 100 || !play?.classList.contains('ready')) {
-    // primeira vez que cruza 100% → libera e limpa o botão
-    if (sFill) sFill.style.width = '100%';
-    if (sPct)  sPct.textContent  = '100%';
-    if (sLbl)  sLbl.textContent  = '✅ Tudo pronto!';
-    if (play)  { play.disabled = false; play.classList.remove('loading'); play.classList.add('ready'); }
-    if (pbFill) pbFill.style.width = '0%';
-    if (pbText) pbText.textContent = '▶ JOGAR';
-  }
-
-  // ── Barra inferior (loading in-game das fases seguintes) ──────────
-  if (pct >= 100) {
-    wrap.classList.remove('visible');
-    lbl.classList.remove('visible');
-  } else {
-    wrap.classList.add('visible');
-    lbl.classList.add('visible');
-    bar.style.width  = pct + '%';
-    lbl.textContent  = label;
-  }
+  try { _bootGuard?.update(p, label); } catch (_) {}
+  if (pct >= 100) try { _bootGuard?.done(); } catch (_) {}
 }
 
 // ── Init ─────────────────────────────────────────────────────────
 async function init() {
   // Se a janela é o popup OAuth, NÃO inicializa o jogo (vai fechar)
   if (window.__transfpsIsOAuthPopup) {
-    console.log('[Auth] popup OAuth — skipping game init');
+    DEBUG.log('[Auth] popup OAuth — skipping game init');
     return;
   }
   const canvas = $('renderCanvas');
@@ -416,7 +456,6 @@ async function init() {
     if (_remotePlayers.has(id)) return;
     const rp = new RemotePlayer(scene, state);
     _remotePlayers.set(id, rp);
-    console.log(`[CS] +remote ${state.nickname}`);
   });
   cs.on('player_remove', ({ id }) => {
     const rp = _remotePlayers.get(id);
@@ -793,6 +832,12 @@ async function init() {
     lobbyUI.show();
   });
   lobbyUI.onEnterGame(async (room) => {
+    // ── Abre portão + espera essenciais com tolerância de 200ms ──
+    // Se TIER 1 já estiver pronto (ou ficar em <200ms): entra direto, sem barra.
+    // Caso contrário: BootLoadGuard aparece para esse delay extra.
+    try { window._openLoadGate?.('entrar na sala'); } catch (_) {}
+    try { await _awaitEssentials('entrar na sala'); } catch (_) {}
+
     // Carrega o mapa da sala (vem do state)
     const mapId = cs.state?.map_id || 'default';
     const loading = window._loadingOverlay;
@@ -1109,7 +1154,6 @@ async function _restoreMachines(scene) {
       m.id,
     );
   }
-  console.log(`[AssetMachine] ✅ ${machines.length} máquina(s) restaurada(s)`);
 }
 
 // ── Carregamento progressivo de assets ───────────────────────────
@@ -1195,7 +1239,6 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
           )
         );
         
-        console.log("🔥 [Sistema Anim] Extração concluída!");
 
         // ── Pós-processamento (sem Blender) ────────────────────────
         //  aim_charge: tem root motion (corre pra frente) → travar XZ
@@ -1252,8 +1295,11 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
   }
   setLoadingUI(40, 'pronto pra jogar — carregando extras…');
 
-  // Libera UI: BootLoadGuard pode sumir agora
-  try { window._bootGuard?.done(); } catch (_) {}
+  // ── TIER 1 concluído: libera startGame/lobby para entrar SEM esperar ──
+  try { _essentialReadyResolve?.(); } catch (_) {}
+  // Se o usuário já abriu o portão (clicou JOGAR antes de TIER1 terminar),
+  // o BootLoadGuard existe — fecha ele agora. Caso contrário, fica null.
+  try { _bootGuard?.done(); } catch (_) {}
 
   // TIER 2: paralelo em background. Atualiza barra mas não bloqueia.
   let bgDone = 0;
@@ -1280,15 +1326,19 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     //  podia jogar o viewmodel no chão ao casar nome genérico __root__).
     try { player._updateWeaponVisibility?.(); } catch (_) {}
     setTimeout(() => { try { player._updateWeaponVisibility?.(); } catch (_) {} }, 300);
-
-    console.log('🎮 [Boot] Todos os assets carregados em background.');
   });
 }
 
 // ════════════════════════════════════════════════════════════════
 //  Funções globais (chamadas pelo HTML)
 // ════════════════════════════════════════════════════════════════
-window.startGame = function () {
+window.startGame = async function () {
+  // Abre o portão e espera essenciais com tolerância de 200ms.
+  // Se TIER 1 terminar dentro de 200ms → entra DIRETO, zero barra.
+  // Se demorar mais → BootLoadGuard aparece nesse momento e fecha sozinho.
+  try { window._openLoadGate?.('jogar'); } catch (_) {}
+  try { await _awaitEssentials('jogar'); } catch (_) {}
+
   $('start-screen').style.display = 'none';
   // Sai do engine mode caso esteja ativo
   if (_engineMode) window.exitEngineMode();

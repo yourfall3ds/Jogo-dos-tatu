@@ -13,6 +13,8 @@
 //  Recast é carregado do CDN do Babylon (lib WASM, uma vez).
 // ─────────────────────────────────────────────────────────────────
 
+import { DEBUG } from '../../utils/debug.js';
+
 const RECAST_CDN = 'https://cdn.babylonjs.com/recast.js';
 
 // Parâmetros validados no preview (gera ~85ms num chão grande).
@@ -56,7 +58,7 @@ export class NavMeshManager {
       this.plugin = new BABYLON.RecastJSPlugin(recast);
       await this.rebuild();
       this.ready = true;
-      console.log('[NavMesh] ✅ pronto (build', this._lastBuildMs + 'ms)');
+      DEBUG.log('[NavMesh] ✅ pronto (build', this._lastBuildMs + 'ms)');
       return true;
     } catch (e) {
       console.warn('[NavMesh] falhou:', e?.message, '— IA usa fallback (linha reta)');

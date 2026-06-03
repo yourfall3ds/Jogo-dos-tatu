@@ -9,6 +9,7 @@
 //  Tudo box estático com colisão Havok. Cores de marcador pra saber
 //  "aqui é trecho de skill".
 // ─────────────────────────────────────────────────────────────────
+import { DEBUG } from '../../utils/debug.js';
 
 export class SkillMapExtras {
   constructor(scene, level) {
@@ -24,7 +25,7 @@ export class SkillMapExtras {
     this._buildSuspendedPlatforms();
     this._buildRamps();
     this._buildSpeedAlley();
-    console.log(`[SkillMap] ${this.created.length} elementos extras criados`);
+    DEBUG.log(`[SkillMap] ${this.created.length} elementos extras criados`);
   }
 
   _buildMaterials() {

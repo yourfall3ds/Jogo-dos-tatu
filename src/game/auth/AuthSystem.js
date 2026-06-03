@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────
 
 import { getSupabase } from './SupabaseClient.js';
+import { DEBUG } from '../../utils/debug.js';
 
 export class AuthSystem {
   constructor() {
@@ -72,7 +73,7 @@ export class AuthSystem {
         // Hidrata PlayerStats local se existir
         if (p.stats?.fromProfile) p.stats.fromProfile(data);
       }
-      console.log(`[Auth] profile carregado: lv${data.level} ${data.xp}xp k${data.total_kills}/d${data.total_deaths} ${data.coins}🪙`);
+      DEBUG.log(`[Auth] profile carregado: lv${data.level} ${data.xp}xp k${data.total_kills}/d${data.total_deaths} ${data.coins}🪙`);
     } else {
       setTimeout(() => this._loadProfile(), 1500);
     }
@@ -90,17 +91,22 @@ export class AuthSystem {
   }
 
   /** Inicia OAuth Google em POPUP (janela nova) — não perde o jogo.
-   *  Quando o callback chega, ele lê a sessão do hash, manda pro opener
-   *  via postMessage e fecha sozinho. Aqui no opener, escuto a mensagem e
-   *  injeto a sessão no Supabase via setSession.
+   *  Quando o callback chega, ele troca code por session (PKCE), manda os
+   *  tokens pro opener via BroadcastChannel (COOP-safe) e fecha sozinho.
+   *  Aqui no opener, escuto o channel e injeto a sessão via setSession.
+   *
+   *  IMPORTANTE: NAO usa window.opener.postMessage (bloqueado por COOP do
+   *  Google) nem setInterval(popup.closed) (gera warning COOP em browsers
+   *  recentes). Comunicacao via BroadcastChannel('transfps-auth') +
+   *  timeout absoluto de 120s.
    */
   async signInWithGoogle() {
     if (!this._supabase) await this.init();
 
-    // Redirect na MESMA URL atual — quando voltar, vamos detectar o hash
-    // de sessão e fechar a janela. Fica na allowlist do Supabase porque é
-    // o mesmo domain do jogo.
-    const redirectTo = window.location.origin + window.location.pathname + '#auth-callback';
+    // Redirect na MESMA URL atual — o popup vai detectar ?code= (PKCE) e
+    // trocar por session via exchangeCodeForSession. Fica na allowlist do
+    // Supabase porque eh o mesmo domain do jogo.
+    const redirectTo = window.location.origin + window.location.pathname + '?auth=callback';
 
     // Pega a URL OAuth do Google (skipBrowserRedirect=true → não faz redirect aqui)
     const { data, error } = await this._supabase.auth.signInWithOAuth({
@@ -132,60 +138,113 @@ export class AuthSystem {
       return;
     }
 
-    // Listener pra mensagem do popup com tokens
+    // Listener via BroadcastChannel (COOP-safe). NAO usa postMessage nem
+    // popup.closed polling (ambos disparam warning/bloqueio por COOP do
+    // accounts.google.com). Timeout absoluto de 120s.
     return new Promise((resolve, reject) => {
+      const bc = ('BroadcastChannel' in window) ? new BroadcastChannel('transfps-auth') : null;
+      let settled = false;
+      let timeoutId = null;
+
       const cleanup = () => {
-        window.removeEventListener('message', onMessage);
-        if (timer) clearInterval(timer);
+        settled = true;
+        if (bc) { try { bc.close(); } catch (_) {} }
+        if (timeoutId) clearTimeout(timeoutId);
       };
-      const onMessage = async (event) => {
-        if (event.origin !== window.location.origin) return;
-        if (event.data?.type !== 'transfps-auth-callback') return;
-        const { access_token, refresh_token } = event.data;
-        if (!access_token) return reject(new Error('sem token'));
+
+      const handlePayload = async (payload) => {
+        if (settled) return;
+        if (!payload || (payload.type !== 'transfps-auth-ok' && payload.type !== 'transfps-auth-err')) return;
+        if (payload.type === 'transfps-auth-err') {
+          cleanup();
+          return reject(new Error(payload.error || 'oauth erro'));
+        }
+        const { access_token, refresh_token } = payload;
+        if (!access_token) { cleanup(); return reject(new Error('sem token')); }
         try {
           await this._supabase.auth.setSession({ access_token, refresh_token });
           cleanup();
           resolve();
         } catch (e) { cleanup(); reject(e); }
       };
-      window.addEventListener('message', onMessage);
-      // Watchdog: se popup fechar sem mandar mensagem, rejeita após 60s
-      let secs = 0;
-      const timer = setInterval(() => {
-        secs += 1;
-        if (popup.closed) {
-          cleanup();
-          reject(new Error('popup fechou sem completar login'));
-        }
-        if (secs > 120) { cleanup(); reject(new Error('timeout login')); }
-      }, 1000);
+
+      if (bc) {
+        bc.onmessage = (ev) => handlePayload(ev.data);
+      } else {
+        cleanup();
+        return reject(new Error('BroadcastChannel indisponivel'));
+      }
+
+      // Timeout absoluto (sem polling de popup.closed → evita COOP warning)
+      timeoutId = setTimeout(() => {
+        if (!settled) { cleanup(); reject(new Error('timeout login')); }
+      }, 120000);
     });
   }
 
-  /** Callback handler — roda no popup quando volta do Google. Detecta hash
-   *  com tokens, manda pra janela pai via postMessage e fecha. */
-  static handleOAuthCallback() {
+  /** Callback handler — roda no popup quando volta do Google. Detecta
+   *  ?code= (PKCE, default do supabase-js v2) ou #access_token= (implicit),
+   *  faz exchange se precisar, e sinaliza opener via BroadcastChannel
+   *  ('transfps-auth'). postMessage NAO funciona com COOP do Google. */
+  static async handleOAuthCallback() {
     try {
+      const search = window.location.search || '';
       const hash = window.location.hash || '';
-      if (!hash.includes('access_token=')) return false;
-      const params = new URLSearchParams(hash.replace(/^#/, '').replace(/^auth-callback&/, ''));
-      const access_token = params.get('access_token');
-      const refresh_token = params.get('refresh_token');
-      if (!access_token) return false;
-      // Manda pra janela pai
-      if (window.opener) {
+      const qs = new URLSearchParams(search);
+      const hp = new URLSearchParams(hash.replace(/^#/, '').replace(/^auth-callback&?/, ''));
+
+      const code = qs.get('code');                       // PKCE flow
+      const hashAccess = hp.get('access_token');          // implicit flow
+      const errParam = qs.get('error') || hp.get('error');
+
+      if (!code && !hashAccess && !errParam) return false;
+
+      const signal = (payload) => {
+        if (!('BroadcastChannel' in window)) return;
         try {
-          window.opener.postMessage(
-            { type: 'transfps-auth-callback', access_token, refresh_token },
-            window.location.origin
-          );
+          const bc = new BroadcastChannel('transfps-auth');
+          bc.postMessage(payload);
+          setTimeout(() => { try { bc.close(); } catch (_) {} }, 200);
         } catch (_) {}
-        // Fecha o popup
-        setTimeout(() => window.close(), 100);
+      };
+
+      if (errParam) {
+        signal({ type: 'transfps-auth-err', error: errParam });
+        setTimeout(() => window.close(), 150);
         return true;
       }
-      // Sem opener (foi redirect direto): deixa Supabase processar normal
+
+      // PKCE: troca code por session AQUI no popup. O code_verifier foi
+      // gravado no localStorage do origin pelo supabase-js quando
+      // signInWithOAuth rodou no opener — como popup e opener compartilham
+      // origin, o verifier esta acessivel via mesma instancia/storage.
+      if (code) {
+        const { getSupabase } = await import('./SupabaseClient.js');
+        const supabase = await getSupabase();
+        const { data, error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+        if (error || !data?.session) {
+          signal({ type: 'transfps-auth-err', error: error?.message || 'exchange falhou' });
+        } else {
+          signal({
+            type: 'transfps-auth-ok',
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token,
+          });
+        }
+        setTimeout(() => window.close(), 150);
+        return true;
+      }
+
+      // Implicit (fallback p/ providers que retornam hash com tokens)
+      if (hashAccess) {
+        signal({
+          type: 'transfps-auth-ok',
+          access_token: hashAccess,
+          refresh_token: hp.get('refresh_token'),
+        });
+        setTimeout(() => window.close(), 150);
+        return true;
+      }
       return false;
     } catch (e) {
       console.warn('[Auth] callback handler erro:', e);
