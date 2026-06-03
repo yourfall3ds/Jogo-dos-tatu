@@ -154,18 +154,34 @@ export class AuthSystem {
 
       const handlePayload = async (payload) => {
         if (settled) return;
-        if (!payload || (payload.type !== 'transfps-auth-ok' && payload.type !== 'transfps-auth-err')) return;
+        if (!payload) return;
         if (payload.type === 'transfps-auth-err') {
           cleanup();
           return reject(new Error(payload.error || 'oauth erro'));
         }
-        const { access_token, refresh_token } = payload;
-        if (!access_token) { cleanup(); return reject(new Error('sem token')); }
-        try {
-          await this._supabase.auth.setSession({ access_token, refresh_token });
-          cleanup();
-          resolve();
-        } catch (e) { cleanup(); reject(e); }
+        // NOVO: popup manda apenas o ?code= cru (PKCE) ou os tokens (implicit).
+        // O EXCHANGE acontece AQUI no opener pra que o code_verifier seja
+        // achado no localStorage do supabase-js (gravado pela mesma instancia).
+        if (payload.type === 'transfps-auth-code') {
+          try {
+            const { data, error } = await this._supabase.auth.exchangeCodeForSession(payload.callback_url);
+            if (error || !data?.session) {
+              cleanup();
+              return reject(new Error(error?.message || 'exchange falhou'));
+            }
+            cleanup();
+            return resolve();
+          } catch (e) { cleanup(); return reject(e); }
+        }
+        if (payload.type === 'transfps-auth-ok') {
+          const { access_token, refresh_token } = payload;
+          if (!access_token) { cleanup(); return reject(new Error('sem token')); }
+          try {
+            await this._supabase.auth.setSession({ access_token, refresh_token });
+            cleanup();
+            resolve();
+          } catch (e) { cleanup(); reject(e); }
+        }
       };
 
       if (bc) {
@@ -214,23 +230,19 @@ export class AuthSystem {
         return true;
       }
 
-      // PKCE: troca code por session AQUI no popup. O code_verifier foi
-      // gravado no localStorage do origin pelo supabase-js quando
-      // signInWithOAuth rodou no opener — como popup e opener compartilham
-      // origin, o verifier esta acessivel via mesma instancia/storage.
+      // PKCE: o code_verifier foi gravado no localStorage do opener (origem)
+      // pela instancia supabase-js que rodou signInWithOAuth. Embora o
+      // popup compartilhe origin com o opener (mesmo localStorage),
+      // a chave PKCE eh deletada/migrada de forma instavel entre janelas
+      // (especialmente quando o popup carrega o app inteiro).
+      // Solucao: NAO fazer exchange aqui. Mandar a URL inteira de callback
+      // para o opener via BroadcastChannel, e o opener (que tem certeza do
+      // verifier porque foi ele que iniciou) faz o exchange.
       if (code) {
-        const { getSupabase } = await import('./SupabaseClient.js');
-        const supabase = await getSupabase();
-        const { data, error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-        if (error || !data?.session) {
-          signal({ type: 'transfps-auth-err', error: error?.message || 'exchange falhou' });
-        } else {
-          signal({
-            type: 'transfps-auth-ok',
-            access_token: data.session.access_token,
-            refresh_token: data.session.refresh_token,
-          });
-        }
+        signal({
+          type: 'transfps-auth-code',
+          callback_url: window.location.href,
+        });
         setTimeout(() => window.close(), 150);
         return true;
       }
