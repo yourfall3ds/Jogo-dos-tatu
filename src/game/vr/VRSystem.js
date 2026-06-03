@@ -15,7 +15,7 @@
 //
 // Mapa de controles (Quest 3 Touch Plus):
 //   Analógico esq.        → andar (W/A/S/D relativo à cabeça); empurrar tudo = correr
-//   Analógico dir. (X)    → girar em passos (snap turn, conforto anti-enjoo)
+//   Analógico dir. (X)    → girar a câmera (SMOOTH/contínuo, proporcional)
 //   Gatilho dir.          → atirar (segura = automático)
 //   Botão A (dir.)        → pular
 //   Botão B (dir.)        → recarregar
@@ -44,9 +44,8 @@ export class VRSystem {
     this._leftAxes = { x: 0, y: 0 };
     this._rightAxes = { x: 0, y: 0 };
     this._fireHeld = false;
-    this._snapArmed = false;
-    this._snapAngle = Math.PI / 6;   // 30° por passo
-    this._rigYaw = 0;                // rotação acumulada do rig (snap turn)
+    this._turnSpeed = 2.2;           // rad/s na deflexão total (~126°/s) — giro SMOOTH contínuo
+    this._rigYaw = 0;                // rotação acumulada do rig (yaw da virada)
     this._tickBound = null;
   }
 
@@ -296,16 +295,15 @@ export class VRSystem {
     const mag = Math.hypot(lx, ly);
     k.ShiftLeft = mag > 0.85;   // empurrar o analógico até o fim = correr
 
-    // 3) Analógico direito → snap turn (gira em passos, anti-enjoo).
+    // 3) Analógico direito → giro SMOOTH (contínuo, proporcional à deflexão).
+    //    Sem snap/passos: gira enquanto o stick estiver inclinado, na velocidade
+    //    proporcional a quanto você empurra. dt vem do engine pra ser estável.
     const rx = this._rightAxes.x;
-    if (Math.abs(rx) > 0.7) {
-      if (!this._snapArmed) {
-        this._rigYaw += Math.sign(rx) * this._snapAngle;
-        this._snapArmed = true;
-        this._pulse(this.rightController, 0.2, 25);
-      }
-    } else if (Math.abs(rx) < 0.3) {
-      this._snapArmed = false;
+    const turnDead = 0.15;
+    if (Math.abs(rx) > turnDead) {
+      const dt = Math.min((this.scene.getEngine?.()?.getDeltaTime?.() || 16) / 1000, 0.05);
+      const amt = (Math.abs(rx) - turnDead) / (1 - turnDead);   // 0..1 após a deadzone
+      this._rigYaw += Math.sign(rx) * amt * this._turnSpeed * dt;
     }
 
     // 4) Tiro automático enquanto segura o gatilho.
@@ -316,7 +314,7 @@ export class VRSystem {
     // 5) Atualiza o raio de mira da arma (origem + direção do controle direito).
     this._updateAimRay();
 
-    // 6) Câmera segue o player: rig nos pés, com a rotação do snap turn.
+    // 6) Câmera segue o player: rig nos pés, com a rotação do giro (yaw).
     const p = this.player.mesh.position;
     this.rig.position.set(p.x, p.y - this.player.HEIGHT / 2, p.z);
     this.rig.rotation.y = this._rigYaw;
