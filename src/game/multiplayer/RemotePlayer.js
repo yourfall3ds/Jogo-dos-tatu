@@ -228,9 +228,12 @@ export class RemotePlayer {
 
     if (state.avatar_url) this._setAvatar(state.avatar_url);
 
-    // Interpolação buffer (anti-borrachudo)
+    // Interpolação buffer (anti-borrachudo).
+    // 70ms = ~4 frames a 60fps: responsivo o bastante pro PvP (100ms era
+    // perceptível) sem sacrificar a suavização. O snap de teleporte (>5m) +
+    // coalesce de burst já evitam o stutter de buffer vazio.
     this._snapshots = [];
-    this.RENDER_LAG_MS = 100;
+    this.RENDER_LAG_MS = 70;
     this._current = { x: state.x || 0, y: state.y || 0, z: state.z || 0, ry: state.ry || 0 };
     this.root.position.set(this._current.x, this._current.y, this._current.z);
 
