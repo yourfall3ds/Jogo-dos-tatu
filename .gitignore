@@ -9,3 +9,6 @@ tools/db/
 tools/_*.log
 *.log
 node_modules/
+
+# Certificados self-signed do servidor LAN (NUNCA commitar a chave privada)
+certs/

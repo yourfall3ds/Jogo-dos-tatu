@@ -5,6 +5,8 @@
   "scripts": {
     "start": "node tools/config-server.js & npx serve -s .",
     "server": "npx serve -s .",
-    "config": "node tools/config-server.js"
+    "config": "node tools/config-server.js",
+    "lan": "node tools/lan-https.mjs",
+    "lan-vr": "node tools/lan-https.mjs 8443"
   }
 }
