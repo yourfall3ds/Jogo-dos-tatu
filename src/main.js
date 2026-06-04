@@ -1812,15 +1812,11 @@ async function init() {
     // ferramenta/menu aberto (Biblioteca, modo colocar) → não pausa por cima
     if (window._assetGroupsUI?._visible) return;
     if (window._buildMode && window._buildMode._state !== 'inactive') return;
-    // ── MULTIPLAYER: NUNCA pausa ao perder pointer lock ───────────────
+    // ── MULTIPLAYER: ao perder o pointer lock o player NUNCA congela ──
     // O servidor (Colyseus) é autoritativo: o personagem continua VULNERÁVEL
-    // e recebendo dano mesmo sem o lock local. Perder o lock (ESC, alt-tab,
-    // clique fora) NÃO pode mostrar menu de pause nem congelar a lógica do
-    // player — só re-capturamos o pointer no próximo mousedown real (o
-    // handler de mousedown do InputManager já chama _requestLock(true)).
-    // Pra manter o player VIVO no loop (movimento/câmera/dano client-side),
-    // re-armamos gameActive — assim o update do player segue rodando; só o
-    // cursor fica visível até o jogador clicar de volta. SEM overlay de pause.
+    // e recebendo dano. gameActive SEGUE true → o update do player roda
+    // (câmera/movimento/dano). Só o cursor fica visível. O menu de pause (se
+    // aberto via ESC) é puramente VISUAL por cima — não para a lógica.
     if (window._cs?.connected) {
       window._gameInput && (window._gameInput.gameActive = true);
       return;
@@ -1859,13 +1855,28 @@ async function init() {
         setFocusUI(true);
         return;
       }
-      // ── MULTIPLAYER: ESC nunca abre menu de pause ────────────────────
-      // Servidor autoritativo → o personagem segue VULNERÁVEL. ESC só libera
-      // o pointer lock (comportamento nativo do browser); NÃO preventDefault,
-      // NÃO mostra overlay, NÃO desativa o player. O próximo mousedown real
-      // re-captura o lock. Mantém gameActive pra o player seguir no loop/dano.
+      // ── MULTIPLAYER: ESC abre o menu de pause VISUAL, mas o personagem
+      //   segue VULNERÁVEL no servidor (autoritativo). O overlay só pausa a
+      //   SUA tela/input — o player continua no mundo recebendo dano/movimento
+      //   do servidor. É assim que multiplayer funciona (ninguém "some" ao
+      //   pausar). NÃO desativamos o update do player (gameActive segue true);
+      //   só liberamos o cursor e mostramos o overlay por cima.
       if (window._cs?.connected) {
-        window._gameInput && (window._gameInput.gameActive = true);
+        e.preventDefault();
+        const ovMp = $('pause-overlay');
+        if (ovMp?.classList.contains('visible')) {
+          // Pause aberto → ESC retoma (re-captura pointer lock, esconde overlay).
+          _resumeFromPause();
+        } else {
+          // Abre o overlay de pause SEM congelar o player (segue vulnerável).
+          try { document.exitPointerLock?.(); } catch (_) {}
+          // gameActive CONTINUA true → update do player roda, dano chega.
+          window._gameInput && (window._gameInput.gameActive = true);
+          ovMp?.classList.add('visible');
+          try { document.body.classList.remove('in-game'); } catch (_) {}
+          // mostra o cursor pra clicar nos botões do menu
+          try { if (canvas) canvas.style.cursor = 'default'; } catch (_) {}
+        }
         return;
       }
       const ov = $('pause-overlay');

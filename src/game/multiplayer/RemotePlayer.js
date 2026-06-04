@@ -343,8 +343,10 @@ export class RemotePlayer {
         try { this._attachWeaponFromState(); } catch (e) { console.warn('[RemotePlayer] weapon swap fail', e?.message); }
         break;
       case 'class_id':
-        // Player remoto trocou de CLASSE/skin → recarrega o avatar ao vivo.
-        try { this._swapClassModel(); } catch (e) { console.warn('[RemotePlayer] class swap fail', e?.message); }
+      case 'avatar_url':
+        // Player remoto trocou de CLASSE/skin (class_id) OU de avatar (avatar_url
+        //  dos 6 personagens novos) → recarrega o avatar ao vivo.
+        try { this._swapClassModel(); } catch (e) { console.warn('[RemotePlayer] skin swap fail', e?.message); }
         break;
     }
     // FRENTE 7 (FIX): troca animacao quando anim_state muda.
@@ -1095,7 +1097,11 @@ export class RemotePlayer {
    */
   _swapClassModel() {
     const newId = this.state?.class_id | 0;
-    if (newId === (this._loadedClassId | 0)) return;       // já é esse modelo
+    // Decide a URL alvo (mesma lógica do _tryLoadAvatar): avatar_url tem
+    //  prioridade sobre class_id. Só recarrega se a URL realmente mudou.
+    const avUrl = (this.state?.avatar_url || '').trim();
+    const targetUrl = (avUrl && /\.glb($|\?)/i.test(avUrl)) ? avUrl : _classModel(newId).url;
+    if (targetUrl === this._loadedAvatarUrl) return;        // já é esse modelo
     if (this._swappingClass) return;                        // evita reentrada
     this._swappingClass = true;
     try {
@@ -1119,9 +1125,14 @@ export class RemotePlayer {
   }
 
   async _tryLoadAvatar() {
-    // SKIN POR CLASSE: o modelo vem do class_id sincronizado (default = rato).
+    // SKIN: prioriza avatar_url (os 6 personagens novos — orc/mago/cleric/etc
+    //  trafegam o caminho do GLB no schema). Cai pro class_id (rato/azurefin)
+    //  só se não vier avatar_url. Antes ignorava avatar_url e TODOS os remotos
+    //  apareciam como rato — por isso ninguém via a skin escolhida.
+    const avUrl = (this.state?.avatar_url || '').trim();
     const model = _classModel(this.state?.class_id);
-    const url = model.url;
+    const url = (avUrl && /\.glb($|\?)/i.test(avUrl)) ? avUrl : model.url;
+    this._loadedAvatarUrl = url;
     this._loadedClassId = this.state?.class_id | 0;
     const shortId = (this.playerId || "").slice(0, 8);
     this._glbLoadAttempts = (this._glbLoadAttempts || 0) + 1;

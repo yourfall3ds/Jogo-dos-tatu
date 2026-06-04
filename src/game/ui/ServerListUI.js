@@ -271,9 +271,14 @@ export class ServerListUI {
         }
       } catch (e) { console.warn('[ServerList] getSession (segue anônimo):', e?.message); }
 
-      const avatarUrl =
+      // avatar_url enviado ao servidor = GLB do PERSONAGEM escolhido (pra os
+      //  outros players verem a skin certa). Cai pra foto do perfil só se não
+      //  houver personagem. O RemotePlayer carrega ESTE caminho .glb.
+      const charGlb = this._pendingAvatar?.url || null;
+      const profilePhoto =
         this.auth.profile?.avatar_url ??
         this.auth.user?.user_metadata?.avatar_url ?? null;
+      const avatarUrl = charGlb || profilePhoto;
       this.cs.setPlayerId(this.auth.getUserId());
 
       const _tJoin = (performance?.now?.() || 0);
@@ -283,7 +288,7 @@ export class ServerListUI {
         roomId: roomInfo.roomId,
         token,
         nickname: this.auth.getNickname?.() || 'Player',
-        avatar_url: avatarUrl,
+        avatar_url: avatarUrl,   // GLB do personagem → replicado pros outros
         password: null,
         // p/ fallback joinOrCreate se a sala estiver morta:
         map: roomInfo.metadata?.map || roomInfo.map || 'arena',

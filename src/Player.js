@@ -110,17 +110,18 @@ export class Player {
     this._dashT       = 0;   // timer ativo do dash (>0 = dashing)
     this._dashCdT     = 0;   // cooldown entre dashes
     this.DASH_DUR     = 0.26;
-    this.DASH_FORCE   = 52;  // um toque mais forte
+    // ── DASH NORMAL (WASD 2x / Space 2x): curto, 4 cargas ───────────
+    this.DASH_FORCE   = 52;     // distância do dash NORMAL (curto)
     this.DASH_AIR_LIFT = 3.4;   // empurrão pra cima no dash aéreo (sustenta planagem)
-    this.AIR_DASH_MAX = 5;     // 5 dashes aéreos HORIZONTAIS consecutivos sem tocar chão/objeto
-    this._airDashesLeft = 5;
-    // Dash PRA CIMA (W+S juntos): contador PRÓPRIO, máximo 2 usos no ar.
-    this.DASH_UP_MAX  = 2;
+    this.AIR_DASH_MAX = 4;      // 4 cargas de dash NORMAL no ar sem tocar chão/objeto
+    this._airDashesLeft = 4;
+    // ── DASH LONGO (W+S juntos 2x): DOBRO da distância, 2 cargas ─────
+    //  Contador PRÓPRIO. Teleporte forte pra frente+cima, 2x o dash normal.
+    this.DASH_UP_MAX  = 2;      // só 2 cargas (mais poderoso = mais raro)
     this._dashUpLeft  = 2;
-    //  Impulso vertical FORTE — ~2x o alcance do dash horizontal. Com gravidade
-    //  -28, velY=34 lança o player BEM alto (era 18 = "mal saía do lugar").
-    this.DASH_UP_FORCE = 34;
-    // Volume do som: dash up = DOBRO do dash horizontal.
+    this.DASH_LONG_FORCE = 104;  // = DASH_FORCE * 2 → DOBRO da distância
+    this.DASH_LONG_LIFT  = 22;   // boost vertical do dash longo (sobe junto)
+    // Volume do som: dash longo = DOBRO do dash normal.
     this.DASH_VOL_NORMAL = 0.7;
     this.DASH_VOL_UP     = 1.4;
 
@@ -716,23 +717,15 @@ export class Player {
         // Calcula vetor de dash baseado na direção
         let dx = 0, dz = 0, dy = 0;
         const right = new BABYLON.Vector3(fwd.z, 0, -fwd.x); // perpendicular horizontal
-        if (isUp) {
-          // Dash vertical: empurrão grande pra cima, sem componente horizontal
-          dy = 1;
-          this._vx *= 0.4; this._vz *= 0.4;  // freia horizontal
-        } else if (dashDir === 'forward') {
-          dx = fwd.x; dz = fwd.z;
-        } else if (dashDir === 'back') {
-          dx = -fwd.x; dz = -fwd.z;
-        } else if (dashDir === 'right') {
-          dx = right.x; dz = right.z;
-        } else if (dashDir === 'left') {
-          dx = -right.x; dz = -right.z;
-        }
+        // Direção horizontal (vale pro normal E pro longo). 'up' (W+S) usa fwd.
+        if (isUp || dashDir === 'forward') { dx = fwd.x; dz = fwd.z; }
+        else if (dashDir === 'back')  { dx = -fwd.x; dz = -fwd.z; }
+        else if (dashDir === 'right') { dx = right.x; dz = right.z; }
+        else if (dashDir === 'left')  { dx = -right.x; dz = -right.z; }
+
         if (!isUp) {
-          // ACUMULA embalo: em vez de SET direto (que zerava a velocidade
-          // anterior), faz Lerp pro vetor de dash. Preserva ~20% do embalo
-          // atual na direção do dash → física realista (não reseta o impulso).
+          // ── DASH NORMAL (curto, 4 cargas) ──────────────────────────
+          // ACUMULA embalo: Lerp pro vetor de dash (preserva ~20% do embalo).
           this._vx = BABYLON.Scalar.Lerp(this._vx, dx * this.DASH_FORCE, 0.8);
           this._vz = BABYLON.Scalar.Lerp(this._vz, dz * this.DASH_FORCE, 0.8);
           if (this.isGrounded) {
@@ -742,15 +735,16 @@ export class Player {
             this._airDashesLeft = Math.max(0, this._airDashesLeft - 1);
           }
         } else {
-          // Dash UP: empurrão vertical FORTE (~2x alcance do dash comum) + anim.
-          //  SET (não +=) pra não somar com velY residual e ficar inconsistente:
-          //  garante SEMPRE o mesmo lançamento alto, do chão ou do ar.
-          this.velY = this.DASH_UP_FORCE;
+          // ── DASH LONGO (W+S 2x): DOBRO da distância + boost vertical ─
+          //  Teleporte FORTE pra frente (2x o normal) + sobe junto. SET direto
+          //  pra garantir SEMPRE o mesmo alcance grande (não depende do embalo).
+          this._vx = dx * this.DASH_LONG_FORCE;
+          this._vz = dz * this.DASH_LONG_FORCE;
+          this.velY = this.DASH_LONG_LIFT;
           if (!this.isGrounded) {
             this._dashUpLeft = Math.max(0, this._dashUpLeft - 1);
           }
-          // Animação: usa 'jump' (salto) como pose do dash vertical. Cai pra
-          //  vault_roll/run_fast se jump não existir. Não trava se faltar.
+          // Animação de salto pro dash longo.
           try {
             const ac = this.animCtrl;
             if (ac) {
