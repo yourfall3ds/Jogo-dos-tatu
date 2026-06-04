@@ -19,11 +19,17 @@
 //  esbarrar em CORS do browser. A API key fica só no servidor/localStorage.
 // ─────────────────────────────────────────────────────────────────
 
+import { getSupabase } from '../auth/SupabaseClient.js';
+
 export class MeshyClient {
   constructor() {
-    // Proxy local (config-server) repassa pra api.meshy.ai com a key.
+    // Proxy local (config-server, só em DEV) repassa pra api.meshy.ai com a key.
     this.PROXY = 'http://127.0.0.1:3099/meshy';
-    // Fallback: chamada direta (precisa CORS liberado + key no browser)
+    // PRODUÇÃO: Edge Function do Supabase (meshy-game) injeta a key server-side
+    // (secret MESHY_API_KEY) — a chave NUNCA vai pro browser. Usada quando o
+    // proxy local não existe (VPS/produção).
+    this.SUPA_FN = 'meshy-game';
+    // Último recurso: chamada direta (precisa CORS liberado + key no browser).
     this.DIRECT = 'https://api.meshy.ai';
     this._key = null;
     this._useProxy = true;
@@ -41,13 +47,21 @@ export class MeshyClient {
   }
   hasKey() { return !!this.getKey() || this._serverHasKey === true; }
 
-  // Pergunta ao servidor se a chave já está configurada no .env.
+  // A chave já está configurada no servidor? (DEV: .env do config-server;
+  // PRODUÇÃO: secret MESHY_API_KEY na Edge Function — basta estar logado).
   // Se sim, não precisa colar nada no navegador.
   async checkServerKey() {
+    // 1) Proxy local (dev)
     try {
       const r = await fetch('http://127.0.0.1:3099/health', { signal: AbortSignal.timeout(1500) });
       const j = await r.json();
-      this._serverHasKey = !!j.meshyKey;
+      if (j.meshyKey) { this._serverHasKey = true; return true; }
+    } catch (_) {}
+    // 2) Edge Function (produção): logado → a key vive no servidor.
+    try {
+      const supa = await getSupabase();
+      const { data } = await supa.auth.getSession();
+      this._serverHasKey = !!data?.session;
       return this._serverHasKey;
     } catch (_) { this._serverHasKey = false; return false; }
   }
@@ -60,12 +74,11 @@ export class MeshyClient {
     } catch (_) { return false; }
   }
 
-  // ── Request genérico (via proxy ou direto) ───────────────────────
+  // ── Request genérico (proxy local → Edge Function → direto) ──────
   async _req(method, path, body) {
     const key = this.getKey();
+    // 1) Proxy local (DEV): o config-server injeta a Authorization.
     if (this._useProxy && await this.proxyOnline()) {
-      // proxy: o servidor injeta a Authorization. Mandamos a key uma vez
-      // via header custom pra ele guardar/usar.
       const resp = await fetch(`${this.PROXY}${path}`, {
         method,
         headers: { 'Content-Type': 'application/json', 'X-Meshy-Key': key || '' },
@@ -74,7 +87,30 @@ export class MeshyClient {
       if (!resp.ok) throw new Error(`Meshy ${resp.status}: ${await resp.text()}`);
       return resp.json();
     }
-    // direto (pode falhar por CORS)
+    // 2) PRODUÇÃO: Edge Function meshy-game (key no servidor, sem CORS).
+    //    Passamos { method, path, body } e ela repassa pro api.meshy.ai.
+    try {
+      const supa = await getSupabase();
+      const { data: sess } = await supa.auth.getSession();
+      if (sess?.session) {
+        const { data, error } = await supa.functions.invoke(this.SUPA_FN, {
+          body: { method, path, body: body ?? null },
+        });
+        if (error) {
+          // FunctionsHttpError traz o corpo de erro em context (Response)
+          let detail = error.message;
+          try { detail = await error.context?.text?.() || detail; } catch (_) {}
+          throw new Error(`Meshy(edge): ${detail}`);
+        }
+        if (data && data.error) throw new Error(`Meshy: ${data.error}`);
+        return data;
+      }
+    } catch (e) {
+      // se a edge falhar e não houver key local, propaga (sem cair no direto cego)
+      if (!key) throw e;
+      console.warn('[MeshyClient] edge function falhou, tentando direto:', e?.message);
+    }
+    // 3) Último recurso: direto (precisa key no browser + CORS liberado).
     const resp = await fetch(`${this.DIRECT}${path}`, {
       method,
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
