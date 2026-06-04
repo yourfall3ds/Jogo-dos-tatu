@@ -29,7 +29,7 @@ export function recordToRow(rec) {
     return {
       world_id: WORLD_ID, kind: 'piece', asset_id: rec.pieceId, url: null,
       px: rec.p[0], py: rec.p[1], pz: rec.p[2], ry: rec.ry || 0,
-      sx: s[0], sy: s[1], sz: s[2], props: {},
+      sx: s[0], sy: s[1], sz: s[2], props: { breakable: rec.breakable !== false },
     };
   }
   // Máquina de Criação (item especial) — sem url; só posição.
@@ -53,7 +53,7 @@ export function recordToRow(rec) {
   return {
     world_id: WORLD_ID, kind: 'glb', asset_id: rec.id || null, url: rec.url || null,
     px: rec.p[0], py: rec.p[1], pz: rec.p[2], ry: rec.ry || 0,
-    sx: sc, sy: sc, sz: sc, props: rec.groupProps || {},
+    sx: sc, sy: sc, sz: sc, props: { ...(rec.groupProps || {}), breakable: rec.breakable !== false },
   };
 }
 
@@ -64,6 +64,7 @@ export function rowToRecord(row) {
       kind: 'piece', pieceId: row.asset_id, name: 'w_' + row.id,
       p: [row.px, row.py, row.pz], ry: row.ry || 0,
       sc: row.sx ?? 1, s: [row.sx ?? 1, row.sy ?? 1, row.sz ?? 1],
+      breakable: row.props?.breakable !== false,
       _worldId: row.id,
     };
   }
@@ -85,7 +86,7 @@ export function rowToRecord(row) {
   return {
     id: row.asset_id, name: 'w_' + row.id, url: row.url,
     p: [row.px, row.py, row.pz], ry: row.ry || 0, sc: row.sx ?? 1,
-    groupProps: row.props || {}, _worldId: row.id,
+    groupProps: row.props || {}, breakable: row.props?.breakable !== false, _worldId: row.id,
   };
 }
 

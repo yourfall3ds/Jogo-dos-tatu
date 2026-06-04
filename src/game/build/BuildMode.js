@@ -52,6 +52,7 @@ export class BuildMode {
     this._rotY        = 0;
     this._scaleM      = 1.0;
     this._grid        = 1.0;
+    this._breakable   = true;   // checkbox "quebrável" (sincroniza nos props do objeto)
 
     // Offsets acumulados pelas setas (ajuste fino)
     this._offX = 0;
@@ -289,6 +290,7 @@ export class BuildMode {
     if (!entry?.root) return;
     const rec = entry.record || {};
     if (rec.kind === 'frame') return;                  // quadros não quebram
+    if (rec.breakable === false) return;               // checkbox "quebrável" DESLIGADO → indestrutível
     if (entry.breakable) return;                        // já anexado (evita dupla)
     if (!(rec.id || rec.url || rec.pieceId)) return;   // GLB OU peça recolocável
     let maxDim = 2;
@@ -399,6 +401,7 @@ export class BuildMode {
                   border-bottom:1px solid #3a8;padding-bottom:8px;margin-bottom:8px">
         <b style="color:#5fc;font-size:14px;letter-spacing:1px">🔨 CONSTRUÇÃO</b>
         <div style="display:flex;gap:5px">
+          <button id="build-breakable" class="bm-btn" title="Liga/desliga se o que você colocar pode ser quebrado">💥 Quebrável: SIM</button>
           <button id="build-grid" class="bm-btn">Grid: 1.0</button>
           <button id="build-close" class="bm-btn" style="background:#3a1a1a">✕</button>
         </div>
@@ -442,6 +445,11 @@ export class BuildMode {
     el.querySelector('#build-close').onclick   = () => this.hide();
     el.querySelector('#build-library').onclick = () => window._assetGroupsUI?.open?.();
     el.querySelector('#build-grid').onclick  = () => this._cycleGrid();
+    el.querySelector('#build-breakable').onclick = () => {
+      this._breakable = !this._breakable;
+      const b = this._el?.querySelector('#build-breakable');
+      if (b) { b.textContent = '💥 Quebrável: ' + (this._breakable ? 'SIM' : 'NÃO'); b.style.background = this._breakable ? '' : '#3a1a1a'; }
+    };
     el.querySelector('#build-undo').onclick  = () => this._undo();
     el.querySelector('#build-clear').onclick = () => {
       if (confirm('Limpar TODO o terreno colocado (objetos, quadros, máquinas e colisores órfãos)?\nO mapa-base é preservado. Não dá pra desfazer.'))
@@ -1120,11 +1128,11 @@ export class BuildMode {
       const record = {
         id: item.id, name: uid, url,
         p: [pos.x, pos.y, pos.z], ry: rotY, sc: scale,
-        groupProps: gProps,
+        groupProps: gProps, breakable: this._breakable !== false,
       };
       const entry = { record, root };
       this._placed.push(entry);
-      this._attachBreakable(entry, res.meshes);   // sandbox: rachar→quebrar→dropar
+      this._attachBreakable(entry, res.meshes);   // sandbox: rachar→quebrar→dropar (respeita checkbox)
       this._save();
       this._persistPlaced(entry);   // mundo compartilhado (no-op se offline)
     } catch (e) {
@@ -1263,7 +1271,8 @@ export class BuildMode {
     if (sg) root.getChildMeshes(false).forEach(m => { try { sg.addShadowCaster(m); } catch (_) {} });
 
     const record = { kind: 'piece', pieceId: item.pieceId, name: uid,
-                     p: [pos.x, pos.y, pos.z], ry: rotY, sc: scale };
+                     p: [pos.x, pos.y, pos.z], ry: rotY, sc: scale,
+                     breakable: this._breakable !== false };
     if (scl3) record.s = scl3;
     // origem (assetId/drag/nome) → pra dropar o construível certo ao quebrar.
     //  Vem do item "na mão" (inventário) ao colocar, ou do próprio record ao restaurar.
