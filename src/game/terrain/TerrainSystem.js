@@ -251,19 +251,72 @@ export class TerrainSystem {
     }, 1200);
   }
 
-  /** Aplica uma TEXTURA no chão (tileada). url null = volta pro branco. */
-  setGroundTexture(url, tile = 4) {
+  /** Aplica uma TEXTURA no chão (tileada) + NORMAL MAP (relevo) derivado da
+   *  própria textura na GPU. url null = volta pro branco.
+   *  @param {object} o { tile, bump }  tile=metros por repetição; bump=força do relevo (0=sem). */
+  setGroundTexture(url, o = {}) {
+    const tile = o.tile ?? 4;
+    const bump = o.bump ?? 1.0;
     this._textureUrl = url || null;
+    this._bump = bump;
     try {
       const mat = this.mesh.material;
+      // limpa anteriores
       if (mat.diffuseTexture) { try { mat.diffuseTexture.dispose(); } catch (_) {} mat.diffuseTexture = null; }
+      if (mat.bumpTexture)    { try { mat.bumpTexture.dispose(); }    catch (_) {} mat.bumpTexture = null; }
+      if (this._normalPT)     { try { this._normalPT.dispose(); }     catch (_) {} this._normalPT = null; }
       if (!url) { mat.diffuseColor = new BABYLON.Color3(1, 1, 1); return; }
-      const tex = new BABYLON.Texture(url, this.scene);
+
       const cells = Math.max(1, this.size / tile);   // ~1 repetição a cada `tile` metros
+      const tex = new BABYLON.Texture(url, this.scene);
       tex.uScale = cells; tex.vScale = cells;
       mat.diffuseTexture = tex;
       mat.diffuseColor = new BABYLON.Color3(1, 1, 1);
+
+      // ── NORMAL MAP (relevo) derivado da textura na GPU (sem readback/CORS) ──
+      if (bump > 0) {
+        const npt = TerrainSystem._buildNormalMap(tex, this.scene, bump);
+        if (npt) {
+          npt.uScale = cells; npt.vScale = cells;
+          mat.bumpTexture = npt;
+          mat.bumpTexture.level = Math.min(2, bump);   // intensidade do relevo
+          this._normalPT = npt;
+        }
+      }
     } catch (e) { console.warn('[Terrain] textura falhou:', e?.message); }
+  }
+
+  /** Cria um normal map (ProceduralTexture) que deriva o relevo do brilho da
+   *  textura na GPU. Roda algumas vezes e congela (relevo estático). */
+  static _buildNormalMap(diffuseTex, scene, strength) {
+    try {
+      const SHADER = 'terrainNormal';
+      if (!BABYLON.Effect.ShadersStore[`${SHADER}PixelShader`]) {
+        BABYLON.Effect.ShadersStore[`${SHADER}PixelShader`] = `
+precision highp float;
+varying vec2 vUV;
+uniform sampler2D diffuseSampler;
+uniform vec2 texel;
+uniform float strength;
+float lum(vec2 uv){ vec3 c = texture2D(diffuseSampler, uv).rgb; return dot(c, vec3(0.299,0.587,0.114)); }
+void main(){
+  float l = lum(vUV - vec2(texel.x, 0.0));
+  float r = lum(vUV + vec2(texel.x, 0.0));
+  float d = lum(vUV - vec2(0.0, texel.y));
+  float u = lum(vUV + vec2(0.0, texel.y));
+  vec3 n = normalize(vec3((l - r) * strength, (d - u) * strength, 1.0));
+  gl_FragColor = vec4(n * 0.5 + 0.5, 1.0);
+}`;
+      }
+      const S = 512;
+      const npt = new BABYLON.ProceduralTexture('terrainNormalTex', S, SHADER, scene, null, true, false);
+      npt.setTexture('diffuseSampler', diffuseTex);
+      npt.setVector2('texel', new BABYLON.Vector2(1 / S, 1 / S));
+      npt.setFloat('strength', Math.max(0.5, strength * 4));   // escala o gradiente
+      // Congela depois que a textura-fonte carregou + alguns frames (relevo estático).
+      setTimeout(() => { try { npt.refreshRate = 0; } catch (_) {} }, 1200);
+      return npt;
+    } catch (e) { console.warn('[Terrain] normal map falhou:', e?.message); return null; }
   }
 
   /** Array de alturas (Y de cada vértice) — compacto pra salvar. */

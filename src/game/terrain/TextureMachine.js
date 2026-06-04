@@ -115,6 +115,8 @@ export class TextureMachineUI {
       <button id="tx-gen" style="width:100%;margin-top:8px;background:rgba(120,60,160,0.9);color:#fff;border:none;
               border-radius:6px;padding:8px;font:700 12px monospace;cursor:pointer;">Gerar textura (Nano Banana)</button>
       <div id="tx-status" style="margin-top:6px;color:#a9c;font:500 11px monospace;min-height:14px;"></div>
+      <label style="display:block;margin:8px 0 2px;">Relevo (normal map) <span id="tx-bump-v">100</span>%</label>
+      <input id="tx-bump" type="range" min="0" max="200" step="10" value="100" style="width:100%;">
       <div style="margin-top:8px;color:#b9d;">Biblioteca (clique p/ aplicar no chão):</div>
       <div id="tx-gallery" style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:6px;max-height:240px;overflow:auto;"></div>`;
     document.body.appendChild(el);
@@ -122,6 +124,9 @@ export class TextureMachineUI {
     this._prompt = el.querySelector('#tx-prompt');
     this._status = el.querySelector('#tx-status');
     this._gallery = el.querySelector('#tx-gallery');
+    this._bump = el.querySelector('#tx-bump');
+    const bumpV = el.querySelector('#tx-bump-v');
+    this._bump.oninput = () => { bumpV.textContent = this._bump.value; };
     el.querySelector('#tx-gen').onclick = () => this._onGenerate();
   }
 
@@ -167,7 +172,8 @@ export class TextureMachineUI {
   _applyToTerrain(url) {
     if (!this.terrain) return;
     try {
-      this.terrain.setGroundTexture(url);
+      const bump = (this._bump ? +this._bump.value : 100) / 100;
+      this.terrain.setGroundTexture(url, { bump });
       // persiste no mundo (todos veem) — import dinâmico do store do terreno
       import('./TerrainSystem.js').then(({ TerrainStore }) => TerrainStore.saveTextureUrl(url)).catch(() => {});
       this._status.textContent = '✅ aplicada no chão (salva pra todos)';
