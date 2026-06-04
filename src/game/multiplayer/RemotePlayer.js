@@ -358,8 +358,30 @@ export class RemotePlayer {
     this._lastStepPos = { x: state.x || 0, z: state.z || 0 };
     if (!isMoving) return;
     const now = performance.now();
-    const cooldown = running ? 280 : 420;
+    // Cooldown POR-PLAYER maior (evita ritmo de metralhadora por player).
+    const cooldown = running ? 360 : 520;
     if (this._lastStepT && now - this._lastStepT < cooldown) return;
+
+    // ── ANTI-SPAM GLOBAL ────────────────────────────────────────────────
+    //  Com vários players andando, cada um tocava passo no MESMO som espacial
+    //  compartilhado (polifônico) → "400 pessoas andando". Limita:
+    //  1) DISTÂNCIA: só toca passo de quem está PERTO do player local (>22m = mudo).
+    //  2) BUDGET GLOBAL: no máximo N passos/janela entre TODOS os remotos.
+    const RP = RemotePlayer;
+    // 1) distância ao player local — longe não soa
+    try {
+      const me = window._player?.mesh?.position;
+      if (me) {
+        const ddx = (state.x || 0) - me.x, ddz = (state.z || 0) - me.z;
+        if (ddx * ddx + ddz * ddz > 22 * 22) { this._lastStepT = now; return; }
+      }
+    } catch (_) {}
+    // 2) budget global: janela de 90ms, no máx 2 passos no total entre remotos
+    RP._stepWin = RP._stepWin || { t: 0, n: 0 };
+    if (now - RP._stepWin.t > 90) { RP._stepWin.t = now; RP._stepWin.n = 0; }
+    if (RP._stepWin.n >= 2) { this._lastStepT = now; return; }
+    RP._stepWin.n++;
+
     this._lastStepT = now;
     try {
       const sm = window._soundManager;
@@ -368,7 +390,7 @@ export class RemotePlayer {
         if (!snd) return;
         try {
           if (snd.spatial?.position?.set) snd.spatial.position.set(state.x, state.y, state.z);
-          snd.volume = 0.45;
+          snd.volume = 0.32;
           snd.play();
         } catch (_) {}
       }).catch(() => {});

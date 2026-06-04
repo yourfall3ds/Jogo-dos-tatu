@@ -306,17 +306,23 @@
       transition: background .15s, border-color .15s;
       pointer-events: all !important;
     }
-    /* So aparece quando a partida esta ATIVA (gameActive=true) */
-    body.game-active #focus-btn { display: block; cursor: default !important; }
-    /* Aparece tambem quando a PARTIDA esta PAUSADA (jogo ja iniciado, overlay aberto) */
+    /* BOTÃO DO CANTO REMOVIDO da jogabilidade — ESC é o único jeito de pausar
+       (o menu de pausa tem "Voltar ao Jogo"). Antes havia DOIS botões de pausar
+       (este canto + o do menu) brigando pelo controle do mouse/cursor.
+       Só aparece quando o cursor está LIVRE mas a partida NÃO está pausada
+       (ex.: perdeu o lock por alt-tab) — aí serve de "clique pra voltar ao jogo".
+       Durante o jogo ativo (game-active) e durante o pause: ESCONDIDO. */
+    body.game-active #focus-btn { display: none !important; }
     body.in-game:not(.game-active) #focus-btn {
       display: block;
-      background: rgba(255, 200, 0, .85);
-      border-color: #ffcc00;
-      color: #111;
-      font-size: 14px;
-      padding: 8px 20px;
+      background: rgba(46,255,182,.9);
+      border-color: #2effb6;
+      color: #04140d;
+      font-size: 13px;
+      padding: 7px 16px;
     }
+    /* Quando o overlay de pausa está aberto, o botão do canto some (o menu manda) */
+    body:has(#pause-overlay.visible) #focus-btn { display: none !important; }
     #focus-btn:hover { filter: brightness(1.15); }
 
     /* ═══════════════════════════════════════════════════════════
@@ -886,7 +892,7 @@
   </div>
 
   <!-- ── Botão Focar/Pausar (canto superior direito) ── -->
-  <button id="focus-btn" onclick="window.toggleFocus()">⏸ Pausar</button>
+  <button id="focus-btn" onclick="window.toggleFocus()">▶ Voltar ao Jogo</button>
 
   <!-- ── Overlay de pausa ── -->
   <div id="pause-overlay">

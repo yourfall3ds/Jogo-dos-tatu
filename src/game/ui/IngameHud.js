@@ -174,7 +174,10 @@ export class Scoreboard {
     const meta = room?.metadata || {};
     roomLabel.textContent = `${meta.name || 'Arena'} · ${meta.map || ''}`;
 
-    const myId = this.auth.getUserId();
+    // Usa cs.playerId (a CHAVE real do server), NÃO auth.getUserId() — eles
+    // podem divergir (anon/race no boot) e a Scoreboard mostrava "não está na
+    // sala" mesmo conectado. cs.playerId é o que o server conhece.
+    const myId = this.cs.playerId || this.auth.getUserId();
     const me = this.cs.state.players.get(myId);
     const myParty = me?.party_id || null;
     const friends = window._friendIds || new Set();

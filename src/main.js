@@ -193,10 +193,10 @@ function setFocusUI(active) {
   const btn = $('focus-btn');
   const ov  = $('pause-overlay');
   if (active) {
-    btn.textContent = '⏸ Pausar';
+    btn.textContent = '▶ Voltar ao Jogo';
     ov.classList.remove('visible');
   } else {
-    btn.textContent = '▶ Focar';
+    btn.textContent = '▶ Voltar ao Jogo';
     ov.classList.add('visible');
   }
 }

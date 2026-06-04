@@ -202,6 +202,7 @@ export class ColyseusClient {
     if (!mode) throw new Error('[CreateRoom] mode obrigatorio');
     const options = {
       token, nickname, avatar_url,
+      player_id: this.stableId(),   // chave estável p/ o server (ver stableId())
       name: name || `Sala de ${nickname}`,
       map,
       maxPlayers: max_players,
@@ -220,7 +221,7 @@ export class ColyseusClient {
     if (!this.client) throw new Error('client not initialized');
     try {
       this.room = await this._withRetry(
-        () => this.client.joinById(roomId, { token, nickname, avatar_url, password }),
+        () => this.client.joinById(roomId, { token, nickname, avatar_url, password, player_id: this.stableId() }),
         'joinById',
       );
     } catch (e) {
@@ -230,7 +231,7 @@ export class ColyseusClient {
       if (/not found|seat reservation|no rooms/i.test(msg) && !password && nickname && map) {
         console.warn('[Colyseus] joinById falhou (sala morta?), caindo p/ joinOrCreate:', msg);
         this.room = await this._withRetry(
-          () => this.client.joinOrCreate('arena', { token, nickname, avatar_url, map, mode: mode || 'DEATHMATCH', name: 'QuickPlay', maxPlayers: 8 }),
+          () => this.client.joinOrCreate('arena', { token, nickname, avatar_url, player_id: this.stableId(), map, mode: mode || 'DEATHMATCH', name: 'QuickPlay', maxPlayers: 8 }),
           'joinById→joinOrCreate',
         );
       } else {
@@ -247,7 +248,7 @@ export class ColyseusClient {
     if (!map) throw new Error('[QuickPlay] map obrigatorio');
     this.room = await this._withRetry(
       () => this.client.joinOrCreate('arena', {
-        token, nickname, avatar_url, map,
+        token, nickname, avatar_url, player_id: this.stableId(), map,
         name: 'QuickPlay', maxPlayers: 8,
       }),
       'quickPlay',
@@ -259,6 +260,10 @@ export class ColyseusClient {
   _bindRoom() {
     if (!this.room) return;
     this.sessionId = this.room.sessionId;
+    // CRÍTICO: o playerId local TEM que ser a mesma chave que mandamos no join
+    // (player_id) — é por ela que o server guarda nosso PlayerState. Sem isto,
+    // players.get(playerId) = null e o jogo achava que não estávamos na sala.
+    this.playerId = this.stableId();
     // ⚠️ MpGuard ATIVO — bloqueia spawns locais a partir de AGORA.
     MpGuard.enterRoom(this.room.roomId);
     // Aguarda primeiro state sync antes de attachar listeners de schema (.onAdd, .listen)
@@ -615,7 +620,31 @@ export class ColyseusClient {
   isStarted() { return !!this.room?.state?.started; }
   get connected() { return !!this.room; }
 
-  setPlayerId(id) { this.playerId = id; }
+  setPlayerId(id) { if (id) this.playerId = id; }
+
+  /**
+   * ID ESTÁVEL do cliente — a CHAVE pela qual o servidor guarda este player
+   * no state (auth.sub). O servidor usa `options.player_id || sessionId`, então
+   * SEMPRE mandamos esse id no join. Logado = userId do Supabase. Anônimo = UUID
+   * persistente no localStorage (mesmo id entre reloads → reconexão funciona).
+   * Sem isso, o server caía pro sessionId e o cliente procurava pelo userId →
+   * `players.get(meuId)` = null → TAB dizia "não está na sala" mesmo conectado.
+   */
+  stableId() {
+    let uid = null;
+    try { uid = window._auth?.getUserId?.() || null; } catch (_) {}
+    if (uid) return uid;
+    try {
+      let anon = localStorage.getItem('transfps_anon_id');
+      if (!anon) {
+        anon = 'anon-' + (crypto?.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36));
+        localStorage.setItem('transfps_anon_id', anon);
+      }
+      return anon;
+    } catch (_) {
+      return 'anon-' + Math.random().toString(36).slice(2);
+    }
+  }
 
   on(event, cb) {
     // RESILIENTE: um evento faltando NUNCA pode matar o boot (era throw → tela
