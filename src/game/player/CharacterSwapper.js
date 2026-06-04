@@ -17,6 +17,7 @@ import { MOVESETS } from '../animation/animationNames.js';
 import { AnimationLibrary } from '../animation/AnimationLibrary.js';
 import { AnimationController } from '../animation/AnimationController.js';
 import { LayeredAnimator } from '../animation/LayeredAnimator.js';
+import { getAvatarProfile, pickBakedAnim } from '../animation/avatarAnimProfiles.js';
 
 export class CharacterSwapper {
   constructor(player, scene, shadowGen) {
@@ -74,6 +75,35 @@ export class CharacterSwapper {
       ));
       const matchRate = allAnims.length ? animsOk / allAnims.length : 0;
 
+      // ── FALLBACK por anims PRÓPRIAS do avatar ───────────────────────
+      //  Se o rig externo (Meshy) não casou, mas o GLB tem suas próprias
+      //  animationGroups (orc, mago, cleric...), registramos elas na lib com
+      //  os NOMES-PADRÃO do jogo via perfil. Assim 'idle'/'walk'/'punch_01'
+      //  resolvem pras anims internas e o avatar ANIMA em vez de T-pose.
+      let bakedMapped = 0;
+      if (animsOk === 0 && bakedAg.length) {
+        const profile = getAvatarProfile(url);
+        if (profile) {
+          for (const [action, hints] of Object.entries(profile)) {
+            const ag = pickBakedAnim(bakedAg, hints);
+            if (ag && !newLib.animations.has(action)) {
+              try { ag.stop(); } catch (_) {}
+              newLib.animations.set(action, ag);
+              bakedMapped++;
+            }
+          }
+          // Garante um 'idle' mesmo sem perfil de idle: usa a 1ª baked como pose neutra.
+          if (!newLib.animations.has('idle') && bakedAg[0]) {
+            newLib.animations.set('idle', bakedAg[0]);
+            bakedMapped++;
+          }
+        } else if (bakedAg[0]) {
+          // Sem perfil conhecido: pelo menos toca a 1ª anim como idle (não fica em T-pose).
+          newLib.animations.set('idle', bakedAg[0]);
+          bakedMapped++;
+        }
+      }
+
       // Pós-processamento (mesmo do boot) — só se as anims casaram
       if (animsOk > 0) {
         newLib.configureAll?.({
@@ -92,7 +122,9 @@ export class CharacterSwapper {
       // o CombatSystem referencia o animController — atualiza
       if (p.combatSystem) p.combatSystem.animController = p.animCtrl;
 
-      // Troca o mesh visual (reusa setMouseCharacter — limpa o antigo, reanexa armas)
+      // Troca o mesh visual (reusa setMouseCharacter — limpa o antigo, reanexa armas).
+      //  Passa bakedAg quando estamos USANDO elas (rig próprio) pra não serem
+      //  descartadas; se as anims externas casaram, baked não é usada.
       p.setMouseCharacter(meshes, animsOk === 0 ? bakedAg : [], this.shadowGen);
 
       // Descarta a lib antiga
@@ -103,13 +135,19 @@ export class CharacterSwapper {
       p.animCtrl.play('idle', { loop: true });
 
       this._busy = false;
-      const warning = matchRate === 0
+      const warning = (animsOk === 0 && bakedMapped === 0)
         ? 'Rig incompatível: nenhuma animação casou (modelo fica em T-pose). Use um GLB com rig biped Meshy.'
+        : (animsOk === 0 && bakedMapped > 0)
+        ? null   // usando anims próprias do avatar — OK, não é erro
         : matchRate < 0.5
         ? `Rig parcial: só ${animsOk}/${allAnims.length} animações casaram.`
         : null;
-      console.log(`[Swap] "${url}" → ${animsOk}/${allAnims.length} anims (${Math.round(matchRate*100)}%)`);
-      return { ok: true, matchRate, animsOk, animsTotal: allAnims.length, warning };
+      if (animsOk === 0 && bakedMapped > 0) {
+        console.log(`[Swap] "${url}" → rig próprio: ${bakedMapped} anims baked mapeadas (idle/walk/attack do GLB)`);
+      } else {
+        console.log(`[Swap] "${url}" → ${animsOk}/${allAnims.length} anims externas (${Math.round(matchRate*100)}%)`);
+      }
+      return { ok: true, matchRate, animsOk, animsTotal: allAnims.length, bakedMapped, warning };
     } catch (e) {
       this._busy = false;
       return { ok: false, warning: 'Falha ao carregar: ' + e.message };
