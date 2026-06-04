@@ -60,6 +60,8 @@ function _esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '
 //    Roll_Dodge_1     -> esquiva
 //    Parkour_Vault_with_Roll -> roll/morte
 //  NUNCA mapear combate pra Jump_Down_from_Wall (pular da parede como golpe = ridiculo).
+import { urlForClass, scaleForClass } from '../data/CharacterClasses.js';
+
 const REMOTE_ANIM_MAP = {
   // ── estados do server (PlayerStateMachine.state) — locomocao ──
   idle      : 'Idle_5',                        // parado de verdade
@@ -326,6 +328,11 @@ export class RemotePlayer {
       case 'held_item':
         // Player remoto trocou de arma / item na mão → re-anexa o mesh TPS.
         try { this._attachWeaponFromState(); } catch (e) { console.warn('[RemotePlayer] weapon swap fail', e?.message); }
+        break;
+      case 'class_id':
+      case 'equip_skin':
+        // Player remoto trocou de classe/skin → troca o GLB AO VIVO (sem reload).
+        try { this._swapAvatar(); } catch (e) { console.warn('[RemotePlayer] skin swap fail', e?.message); }
         break;
     }
     // FRENTE 7 (FIX): troca animacao quando anim_state muda.
@@ -1071,8 +1078,11 @@ export class RemotePlayer {
   }
 
   async _tryLoadAvatar() {
-    // FRENTE 3 EDIT 3c: usar mesmo path do Player.js local (assets/characters/player.glb)
-    const url = "assets/characters/player.glb";
+    // SKIN AO VIVO: o model vem do class_id que o jogador escolheu (sincronizado
+    // pelo servidor via PlayerState.class_id). Default = player.glb (classe 0).
+    // urlForClass cai pro padrão se o id for desconhecido — nunca quebra.
+    const url = urlForClass(this.state?.class_id);
+    this._currentAvatarUrl = url;   // pra _swapAvatar evitar reload redundante
     const shortId = (this.playerId || "").slice(0, 8);
     this._glbLoadAttempts = (this._glbLoadAttempts || 0) + 1;
     console.log("[RemotePlayer]", shortId, "loading avatar from", url, "(attempt", this._glbLoadAttempts, "/", this._glbMaxAttempts, ")");
@@ -1114,8 +1124,9 @@ export class RemotePlayer {
       // o foot-offset que o Player LOCAL aplica (PlayerAnimator.js:293 _rootOffsetY=-(h/2)).
       // Sem isso o avatar remoto flutua ~0.9 acima do chao.
       root.position.set(0, -(1.8 / 2), 0);
-      // Escala correta do player.glb Meshy (igual PlayerAnimator.js linha 291).
-      root.scaling.setAll(1.164);
+      // Escala calibrada por classe (player.glb Meshy = 1.164; outras skins
+      // podem sobrescrever em CharacterClasses.js).
+      root.scaling.setAll(scaleForClass(this.state?.class_id));
       // FIX PvP fidelidade: a capsule continua HABILITADA e PICAVEL — ela e o
       // hitbox-proxy limpo do player remoto (segue x/y/z incl. pulo via this.root).
       // So fica INVISIVEL (visibility=0). NAO usar setEnabled(false): isso a tiraria
@@ -1206,6 +1217,37 @@ export class RemotePlayer {
         } catch (_) {}
       }
     }
+  }
+
+  /**
+   * Troca o avatar AO VIVO quando o jogador remoto muda de classe/skin
+   * (estilo VRChat: ninguém recarrega nada). Descarta o GLB atual + a arma
+   * anexada, zera os caches do socket (eram do esqueleto antigo) e recarrega
+   * pelo class_id novo. _tryLoadAvatar resolve o url, reanexa a arma e religa
+   * a animação corrente.
+   */
+  _swapAvatar() {
+    if (this._disposed || this._disposing) return;
+    const url = urlForClass(this.state?.class_id);
+    if (url === this._currentAvatarUrl && this._avatarRoot) return; // já é esse model
+
+    // Solta a arma e zera o socket cacheado (pertencia ao rig antigo).
+    try { this._detachWeapon(); } catch (_) {}
+    this._weaponId = null;
+    this._weaponSocket = null;
+
+    // Para e descarta as anims + o GLB atual (recursivo: pega o socket/arma filhos).
+    try { this._avatarAnims?.forEach(a => { try { a.stop(); } catch (_) {} try { a.dispose(); } catch (_) {} }); } catch (_) {}
+    try { this._avatarRoot?.dispose(false, true); } catch (_) {}
+    this._avatarRoot = null;
+    this._avatarAnims = null;
+
+    // Volta a capsule a aparecer levemente enquanto o novo GLB carrega.
+    try { this.body.visibility = 0.25; } catch (_) {}
+
+    // Recarrega pelo class_id novo (reseta o contador de tentativas).
+    this._glbLoadAttempts = 0;
+    this._tryLoadAvatar().catch(e => console.warn('[RemotePlayer] swap skin fail', e?.message));
   }
 
   // ─────────────────────────────────────────────────────────────────

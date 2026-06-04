@@ -284,6 +284,15 @@ export class ColyseusClient {
     });
 
     this._notify('open');
+
+    // SKIN PERSISTENTE: reaplica a classe/skin escolhida assim que entra
+    // (e em toda reconexão). O servidor já trata 'br_class_select' e
+    // re-broadcasta class_id pra todos — então os outros já te veem com a
+    // skin certa desde o spawn, sem ninguém recarregar nada.
+    try {
+      const cid = parseInt(localStorage.getItem('transfps_class_id') || '0');
+      if (Number.isFinite(cid)) this.room.send('br_class_select', { class_id: cid });
+    } catch (_) {}
   }
 
   _attachStateListeners() {

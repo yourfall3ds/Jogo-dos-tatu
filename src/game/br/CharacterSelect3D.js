@@ -12,14 +12,14 @@
 // ─────────────────────────────────────────────────────────────────
 
 import { CloudSave } from '../data/CloudSave.js';
+// FONTE ÚNICA das skins — a MESMA que o RemotePlayer usa pra renderizar o que
+// os outros escolheram. Garante que o model que você vê de si = o que os outros
+// veem de você. Adicionar skin = 1 linha em CharacterClasses.js (sem reload).
+import { CHARACTER_CLASSES } from '../data/CharacterClasses.js';
 
 function _esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
-const CLASSES = [
-  { id: 0, name: 'Rato Padrão', icon: '🐭', url: 'assets/itens 3d/Animations-meshy/Meshy_AI_Faça_um_rato_mistura_biped_Character_output.glb', desc: 'Equilibrado · HP médio · velocidade média' },
-  { id: 1, name: 'AzureFin', icon: '🐉', url: 'assets/characters/azurefin.glb', desc: 'Tank · +HP, -velocidade' },
-  // mais classes podem ser adicionadas
-];
+const CLASSES = CHARACTER_CLASSES;
 
 export class CharacterSelect3D {
   constructor({ scene, cs, swapper, auth }) {

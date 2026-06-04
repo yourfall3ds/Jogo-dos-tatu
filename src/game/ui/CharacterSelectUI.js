@@ -10,14 +10,17 @@
 // ─────────────────────────────────────────────────────────────────
 import { EnemyCatalog } from '../data/EnemyCatalog.js';
 import { AssetRegistry } from '../data/AssetRegistry.js';
-
-const PLAYER_BIPED = 'assets/itens 3d/Animations-meshy/Meshy_AI_Faça_um_rato_mistura_biped_Character_output.glb';
+// Skins OFICIAIS = as do registry compartilhado (mesmas que os outros players
+// renderizam). Trocar por uma delas PROPAGA pra todo mundo via class_id. Os
+// Digimons abaixo são experimentais e ficam SÓ no seu cliente (não têm class_id
+// pra sincronizar — rig do rip, costumam ficar em T-pose).
+import { CHARACTER_CLASSES } from '../data/CharacterClasses.js';
 
 // Modelos jogáveis COMPATÍVEIS (rig biped Meshy → todas as anims funcionam).
-const COMPAT_MODELS = [
-  { name: '🐭 Rato (padrão)', url: PLAYER_BIPED },
-  { name: '🐉 AzureFin',      url: 'assets/characters/azurefin.glb' },
-];
+// classId presente => a troca é replicada pros outros (estilo VRChat).
+const COMPAT_MODELS = CHARACTER_CLASSES.map(c => ({
+  name: `${c.icon} ${c.name}`, url: c.url, classId: c.id,
+}));
 
 export class CharacterSelectUI {
   constructor(swapper) {
@@ -25,6 +28,15 @@ export class CharacterSelectUI {
     this._visible = false;
     this._wasP = false;
     this._build();
+  }
+
+  /** Replica a skin escolhida pros outros players (estilo VRChat): persiste o
+   *  class_id e avisa o servidor, que re-broadcasta pra todo mundo trocar o
+   *  avatar AO VIVO. Só vale pros modelos oficiais (com classId). */
+  _broadcastSkin(classId) {
+    if (!Number.isFinite(classId)) return;
+    try { localStorage.setItem('transfps_class_id', String(classId)); } catch (_) {}
+    try { window._cs?.sendMessage?.('br_class_select', { class_id: classId }); } catch (_) {}
   }
 
   _models() {
@@ -79,10 +91,14 @@ export class CharacterSelectUI {
         this._status.textContent = 'Trocando…';
         const r = await this.swapper.swap(m.url);
         if (!r.ok) { this._status.textContent = '❌ ' + (r.warning || 'falhou'); return; }
+        // Modelo oficial (registry) → replica pros outros via class_id.
+        const synced = Number.isFinite(m.classId);
+        if (synced) this._broadcastSkin(m.classId);
         if (r.warning) {
           this._status.innerHTML = `⚠ ${m.name}: ${r.animsOk}/${r.animsTotal} animações. ${r.warning}`;
         } else {
-          this._status.innerHTML = `✅ ${m.name} equipado! (${r.animsOk}/${r.animsTotal} anims)`;
+          const tag = synced ? '(visível pra todos)' : '(só no seu jogo · experimental)';
+          this._status.innerHTML = `✅ ${m.name} equipado! ${tag}`;
           setTimeout(() => this.hide(), 700);
         }
       };
