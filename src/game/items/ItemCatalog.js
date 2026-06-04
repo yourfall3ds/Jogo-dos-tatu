@@ -59,16 +59,40 @@ export const DROP_ITEMS = {
 };
 
 // ── Armas como itens equipáveis do inventário ───────────────────────
+//  weaponIndex = índice em WeaponSystem.weapons (ordem dos slots).
+//  defaultHotbar = vaga sugerida na hotbar (tecla 1-9, 0-based).
+//  Ordem default do dono: 1=rifle, 2=metralhadora, 3=espada, 4=chibata,
+//  5=zweihander, 6=pistola.
 export const WEAPON_ITEMS = {
+  weapon_rifle: {
+    name: 'Rifle Pesado', type: 'weapon', weaponIndex: 0, defaultHotbar: 0,
+    icon: '🎯', rarity: 'rare', stack: 1,
+    desc: '1 tiro, cadenciado, DANO ALTO por tiro. Equipar para empunhar.',
+  },
+  weapon_machinegun: {
+    name: 'Metralhadora', type: 'weapon', weaponIndex: 1, defaultHotbar: 1,
+    icon: '🔫', rarity: 'rare', stack: 1,
+    desc: 'Automática, cadência alta, dano por tiro baixo. Segure o botão.',
+  },
+  weapon_sword_paladin: {
+    name: 'Longsword Paladino', type: 'weapon', weaponIndex: 2, defaultHotbar: 2,
+    icon: '⚔️', rarity: 'rare', stack: 1,
+    desc: 'Espada longa. Equipar para empunhar.',
+  },
+  weapon_chibata: {
+    name: 'Chibata 🐭', type: 'weapon', weaponIndex: 3, defaultHotbar: 3,
+    icon: '🪢', rarity: 'epic', stack: 1,
+    desc: 'Chicote. CHIBATADA! Equipar para empunhar.',
+  },
+  weapon_sword_zweihander: {
+    name: 'Zweihander', type: 'weapon', weaponIndex: 4, defaultHotbar: 4,
+    icon: '🗡️', rarity: 'epic', stack: 1,
+    desc: 'Montante pesado de dano altíssimo. Equipar para empunhar.',
+  },
   weapon_pistol: {
-    name: 'Pistola Bucaneira', type: 'weapon', weaponIndex: 0,
+    name: 'Pistola Bucaneira', type: 'weapon', weaponIndex: 5, defaultHotbar: 5,
     icon: '🔫', rarity: 'uncommon', stack: 1,
     desc: 'Pistola semi-automática. Equipar para empunhar.',
-  },
-  weapon_rifle: {
-    name: 'Rifle Pesado', type: 'weapon', weaponIndex: 1,
-    icon: '🪓', rarity: 'rare', stack: 1,
-    desc: 'Rifle de dano alto. Equipar para empunhar.',
   },
 };
 

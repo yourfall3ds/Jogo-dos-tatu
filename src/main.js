@@ -2195,6 +2195,13 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
       }, label: 'Pistola…' },
     { key: 'rifle',  done: ms => {
         player.weapon.setGLBWeapon(ms, 'rifle');
+        // Metralhadora compartilha o modelo do rifle: clona o root pra um
+        // segundo id ('machinegun') já que setGLBWeapon reparenteia o mesh.
+        try {
+          const root = ms?.[0];
+          const mgRoot = root?.clone?.('mg_root', null, false);
+          if (mgRoot) player.weapon.setGLBWeapon([mgRoot, ...mgRoot.getChildMeshes()], 'machinegun');
+        } catch (e) { console.warn('[main] clone metralhadora falhou:', e?.message); }
         player.attachCurrentWeaponToAnimator();
       }, label: 'Rifle…' },
     // ── Espadas (Forgotten Insanity PBR) ──

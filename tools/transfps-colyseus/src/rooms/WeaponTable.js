@@ -36,8 +36,12 @@ export const WEAPONS = {
   chibata:          { dmg: 35, range: 3.5, cdMs: 350, kind: 'whip'  },
 
   // ── Armas de fogo ──
+  //  rifle      = 1 TIRO, cadenciado (cdMs alto), DANO ALTO por tiro.
+  //  machinegun = AUTO, cadência alta (cdMs baixo), dano/tiro baixo.
+  //  Regra: dano/tiro do rifle >> dano/tiro da metralhadora.
   pistol:           { dmg: 40, range: 60,  cdMs: 280, kind: 'gun'   },
-  rifle:            { dmg: 28, range: 80,  cdMs: 110, kind: 'gun'   },
+  rifle:            { dmg: 60, range: 90,  cdMs: 650, kind: 'gun'   },
+  machinegun:       { dmg: 18, range: 70,  cdMs: 90,  kind: 'gun'   },
 };
 
 const FALLBACK = { dmg: 12, range: 2.5, cdMs: 400, kind: 'melee' };

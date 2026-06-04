@@ -166,6 +166,15 @@ export class RpgHUD {
         .rpg-cell.empty{cursor:default;background:rgba(10,16,30,.35);border-style:dashed;border-color:#1f2f45}
         .rpg-cell.empty:hover{transform:none;border-color:#1f2f45}
         .rpg-cell.image{border-color:#7a4aff}
+        /* ── Drag & Drop (Terraria-style) ── */
+        .rpg-cell[draggable="true"]{cursor:grab}
+        .rpg-cell.dragging{opacity:.4;cursor:grabbing;transform:scale(.92)}
+        .rpg-cell.drop-target{
+          border-color:#5cf!important;border-style:solid!important;
+          box-shadow:0 0 0 2px #5cf inset,0 0 10px rgba(92,207,255,.55);
+          background:rgba(40,90,140,.35)!important;transform:none;
+        }
+        .rpg-cell.empty.drop-target{transform:none}
         .rpg-cell .qty{position:absolute;bottom:1px;right:3px;font-size:10px;color:#fff;
           font-weight:bold;text-shadow:0 0 3px #000;background:rgba(0,0,0,.5);
           padding:0 3px;border-radius:4px}
@@ -302,6 +311,63 @@ export class RpgHUD {
     this._renderBagGrid();
   }
 
+  // ── Drag & Drop (estilo Terraria/Minecraft) ──────────────────────
+  //  Torna uma célula arrastável e "dropável". `kind` = 'bag' | 'hotbar',
+  //  `index` = posição na lista. Guarda origem em this._dragSrc.
+  //  hasItem=false → célula vazia: só aceita drop (não inicia arrasto).
+  _makeDraggable(cell, kind, index, hasItem) {
+    if (hasItem) {
+      cell.setAttribute('draggable', 'true');
+      cell.addEventListener('dragstart', (e) => {
+        this._dragSrc = { kind, index };
+        cell.classList.add('dragging');
+        try {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', `${kind}:${index}`);
+        } catch (_) {}
+      });
+      cell.addEventListener('dragend', () => {
+        cell.classList.remove('dragging');
+        this._dragSrc = null;
+        this._panel?.querySelectorAll('.rpg-cell.drop-target')
+          .forEach(c => c.classList.remove('drop-target'));
+      });
+    }
+    // toda célula (com ou sem item) aceita drop
+    cell.addEventListener('dragover', (e) => {
+      if (!this._dragSrc) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
+      cell.classList.add('drop-target');
+    });
+    cell.addEventListener('dragleave', () => cell.classList.remove('drop-target'));
+    cell.addEventListener('drop', (e) => {
+      e.preventDefault();
+      cell.classList.remove('drop-target');
+      const src = this._dragSrc;
+      this._dragSrc = null;
+      if (!src) return;
+      if (src.kind === kind && src.index === index) return;   // mesmo slot
+      this._handleDrop(src, { kind, index });
+    });
+  }
+
+  // Roteia o movimento conforme origem/destino e re-renderiza/persiste.
+  _handleDrop(src, dst) {
+    const inv = this.inventory;
+    let moved = false;
+    if (src.kind === 'bag' && dst.kind === 'bag') {
+      moved = inv.moveBag(src.index, dst.index);
+    } else if (src.kind === 'bag' && dst.kind === 'hotbar') {
+      moved = inv.bagToHotbar(src.index, dst.index);
+    } else if (src.kind === 'hotbar' && dst.kind === 'hotbar') {
+      moved = inv.swapHotbar(src.index, dst.index);
+    } else if (src.kind === 'hotbar' && dst.kind === 'bag') {
+      moved = inv.hotbarToBag(src.index);
+    }
+    if (moved) { this._renderPanel(); this._save(); }
+  }
+
   // ── Fileira 1-9 dentro do painel (estilo Terraria) ────────────────
   _renderInvHotbar() {
     const row = this._panel.querySelector('#rpg-inv-hotbar');
@@ -333,6 +399,8 @@ export class RpgHUD {
           this._renderPanel(); this._save();
         }
       };
+      // Drag & drop: arrasta arma da hotbar (swap) / aceita drop da mochila
+      this._makeDraggable(cell, 'hotbar', i, !!id);
       row.appendChild(cell);
     }
   }
@@ -356,7 +424,12 @@ export class RpgHUD {
       const slot = items[i];
       const cell = document.createElement('div');
 
-      if (!slot) { cell.className = 'rpg-cell empty'; bag.appendChild(cell); continue; }
+      // célula vazia → ainda aceita drop (mover item pro fim da mochila)
+      if (!slot) {
+        cell.className = 'rpg-cell empty';
+        this._makeDraggable(cell, 'bag', i, false);
+        bag.appendChild(cell); continue;
+      }
 
       if (slot.kind === 'image') {
         cell.className = 'rpg-cell image';
@@ -365,7 +438,11 @@ export class RpgHUD {
         cell.onclick = () => this._showItemDetail(slot, cell);
       } else {
         const def = ItemCatalog[slot.id];
-        if (!def) { cell.className = 'rpg-cell empty'; bag.appendChild(cell); continue; }
+        if (!def) {
+          cell.className = 'rpg-cell empty';
+          this._makeDraggable(cell, 'bag', i, false);
+          bag.appendChild(cell); continue;
+        }
         cell.className = 'rpg-cell';
         cell.title = def.name;
         const qty = this.inventory.count(slot.id);
@@ -373,6 +450,8 @@ export class RpgHUD {
           (qty > 1 ? `<span class="qty">${qty}</span>` : '');
         cell.onclick = () => this._showItemDetail(slot, cell);
       }
+      // Drag & drop: reordena na mochila (swap) / arrasta pra hotbar (equipar)
+      this._makeDraggable(cell, 'bag', i, true);
       bag.appendChild(cell);
     }
   }

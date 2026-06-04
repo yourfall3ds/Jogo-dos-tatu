@@ -1,26 +1,22 @@
 /**
- * Rifle Pesado - 1 TIRO, CADENCIADO, DANO ALTO.
+ * Metralhadora - arma AUTOMÁTICA (segura o botão → metralha).
  *
- * É o oposto da Metralhadora (auto, dano/tiro baixo). Um único disparo por
- * clique com cadência alta (cdMs alto no server) e dano por tiro elevado.
- * Os números autoritativos vivem no server (WeaponTable.WEAPONS.rifle);
- * damage aqui espelha o server para os números flutuantes do cliente.
- *
- * Usa a mesma convenção de rotação da PistolaBucaneira (Math.PI/2 no Y)
- * para qualquer GLB exportado com o mesmo eixo de orientação.
+ * Dano POR TIRO baixo, cadência altíssima (fireRate baixo). É o oposto do
+ * Rifle (1 tiro, cadenciado, dano alto). Os números autoritativos vivem no
+ * server (WeaponTable.WEAPONS.machinegun); aqui só o viewmodel + dmg-mirror.
  *
  * _origMaxDim e _origCenter são injetados por WeaponSystem.setGLBWeapon.
  */
-export class RiflePesado {
+export class Metralhadora {
   constructor(scene) {
-    this.id    = 'rifle';
-    this.label = 'Rifle Pesado';
-    this.damage   = 60;       // espelha WeaponTable.rifle.dmg (server-auth)
-    this.fireRate  = 0.60;    // 1 tiro cadenciado (cdMs alto no server)
-    this.ammo     = 8;
-    this.maxAmmo  = 8;
-    this.automatic = false;   // semi-auto: 1 tiro por clique
-    this.fireSound = 'gun_rifle';
+    this.id    = 'machinegun';
+    this.label = 'Metralhadora';
+    this.damage   = 18;       // espelha WeaponTable.machinegun.dmg (server-auth)
+    this.fireRate  = 0.09;    // automático rápido
+    this.ammo     = 45;
+    this.maxAmmo  = 45;
+    this.automatic = true;    // SEGURA o botão → metralha (som em loop)
+    this.fireSound = 'mg_loop';
 
     // ── Ajustes Visuais (FPS) ──────────────────────────────────────
     this.viewmodelScale    = 0.7400;
@@ -39,18 +35,16 @@ export class RiflePesado {
     this.tpsRotation = new BABYLON.Vector3(1.5708, 3.1416, 0.0000);
     this.tpsPosition = new BABYLON.Vector3(0, 0, 0);
 
-    // ── Tiro Plasma Azul ──────────────────────────────────────────
-    this.tracerColor    = [0.20, 0.55, 1.00];  // núcleo azul elétrico
+    // ── Tiro Plasma Verde (distingue do Rifle azul) ───────────────
+    this.tracerColor    = [0.35, 1.00, 0.45];
     this.tracerAlpha    = 0.95;
-    this.tracerWidth    = 0.06;                 // 4× mais largo que pistola
+    this.tracerWidth    = 0.045;
 
-    // Cor do flash de boca e do impacto
-    this.muzzleColor    = [0.15, 0.45, 1.00];  // azul frio
-    this.hitColor       = [0.40, 0.75, 1.00];  // azul brilhante no hit
+    this.muzzleColor    = [0.30, 1.00, 0.40];
+    this.hitColor       = [0.55, 1.00, 0.60];
 
-    // Point lights dinâmicas
-    this.lightIntensity = 5.0;    // intensidade da PointLight
-    this.lightRadius    = 14;     // alcance da luz
+    this.lightIntensity = 4.0;
+    this.lightRadius    = 12;
 
     // Bounds originais (injetados por WeaponSystem.setGLBWeapon)
     this._origMaxDim = null;

@@ -686,8 +686,11 @@ export class Player {
           dx = -right.x; dz = -right.z;
         }
         if (!isUp) {
-          this._vx = dx * this.DASH_FORCE;
-          this._vz = dz * this.DASH_FORCE;
+          // ACUMULA embalo: em vez de SET direto (que zerava a velocidade
+          // anterior), faz Lerp pro vetor de dash. Preserva ~20% do embalo
+          // atual na direção do dash → física realista (não reseta o impulso).
+          this._vx = BABYLON.Scalar.Lerp(this._vx, dx * this.DASH_FORCE, 0.8);
+          this._vz = BABYLON.Scalar.Lerp(this._vz, dz * this.DASH_FORCE, 0.8);
           if (this.isGrounded) {
             this.velY = 4;
           } else {
@@ -755,7 +758,7 @@ export class Player {
     if (this.isGrounded) {
       this._sprintMomentumLeft = 0;
     } else {
-      this._sprintMomentumLeft = Math.max(0, this._sprintMomentumLeft - dt * 0.4);
+      this._sprintMomentumLeft = Math.max(0, this._sprintMomentumLeft - dt * 0.15);
     }
     // Takeoff: acabou de sair do chao sprintando → salva embalo cheio.
     if (!this.isGrounded && this._wasGrounded && this._sprinting) {
@@ -829,9 +832,29 @@ export class Player {
         this._vz = BABYLON.Scalar.Lerp(this._vz, moveDir.z * slideSpeed, 0.06);
       }
     } else {
-      const smooth = this.isGrounded ? 0.30 : 0.10;
-      this._vx = BABYLON.Scalar.Lerp(this._vx, moveDir.x * spd, smooth);
-      this._vz = BABYLON.Scalar.Lerp(this._vz, moveDir.z * spd, smooth);
+      // ── Movimento normal com INÉRCIA realista ────────────────────────
+      //  Base: chão mais responsivo, ar com mais inércia (smooth menor).
+      //  TROCA DE DIREÇÃO: se o input aponta contra a velocidade atual
+      //  (dot < 0), o jogador NÃO vira instantâneo — aplica ATRITO gradual
+      //  (smooth reduzido) pra frear o embalo antigo antes de acelerar pro
+      //  novo sentido. Física realista: perde embalo SÓ ao trocar de direção.
+      const targetVx = moveDir.x * spd;
+      const targetVz = moveDir.z * spd;
+      let smooth = this.isGrounded ? 0.28 : 0.08;
+      const curSpeed = Math.hypot(this._vx, this._vz);
+      if (moving && curSpeed > 0.5) {
+        // Alinhamento entre velocidade atual e o input desejado (-1..1).
+        const dot = (this._vx * moveDir.x + this._vz * moveDir.z) / curSpeed;
+        if (dot < 0) {
+          // Input oposto/lateral ao embalo → atrito: reduz o smooth conforme
+          // o quanto está "contra a corrente" (até 50% no chão, ~35% no ar).
+          const oppose = Math.min(1, -dot);          // 0..1
+          const grip = this.isGrounded ? 0.5 : 0.35; // ar = mais inércia
+          smooth *= (1 - oppose * grip);
+        }
+      }
+      this._vx = BABYLON.Scalar.Lerp(this._vx, targetVx, smooth);
+      this._vz = BABYLON.Scalar.Lerp(this._vz, targetVz, smooth);
     }
 
     // ── Camera drop do slide: abaixa suave durante, sobe ao terminar ──
@@ -883,8 +906,10 @@ export class Player {
       } else {
         const wjVel = this.wallJump.tryWallJump();
         if (wjVel) {
-          this._vx  = wjVel.x;
-          this._vz  = wjVel.z;
+          // Wall jump: Lerp (não SET) pra não zerar o embalo. Preserva ~30%
+          // da velocidade horizontal anterior, somando o empurrão da parede.
+          this._vx  = BABYLON.Scalar.Lerp(this._vx, wjVel.x, 0.7);
+          this._vz  = BABYLON.Scalar.Lerp(this._vz, wjVel.z, 0.7);
           this.velY = wjVel.y;
           this.weapon.applyWallJumpTilt(wjVel.x >= 0 ? 14 : -14);
           this.animator?.onWallJump();
@@ -1197,7 +1222,7 @@ export class Player {
             // encarando a câmera, o movimento é strafe — recuar usa walk_back.
             let lowerKey, lowerSpd = 1.0;
             const _wid = this.weapon.getCurrentWeapon?.()?.id;
-            const _backArmed = (_wid === 'rifle' && this.animLib.has('walk_back_heavy')) ? 'walk_back_heavy'
+            const _backArmed = ((_wid === 'rifle' || _wid === 'machinegun') && this.animLib.has('walk_back_heavy')) ? 'walk_back_heavy'
                              : this.animLib.has('walk_back_pistol') ? 'walk_back_pistol'
                              : this.animLib.has('aim_walk_back') ? 'aim_walk_back' : null;
             if (movingBack && speed > 0.8 && _backArmed) {

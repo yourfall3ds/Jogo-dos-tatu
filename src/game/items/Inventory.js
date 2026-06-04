@@ -152,14 +152,32 @@ export class Inventory {
   }
 
   // ── Itens iniciais (armas) ───────────────────────────────────────
+  //  TODAS as armas entram no inventário e ocupam um número da hotbar (1-9).
+  //  A vaga default vem de def.defaultHotbar (reorganizável depois: o jogador
+  //  pode reordenar a hotbar livremente — só não sobrescrevemos vagas usadas).
   ensureStarterItems() {
-    for (const wid of ['weapon_pistol', 'weapon_rifle']) {
-      if (!getItemDef(wid)) continue;
+    const STARTER = [
+      'weapon_rifle',          // 1
+      'weapon_machinegun',     // 2
+      'weapon_sword_paladin',  // 3
+      'weapon_chibata',        // 4
+      'weapon_sword_zweihander', // 5
+      'weapon_pistol',         // 6
+    ];
+    for (const wid of STARTER) {
+      const def = getItemDef(wid);
+      if (!def) continue;
       if (!this.bag.some(s => s.id === wid)) this.bag.push({ id: wid, qty: 1 });
-      // arma também ocupa um slot da hotbar → trocável pelo número
+      // arma ocupa um slot da hotbar → trocável pelo número (1-9)
       if (!this.hotbar.includes(wid)) {
-        const free = this.hotbar.indexOf(null);
-        if (free >= 0) this.hotbar[free] = wid;
+        // tenta a vaga default; se ocupada, cai na primeira livre
+        const pref = def.defaultHotbar;
+        if (Number.isInteger(pref) && pref >= 0 && pref < this.hotbar.length && this.hotbar[pref] == null) {
+          this.hotbar[pref] = wid;
+        } else {
+          const free = this.hotbar.indexOf(null);
+          if (free >= 0) this.hotbar[free] = wid;
+        }
       }
     }
     this._notify();
@@ -226,4 +244,56 @@ export class Inventory {
 
   onChange(cb) { this._listeners.push(cb); }
   _notify() { for (const cb of this._listeners) try { cb(this); } catch (_) {} }
+
+  // ── Drag & Drop (estilo Terraria) ────────────────────────────────
+  //  Move/troca itens entre mochila (bag, por index) e hotbar (por index).
+  //  bag[]: slots {id,...}. hotbar[]: ids (string) ou null.
+
+  /** Reordena a mochila: troca os slots de origem e destino (por index). */
+  moveBag(from, to) {
+    const bag = this.bag;
+    if (from === to || from < 0 || from >= bag.length) return false;
+    const item = bag[from];
+    if (!item) return false;
+    if (to >= bag.length) {
+      // arrastado pra uma célula vazia além do fim → vai pro final
+      bag.splice(from, 1);
+      bag.push(item);
+    } else {
+      // swap dentro da mochila
+      const tmp = bag[to];
+      bag[to] = item;
+      bag[from] = tmp;
+    }
+    this._notify();
+    return true;
+  }
+
+  /** Põe o item da mochila (index) num slot da hotbar (index). */
+  bagToHotbar(bagIdx, hotIdx) {
+    const slot = this.bag[bagIdx];
+    if (!slot || hotIdx < 0 || hotIdx >= this.hotbar.length) return false;
+    this.hotbar[hotIdx] = slot.id;          // hotbar referencia por id
+    this._notify();
+    return true;
+  }
+
+  /** Troca dois slots da hotbar (por index). */
+  swapHotbar(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= this.hotbar.length || to >= this.hotbar.length) return false;
+    const tmp = this.hotbar[from];
+    this.hotbar[from] = this.hotbar[to];
+    this.hotbar[to] = tmp;
+    this._notify();
+    return true;
+  }
+
+  /** Tira um item da hotbar (index) → volta pra mochila (já está na bag). */
+  hotbarToBag(hotIdx) {
+    if (hotIdx < 0 || hotIdx >= this.hotbar.length) return false;
+    if (this.hotbar[hotIdx] == null) return false;
+    this.hotbar[hotIdx] = null;
+    this._notify();
+    return true;
+  }
 }
