@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────
 import { getSupabase } from '../auth/SupabaseClient.js';
 import { AssetHosting } from './AssetHosting.js';
+import { WasabiHosting } from './WasabiHosting.js';
 
 async function _uid() {
   try {
@@ -60,22 +61,30 @@ export const GeneratedAssets = {
   async add(asset) {
     const uid = await _uid();
     if (!uid || !asset?.id) return null;
-    // O GLB precisa ser acessível por OUTROS (Storage público). Se vier como
-    // blob:/data:/local, SOBE pro Storage agora e usa a URL pública — assim o
-    // asset gerado SEMPRE fica global (não some na tela dos outros).
+    // O GLB precisa ser acessível por OUTROS. Hospeda no WASABI (server-side,
+    // prefixo público); se falhar, cai pro Supabase Storage. Idempotente: se já
+    // for URL Wasabi/Storage, mantém. Assim o asset gerado SEMPRE fica global.
     let glbUrl = asset.glbUrl || '';
-    if (glbUrl && !AssetHosting.isPublicUrl(glbUrl)) {
-      const pub = await AssetHosting.uploadFromUrl(glbUrl, `${asset.id}.glb`);
-      if (pub) glbUrl = pub;
+    if (glbUrl && !WasabiHosting.isWasabiUrl(glbUrl) && !AssetHosting.isPublicUrl(glbUrl)) {
+      const w = await WasabiHosting.saveFromUrl(glbUrl, `${asset.id}.glb`, 'model/gltf-binary');
+      if (w) glbUrl = w;
+      else {
+        const fb = await AssetHosting.uploadFromUrl(glbUrl, `${asset.id}.glb`);
+        if (fb) glbUrl = fb;
+      }
     }
     // Sem URL compartilhável (upload falhou / sem login) → não adianta registrar.
     if (!glbUrl || /^(blob:|data:)/.test(glbUrl)) {
       console.warn('[GeneratedAssets] add: GLB sem URL pública (upload falhou?) — não registrado global:', asset.id);
       return null;
     }
-    // Imagem/thumbnail: só persiste se for URL pública (blob/data são locais e
-    // o uploader é específico de GLB — não força content-type errado num PNG).
+    // Imagem/thumbnail: hospeda no Wasabi também (se vier do Meshy). blob/data
+    // local não dá pra subir server-side → descarta.
     let imageUrl = asset.imageUrl || '';
+    if (imageUrl && !WasabiHosting.isWasabiUrl(imageUrl) && !/^(blob:|data:)/.test(imageUrl)) {
+      const wImg = await WasabiHosting.saveFromUrl(imageUrl, `${asset.id}.png`, 'image/png');
+      if (wImg) imageUrl = wImg;
+    }
     if (/^(blob:|data:)/.test(imageUrl)) imageUrl = '';
     try {
       const supa = await getSupabase();

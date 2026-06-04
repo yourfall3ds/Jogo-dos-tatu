@@ -9,6 +9,7 @@
 import { MeshyClient } from './MeshyClient.js';
 import { LocalDB } from '../data/LocalDB.js';
 import { AssetHosting } from '../data/AssetHosting.js';
+import { WasabiHosting } from '../data/WasabiHosting.js';
 import { AssetWishlist, wishlistAllItems } from './AssetWishlist.js';
 import { AssetGroups, BUILTIN_GROUPS } from '../data/AssetGroups.js';
 
@@ -903,19 +904,29 @@ export class MeshyPanel {
     const groupId = this._el.querySelector('#meshy-group-sel')?.value || null;
     const id = name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36);
 
-    // Hospeda o GLB no Storage público p/ TODOS os players carregarem no mundo
-    // compartilhado (cai pro caminho local se deslogado/offline).
+    // Hospeda GLB + IMAGEM no Wasabi (server-side, prefixo público) p/ TODOS
+    // os players carregarem no mundo compartilhado. Cai pro Supabase Storage
+    // (e por fim pra URL original) se o Wasabi falhar/estiver deslogado.
     let hostedUrl = this._state.glbUrl;
+    let hostedImg = this._state.imageUrl || null;
     try {
-      this._status('☁️ hospedando asset…');
-      const pub = await AssetHosting.uploadFromUrl(this._state.glbUrl, `${id}.glb`);
-      if (pub) hostedUrl = pub;
+      this._status('☁️ hospedando no Wasabi…');
+      const pubGlb = await WasabiHosting.saveFromUrl(this._state.glbUrl, `${id}.glb`, 'model/gltf-binary');
+      if (pubGlb) hostedUrl = pubGlb;
+      else {
+        const fb = await AssetHosting.uploadFromUrl(this._state.glbUrl, `${id}.glb`);
+        if (fb) hostedUrl = fb;
+      }
+      if (hostedImg) {
+        const pubImg = await WasabiHosting.saveFromUrl(hostedImg, `${id}.png`, 'image/png');
+        if (pubImg) hostedImg = pubImg;
+      }
     } catch (_) {}
 
     const asset = {
       id, name,
       glbUrl:    hostedUrl,
-      imageUrl:  this._state.imageUrl || null,
+      imageUrl:  hostedImg || null,
       groupId:   groupId || null,
       createdAt: Date.now(),
     };
