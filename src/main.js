@@ -1454,7 +1454,13 @@ async function init() {
         loading?.setProgress(30, 'criando plano');
         _ensureOpenWorldGround(scene);
         loading?.setProgress(70, 'preparando shaders');
-        await new Promise(r => scene.executeWhenReady(r));
+        // scene.executeWhenReady pode NUNCA disparar no WebGPU (render targets /
+        // procedural textures) → trava eterna em "preparando shaders". Timeout de
+        // segurança (igual o caminho offline já faz) pra a entrada nunca emperrar.
+        await Promise.race([
+          new Promise(r => scene.executeWhenReady(r)),
+          new Promise(r => setTimeout(r, 2500)),
+        ]);
         loading?.setProgress(100, 'pronto');
         // ── SKYDIVE OPEN_WORLD: nasce a ~200m e CAI ate o chao ─────────
         //  Posiciona o player no alto ANTES de soltar a start-screen/click.
