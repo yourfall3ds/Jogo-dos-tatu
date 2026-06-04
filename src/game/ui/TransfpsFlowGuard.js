@@ -15,22 +15,28 @@ export class LoadingOverlay {
     el.style.cssText = `
       position:fixed; inset:0; z-index:9000; display:none;
       background:#02030a;
-      background-image:radial-gradient(circle at center,#0a1230,#02030a);
+      background-image:radial-gradient(ellipse at 50% 35%,#0a1230 0%,#050816 55%,#02030a 100%);
       align-items:center; justify-content:center; flex-direction:column; gap:18px;
-      color:#dff5ff; font-family:'Segoe UI',monospace;
+      color:#dfeaf2; font-family:'Fira Code','Share Tech Mono',monospace;
     `;
+    // cara de game: spinner cyan + titulo HUD + barra neon angular (tokens GameUIKit)
     el.innerHTML = `
       <div id="lo-spinner" style="
-        width:54px; height:54px; border:3px solid rgba(126,239,196,0.2);
+        width:54px; height:54px; border:3px solid rgba(46,255,182,0.18);
         border-top-color:#2effb6; border-radius:50%;
+        box-shadow:0 0 18px rgba(46,255,182,0.35);
         animation: lo-spin 0.8s linear infinite;"></div>
-      <div id="lo-title" style="font:900 22px 'Segoe UI',monospace; letter-spacing:4px; color:#2effb6;
-                                text-shadow:0 0 12px #2effb6;">CARREGANDO</div>
-      <div id="lo-detail" style="font:600 12px 'Segoe UI',monospace; opacity:0.7; max-width:400px; text-align:center;"></div>
-      <div id="lo-progress-wrap" style="width:320px; height:6px; background:rgba(0,0,0,0.6);
-                                        border:1px solid rgba(126,239,196,0.3); border-radius:3px; display:none;">
+      <div id="lo-title" style="font-family:'Share Tech Mono','Fira Code',monospace;
+                                font-size:22px; letter-spacing:6px; text-transform:uppercase; color:#2effb6;
+                                text-shadow:0 0 12px rgba(46,255,182,0.7), 0 0 24px rgba(46,255,182,0.3);">CARREGANDO</div>
+      <div id="lo-detail" style="font:500 12px 'Fira Code',monospace; letter-spacing:1px; color:#7e93a6; max-width:400px; text-align:center;"></div>
+      <div id="lo-progress-wrap" style="width:320px; height:8px; background:rgba(46,255,182,0.06);
+                                        border:1px solid rgba(46,255,182,0.28);
+                                        box-shadow:inset 0 0 8px rgba(46,255,182,0.06); display:none;
+                                        clip-path:polygon(5px 0,100% 0,100% calc(100% - 5px),calc(100% - 5px) 100%,0 100%,0 5px);">
         <div id="lo-progress" style="height:100%; width:0%;
-             background:linear-gradient(90deg,#2effb6,#3aa8ff); border-radius:3px; transition:width 0.3s;"></div>
+             background:linear-gradient(90deg,#1bbf8a,#2effb6 60%,#9bffe2);
+             box-shadow:0 0 12px rgba(46,255,182,0.55); transition:width 0.3s;"></div>
       </div>
     `;
     document.body.appendChild(el);

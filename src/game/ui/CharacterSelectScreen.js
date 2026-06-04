@@ -142,8 +142,13 @@ const RE_IDLE = /idle|ideal|stand|walk/i;
 const RE_ATTACK = /attack|punch|slash|fire|shot/i;
 const RE_COMBO = /combo|spin|360|purify|jumping_jack/i;
 
+import { injectGameUI } from './GameUIKit.js';
+
 const CYAN = '#2effb6';
 const CYAN_RGB = '46,255,182';
+// Fontes sci-fi do GameUIKit (consistencia com as outras telas de menu).
+const FONT_HEAD = "'Share Tech Mono','Fira Code',monospace";
+const FONT_BODY = "'Fira Code','Share Tech Mono',monospace";
 
 export class CharacterSelectScreen {
   constructor(opts = {}) {
@@ -172,12 +177,13 @@ export class CharacterSelectScreen {
   }
 
   _build() {
+    injectGameUI();   // garante tokens/fontes do kit (idempotente)
     const el = document.createElement('div');
     el.id = 'char-select-screen';
     el.style.cssText = `
       position:fixed; inset:0; z-index:480; display:none;
-      background:radial-gradient(ellipse at 35% 40%, #0a1430 0%, #050a18 55%, #01020a 100%);
-      color:#dff7ff; font-family:'Segoe UI', system-ui, monospace;
+      background:radial-gradient(ellipse at 35% 40%, #0a1230 0%, #050816 55%, #01020a 100%);
+      color:#dfeaf2; font-family:${FONT_BODY};
       opacity:0; transition:opacity .25s ease;
     `;
     el.innerHTML = `
@@ -187,10 +193,10 @@ export class CharacterSelectScreen {
 
       <header style="position:relative; display:flex; align-items:center; justify-content:space-between;
                      padding:16px 28px; border-bottom:1px solid rgba(${CYAN_RGB},0.22);">
-        <span style="font:900 18px 'Segoe UI',monospace; letter-spacing:6px; color:${CYAN};
+        <span style="font:400 18px ${FONT_HEAD}; text-transform:uppercase; letter-spacing:6px; color:${CYAN};
                      text-shadow:0 0 16px rgba(${CYAN_RGB},0.5);">SELECIONE SEU OPERADOR</span>
-        <span id="css-back" style="cursor:pointer; opacity:0.55; font:700 12px monospace;
-                     letter-spacing:2px;">&larr; VOLTAR (Esc)</span>
+        <span id="css-back" style="cursor:pointer; opacity:0.55; font:400 12px ${FONT_HEAD};
+                     text-transform:uppercase; letter-spacing:2px;">&larr; VOLTAR (Esc)</span>
       </header>
 
       <div style="position:relative; display:flex; height:calc(100% - 58px);">
@@ -210,9 +216,9 @@ export class CharacterSelectScreen {
           <!-- nome grande sobre a base do preview -->
           <div style="position:absolute; left:0; right:0; bottom:104px; text-align:center;
                       pointer-events:none;">
-            <div id="css-name" style="font:900 46px 'Segoe UI',monospace; letter-spacing:8px;
+            <div id="css-name" style="font:400 46px ${FONT_HEAD}; text-transform:uppercase; letter-spacing:8px;
                  color:#fff; text-shadow:0 0 24px rgba(${CYAN_RGB},0.6), 0 4px 12px #000;">—</div>
-            <div id="css-desc" style="font:600 14px monospace; letter-spacing:2px; opacity:0.7;
+            <div id="css-desc" style="font:500 14px ${FONT_BODY}; letter-spacing:2px; opacity:0.7;
                  margin-top:4px; color:${CYAN};">—</div>
           </div>
 
@@ -220,10 +226,11 @@ export class CharacterSelectScreen {
           <div style="position:absolute; left:0; right:0; bottom:24px; display:flex;
                       justify-content:center; pointer-events:none;">
             <button id="css-play" style="pointer-events:auto;
-              background:linear-gradient(135deg, ${CYAN}, #16d0a6);
-              color:#04101a; border:0; border-radius:8px;
-              padding:16px 64px; font:900 20px 'Segoe UI',monospace; letter-spacing:6px;
-              cursor:pointer; box-shadow:0 0 28px rgba(${CYAN_RGB},0.45);
+              background:linear-gradient(180deg, ${CYAN}, #1bbf8a);
+              color:#04101a; border:0;
+              padding:16px 64px; font:400 20px ${FONT_HEAD}; text-transform:uppercase; letter-spacing:6px;
+              cursor:pointer; box-shadow:0 0 28px rgba(${CYAN_RGB},0.45), inset 0 0 14px rgba(255,255,255,0.3);
+              clip-path:polygon(16px 0,100% 0,100% calc(100% - 16px),calc(100% - 16px) 100%,0 100%,0 16px);
               transition:transform .12s, box-shadow .25s;">JOGAR</button>
           </div>
 
@@ -277,9 +284,9 @@ export class CharacterSelectScreen {
         ">
           <span style="font-size:30px; filter:drop-shadow(0 0 6px rgba(${CYAN_RGB},0.4));">${c.emoji}</span>
           <div style="min-width:0;">
-            <div style="font:900 17px 'Segoe UI',monospace; letter-spacing:2px;
+            <div style="font:400 17px ${FONT_HEAD}; text-transform:uppercase; letter-spacing:2px;
                  color:${sel ? CYAN : '#eaffff'};">${_esc(c.name)}</div>
-            <div style="font:600 11px monospace; opacity:0.6; margin-top:3px;">${_esc(c.desc)}</div>
+            <div style="font:500 11px ${FONT_BODY}; opacity:0.6; margin-top:3px;">${_esc(c.desc)}</div>
           </div>
         </div>
       `;

@@ -64,6 +64,13 @@ import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
 import { AuthSystem }          from './game/auth/AuthSystem.js';
 import { DEBUG }               from './utils/debug.js';
 import { VRSystem }            from './game/vr/VRSystem.js';
+import { injectGameUI }        from './game/ui/GameUIKit.js';
+
+// ── Design System cyberpunk: injeta fontes + tokens + classes UMA vez ──
+//  Idempotente. Chamado o mais cedo possivel (antes das telas de menu/fluxo)
+//  pra que index.html start-screen, ServerListUI, CharacterSelectScreen e o
+//  LoadingOverlay possam usar as classes gui-* / vars --cy-*.
+try { injectGameUI(); } catch (e) { console.error('[GameUIKit] inject:', e); }
 
 // OAuth callback handler — roda ANTES do init normal.
 // Se essa janela for o popup de login (tem ?code= [PKCE] ou #access_token=
