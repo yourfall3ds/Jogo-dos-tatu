@@ -193,11 +193,19 @@ export class InputManager {
         this.gameActive = true;
         document.body.classList.add('game-active');
       } else if (!document.pointerLockElement && this.gameActive && this._gameFullyStarted) {
-        // Lock foi liberado pelo browser → pausa o jogo.
-        // SÓ pausa se o lock já foi confirmado uma vez (_gameFullyStarted).
-        // Assim o pointerlockchange transitório (lock=null) do BOOT/transição
-        // — quando a engine ainda está esquentando — NÃO pausa na entrada.
+        // Lock foi liberado pelo browser.
         this._lockConfirmed = false;
+        // MULTIPLAYER + MORTE: NÃO desativa/pausa. Ao morrer, o browser larga o
+        // lock (cadáver some, DOM muda) e isso pausava o jogo sozinho. No MP o
+        // player nunca "pausa de verdade" — só re-pede o lock e segue. O resto
+        // (ESC) trata o pause visual explicitamente.
+        const mpAlive = !!window._cs?.connected;
+        const dead = !!window._gamePlayer?._dead;
+        if (mpAlive || dead) {
+          // mantém gameActive; tenta recuperar o lock no próximo gesto
+          this._pendingLock = true;
+          return;
+        }
         this._internalDeactivate();
       }
       // Se !pointerLockElement && !_gameFullyStarted: boot/transição.

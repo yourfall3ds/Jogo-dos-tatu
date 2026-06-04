@@ -1894,6 +1894,16 @@ export class Player {
     this._kbVx = 0; this._kbVz = 0;
     this._vx = 0; this._vz = 0; this.velY = 0;
     this._exhausted = false; this.stamina = this.maxStamina;
+    // Renasce OLHANDO PRA FRENTE. Sem isto o yaw/pitch da morte persistiam e o
+    // avatar aparecia "de costas" / olhando torto ao cair do céu.
+    this.yaw = 0; this.pitch = 0;
+    this._recoilOffset = 0;
+    if (this.animator?.root) {
+      try {
+        if (this.animator.root.rotationQuaternion) this.animator.root.rotationQuaternion = null;
+        this.animator.root.rotation.y = 0;
+      } catch (_) {}
+    }
 
     // REGRA #5: garante que o cadáver antigo JÁ sumiu antes de renascer — o
     // vanish é independente do respawn e NUNCA deve teleportar o corpo morto
