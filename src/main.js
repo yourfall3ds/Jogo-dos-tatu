@@ -136,6 +136,7 @@ import { getConfig }           from './game/auth/SupabaseClient.js';
 import { CloudSave }           from './game/data/CloudSave.js';
 import { TerrainSystem, TerrainStore } from './game/terrain/TerrainSystem.js';
 import { TerrainEditorUI }     from './game/terrain/TerrainEditorUI.js';
+import { TextureMachineUI }    from './game/terrain/TextureMachine.js';
 
 const TRANSFPS_CS_URL = 'wss://app.overpixel.online/transfps-cs';
 
@@ -1725,6 +1726,8 @@ async function init() {
       terrain.onSave = (h, c) => TerrainStore.save(terrain.size, terrain.subdivisions, h, c);
       window._terrain = terrain;
       window._terrainUI = ui;
+      // Máquina de Texturas (gera por IA → aplica no chão → salva pra todos).
+      try { window._textureUI = new TextureMachineUI(scene, terrain); } catch (e) { console.warn('[TextureMachine]', e?.message); }
       // Carrega o terreno salvo do mundo (compartilhado) — assíncrono.
       TerrainStore.load().then((row) => {
         if (!row || terrain._disposed) return;
@@ -1732,6 +1735,7 @@ async function init() {
           const heights = Array.isArray(row.heights) ? Float32Array.from(row.heights) : null;
           const colors  = Array.isArray(row.colors)  ? Float32Array.from(row.colors)  : null;
           terrain.load(heights, colors);
+          if (row.texture_url) terrain.setGroundTexture(row.texture_url);
           window._dbg?.('terreno carregado do servidor', '#7fd');
         } catch (_) {}
       });
@@ -1776,24 +1780,8 @@ async function init() {
     if (mat.reflectionTexture) mat.reflectionTexture = null;
     g.material = mat;
     // Grid sutil opcional: so se a lib de materials estiver carregada no bundle.
-    // Caso contrario mantem a cor solida (sem quebrar nada).
-    try {
-      if (BABYLON.GridMaterial) {
-        // Grid em unidades de mundo (gridRatio em metros), entao escala junto
-        // com o plano 800x800 sem esticar/distorcer. Textura procedural =
-        // sem risco de 404, estavel no WebGPU.
-        const grid = new BABYLON.GridMaterial("openworld_ground_grid", scene);
-        grid.majorUnitFrequency = 10;   // linha grossa a cada 10 celulas
-        grid.minorUnitVisibility = 0.35;
-        grid.gridRatio = 4;             // celula de 4m (plano grande -> menos linhas)
-        grid.backFaceCulling = true;
-        grid.mainColor = new BABYLON.Color3(0.92, 0.93, 0.95);   // piso BRANCO
-        grid.lineColor = new BABYLON.Color3(0.65, 0.68, 0.72);   // linhas cinza-claro (referência de célula)
-        grid.opacity = 1.0;
-        grid.freeze && grid.freeze();
-        g.material = grid;
-      }
-    } catch (e) { /* sem GridMaterial: fica na cor solida */ }
+    // GRID REMOVIDO: chão é BRANCO LISO (material sólido acima) até a Máquina de
+    // Texturas existir. Sem linhas de grade (o usuário achou que não combinava).
     // Congela o material apos config: evita recompile/flicker no WebGPU.
     if (g.material && g.material.freeze) g.material.freeze();
     console.log("[OpenWorld] plano vazio criado");

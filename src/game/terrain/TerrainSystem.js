@@ -31,10 +31,19 @@ export const TerrainStore = {
     try {
       const supa = await getSupabase();
       const { data, error } = await supa.schema('transfps').from('terrain')
-        .select('size,subdivisions,heights,colors').eq('id', 'world').maybeSingle();
+        .select('size,subdivisions,heights,colors,texture_url').eq('id', 'world').maybeSingle();
       if (error || !data) return null;
       return data;
     } catch (_) { return null; }
+  },
+  /** Salva SÓ a textura do chão (todos veem). Upsert pra criar a linha se faltar. */
+  async saveTextureUrl(url) {
+    try {
+      const supa = await getSupabase();
+      const { error } = await supa.schema('transfps').from('terrain')
+        .upsert({ id: 'world', texture_url: url || null }, { onConflict: 'id' });
+      if (error) window._dbg?.('textura do chão NÃO salvou: ' + error.message, '#ff5050');
+    } catch (e) { console.warn('[Terrain] saveTextureUrl falhou:', e?.message); }
   },
   async save(size, subdivisions, heights, colors) {
     try {
@@ -240,6 +249,21 @@ export class TerrainSystem {
       this._saveTimer = null;
       try { this.onSave(this.getHeights(), this._col); } catch (_) {}
     }, 1200);
+  }
+
+  /** Aplica uma TEXTURA no chão (tileada). url null = volta pro branco. */
+  setGroundTexture(url, tile = 4) {
+    this._textureUrl = url || null;
+    try {
+      const mat = this.mesh.material;
+      if (mat.diffuseTexture) { try { mat.diffuseTexture.dispose(); } catch (_) {} mat.diffuseTexture = null; }
+      if (!url) { mat.diffuseColor = new BABYLON.Color3(1, 1, 1); return; }
+      const tex = new BABYLON.Texture(url, this.scene);
+      const cells = Math.max(1, this.size / tile);   // ~1 repetição a cada `tile` metros
+      tex.uScale = cells; tex.vScale = cells;
+      mat.diffuseTexture = tex;
+      mat.diffuseColor = new BABYLON.Color3(1, 1, 1);
+    } catch (e) { console.warn('[Terrain] textura falhou:', e?.message); }
   }
 
   /** Array de alturas (Y de cada vértice) — compacto pra salvar. */
