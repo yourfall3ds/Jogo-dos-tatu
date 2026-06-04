@@ -1,0 +1,12 @@
+{
+  "name": "transfps-glb-tools",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pipeline GLB do TransFPS: strip de mesh das anims, otimizacao",
+  "dependencies": {
+    "@gltf-transform/core": "^4.3.0",
+    "@gltf-transform/extensions": "^4.3.0",
+    "@gltf-transform/functions": "^4.3.0"
+  }
+}
