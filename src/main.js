@@ -134,6 +134,8 @@ import { PvpToggle }           from './game/ui/PvpToggle.js';
 import { LocalAura }           from './game/combat/LocalAura.js';
 import { getConfig }           from './game/auth/SupabaseClient.js';
 import { CloudSave }           from './game/data/CloudSave.js';
+import { TerrainSystem, TerrainStore } from './game/terrain/TerrainSystem.js';
+import { TerrainEditorUI }     from './game/terrain/TerrainEditorUI.js';
 
 const TRANSFPS_CS_URL = 'wss://app.overpixel.online/transfps-cs';
 
@@ -1714,6 +1716,30 @@ async function init() {
     document.body.appendChild(wrap);
   }
 
+  // ── Terreno ESCULPÍVEL como CHÃO DO MUNDO (singleton) ─────────────
+  function _ensureTerrain(scene) {
+    if (window._terrain) return window._terrain;
+    try {
+      const terrain = new TerrainSystem(scene, { size: 240, subdivisions: 120, minY: -30, maxY: 60 });
+      const ui = new TerrainEditorUI(terrain, scene);
+      terrain.onSave = (h, c) => TerrainStore.save(terrain.size, terrain.subdivisions, h, c);
+      window._terrain = terrain;
+      window._terrainUI = ui;
+      // Carrega o terreno salvo do mundo (compartilhado) — assíncrono.
+      TerrainStore.load().then((row) => {
+        if (!row || terrain._disposed) return;
+        try {
+          const heights = Array.isArray(row.heights) ? Float32Array.from(row.heights) : null;
+          const colors  = Array.isArray(row.colors)  ? Float32Array.from(row.colors)  : null;
+          terrain.load(heights, colors);
+          window._dbg?.('terreno carregado do servidor', '#7fd');
+        } catch (_) {}
+      });
+      console.log('[Terrain] chão do mundo esculpível criado');
+      return terrain;
+    } catch (e) { console.warn('[Terrain] criação falhou:', e?.message); return null; }
+  }
+
   // OPEN_WORLD CLEAN: plano vazio 200x200 com material liso + colisao
   function _ensureOpenWorldGround(scene) {
     // FIX flicker preto/branco: o Level (clean:true) cria um mesh 'ground'
@@ -1722,6 +1748,14 @@ async function init() {
     scene.meshes
       .filter(m => /^ground|procedural/i.test(m.name) && m.name !== "openworld_ground")
       .forEach(m => { try { m.setEnabled(false); } catch (e) {} });
+
+    // CHÃO DO MUNDO = TERRENO esculpível. Cria (1x) e usa no lugar do plano liso.
+    const terrain = _ensureTerrain(scene);
+    if (terrain?.mesh) {
+      const old = scene.getMeshByName("openworld_ground");
+      if (old) { try { old.setEnabled(false); } catch (_) {} }   // some o plano liso
+      return terrain.mesh;
+    }
 
     let g = scene.getMeshByName("openworld_ground");
     if (g) { g.setEnabled(true); return g; }
@@ -2378,6 +2412,7 @@ async function init() {
     window._wasF10 = f10;
     charSelectUI.update();
     buildMode.update();
+    try { window._terrainUI?.update(dt); } catch (_) {}   // pincel de terreno (enquanto segura o botão)
     rpgHUD.update(dt);
     hud.update();
     scene.render();
