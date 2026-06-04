@@ -281,10 +281,11 @@ export class ServerListUI {
         await this._onEnterGame(this.cs.room);
       }
 
-      // ── Aplica o avatar escolhido na CharacterSelectScreen ──
-      //  O player já existe na cena (spawn feito no _onEnterGame). O swap
-      //  opera no player REAL via CharacterSwapper. Avatar do rato (ABELHA)
-      //  é o padrão do jogo → só troca se for outro.
+      // ── Aplica o avatar escolhido ANTES de revelar o jogo ──
+      //  ANTES o swap rodava em background (.then) DEPOIS do spawn → o player
+      //  aparecia com o RATO e só depois trocava (feio). Agora esperamos o swap
+      //  COMPLETAR (await), com o loading ainda cobrindo, pra quando aparecer já
+      //  estar com o avatar certo. O player já existe (spawn no _onEnterGame).
       if (this._pendingAvatar) {
         const av = this._pendingAvatar;
         this._pendingAvatar = null;
@@ -292,10 +293,9 @@ export class ServerListUI {
           const swapper = window._charSwapper;
           const defaultUrl = 'assets/characters/player.glb';
           if (swapper && av.url && av.url !== defaultUrl) {
-            // não bloqueia o spawn — troca em background.
-            swapper.swap(av.url).then(r => {
-              if (r?.warning) console.warn('[ServerList] swap avatar:', r.warning);
-            }).catch(e => console.error('[ServerList] swap avatar:', e));
+            try { window._loadingOverlay?.setDetail?.('preparando ' + (av.name || 'avatar') + '…'); } catch (_) {}
+            const r = await swapper.swap(av.url);   // ESPERA o avatar trocar
+            if (r?.warning) console.warn('[ServerList] swap avatar:', r.warning);
           }
         } catch (e) { console.error('[ServerList] apply avatar:', e); }
       }
