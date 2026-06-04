@@ -125,8 +125,12 @@ export class InputManager {
       //  vazaria pra fora da janela clicando em coisas do Windows. Ignorando
       //  aqui, o mouse solto não mexe a mira; o próximo clique re-trava o lock.
       if (document.pointerLockElement !== this.canvas) return;
-      this._mouseX += e.movementX;
-      this._mouseY += e.movementY;
+      // GUARDA NaN: movementX/Y podem vir undefined/NaN em frames de transição
+      //  do lock (raw input / unadjustedMovement). Acumular NaN aqui propagaria
+      //  pro yaw/pitch do Player → posição NaN → tela bugada + áudio NaN.
+      const mx = e.movementX, my = e.movementY;
+      if (Number.isFinite(mx)) this._mouseX += mx;
+      if (Number.isFinite(my)) this._mouseY += my;
     });
 
     // ── Click: atirar + re-adquirir lock se perdido ──────────────────
@@ -354,7 +358,9 @@ export class InputManager {
   isAimDown()   { return !!this._rightHeld; }
 
   consumeMouseDelta() {
-    const dx = this._mouseX, dy = this._mouseY;
+    // Sanitiza: nunca retorna NaN (o Player soma direto no yaw/pitch).
+    const dx = Number.isFinite(this._mouseX) ? this._mouseX : 0;
+    const dy = Number.isFinite(this._mouseY) ? this._mouseY : 0;
     this._mouseX = 0; this._mouseY = 0;
     return { dx, dy };
   }

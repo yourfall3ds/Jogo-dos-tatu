@@ -301,6 +301,9 @@ export class ServerListUI {
 
       this.hide();
       try { await this.cs.leaveLobby?.(); } catch (_) {}
+      // CORTA qualquer trilha de bioma da tela de seleção que tenha vazado —
+      //  na partida só toca a música do MusicSystem (não 2 músicas juntas).
+      try { (window._gamePlayer?.sounds || window._soundManager)?.stopAmbientLoops?.(); } catch (_) {}
 
       if (this._onEnterGame) {
         const _tMap = (performance?.now?.() || 0);

@@ -322,41 +322,112 @@
     /* ═══════════════════════════════════════════════════════════
        OVERLAY DE PAUSA
        ═══════════════════════════════════════════════════════════ */
+    /* ═══════════════════════════════════════════════════════════
+       MENU DE PAUSA — layout setorizado (cyber-cyan, sem pink)
+       Coluna central = menu do jogador · Card lateral = opções DEV
+       ═══════════════════════════════════════════════════════════ */
     #pause-overlay {
       display: none;
       position: fixed; inset: 0; z-index: 200;
-      background: rgba(0,0,0,.65);
+      background: radial-gradient(ellipse at center, rgba(4,10,16,.72), rgba(0,0,0,.84));
       align-items: center; justify-content: center;
       flex-direction: column;
-      backdrop-filter: blur(3px);
+      backdrop-filter: blur(5px);
+      font-family: 'Segoe UI', system-ui, sans-serif;
     }
     #pause-overlay.visible { display: flex; }
 
     #pause-overlay h2 {
-      color: #fff; font-size: 2.2em; margin-bottom: 28px;
-      text-shadow: 0 2px 12px #000; letter-spacing: 2px;
+      color: #eafffb; font-size: 2.1em; margin: 0 0 30px;
+      text-shadow: 0 0 24px rgba(62,255,200,.35), 0 2px 10px #000;
+      letter-spacing: 6px; font-weight: 800; text-transform: uppercase;
     }
-    #pause-overlay .resume-btn {
-      padding: 14px 48px; font-size: 1.25em; font-weight: 800;
-      background: #ffcc00; border: none; border-radius: 10px;
-      color: #222; cursor: pointer; letter-spacing: 1px;
-      transition: transform .1s;
+
+    /* Container das duas colunas */
+    #pause-grid {
+      display: flex; gap: 34px; align-items: flex-start;
+      justify-content: center; flex-wrap: wrap;
     }
-    #pause-overlay .resume-btn:hover { transform: scale(1.06); }
+
+    /* Painel base (chanfro angular cyber) */
+    .pause-panel {
+      background: linear-gradient(160deg, rgba(10,22,30,.94), rgba(6,14,20,.96));
+      border: 1px solid rgba(62,255,200,.22);
+      border-radius: 4px;
+      clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+      box-shadow: 0 18px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(62,255,200,.08);
+      padding: 26px 24px;
+    }
+    .pause-panel .panel-title {
+      font-size: .72em; letter-spacing: 3px; text-transform: uppercase;
+      font-weight: 700; margin: 0 0 18px; padding-bottom: 12px;
+      border-bottom: 1px solid rgba(62,255,200,.14);
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    /* Coluna central — menu do jogador */
+    #pause-main { width: 320px; }
+    #pause-main .panel-title { color: #3effc8; }
+
+    /* Card lateral — opções DEV */
+    #pause-dev { width: 300px; }
+    #pause-dev .panel-title { color: #8aa0b0; }
+
+    /* Botões — base comum */
+    #pause-overlay .pbtn {
+      width: 100%; display: flex; align-items: center; gap: 11px;
+      padding: 12px 18px; margin-bottom: 11px;
+      font-family: inherit; font-size: .95em; font-weight: 600;
+      letter-spacing: .5px; text-align: left;
+      border-radius: 4px; cursor: pointer;
+      border: 1px solid rgba(120,150,165,.22);
+      background: rgba(255,255,255,.03); color: #cfe6e0;
+      transition: background .16s, border-color .16s, color .16s, transform .08s;
+    }
+    #pause-overlay .pbtn:last-child { margin-bottom: 0; }
+    #pause-overlay .pbtn:hover {
+      background: rgba(62,255,200,.08);
+      border-color: rgba(62,255,200,.4); color: #eafffb;
+    }
+    #pause-overlay .pbtn:active { transform: scale(.985); }
+    #pause-overlay .pbtn .pico { font-size: 1.1em; width: 20px; text-align: center; }
+    #pause-overlay .pbtn .pkey {
+      margin-left: auto; font-size: .76em; opacity: .55;
+      font-weight: 700; letter-spacing: 1px;
+    }
+
+    /* Botão primário — Voltar ao Jogo */
+    #pause-overlay .pbtn.resume-btn {
+      background: linear-gradient(135deg, #18d49a, #0fae8e);
+      border: 1px solid #2effb6; color: #04140d; font-weight: 800;
+      font-size: 1.05em; padding: 14px 18px; margin-bottom: 18px;
+      box-shadow: 0 0 22px rgba(46,255,182,.28);
+    }
+    #pause-overlay .pbtn.resume-btn:hover {
+      background: linear-gradient(135deg, #2effb6, #18d49a);
+      color: #04140d; box-shadow: 0 0 30px rgba(46,255,182,.45);
+    }
+
+    /* Botão de saída — vermelho de marca, isolado embaixo do menu */
+    #pause-overlay .pbtn.danger-btn {
+      margin-top: 16px; background: rgba(229,9,20,.08);
+      border: 1px solid rgba(229,9,20,.5); color: #ff7a7a; font-weight: 700;
+      justify-content: center;
+    }
+    #pause-overlay .pbtn.danger-btn:hover {
+      background: rgba(229,9,20,.18); border-color: #e50914; color: #ffb3b3;
+    }
+
     #pause-overlay .tip {
-      margin-top: 18px; color: #aaa; font-size: .88em;
+      margin-top: 26px; color: #6f8a82; font-size: .82em; letter-spacing: .5px;
     }
+    #pause-overlay .tip b { color: #3effc8; font-weight: 700; }
 
     /* ═══════════════════════════════════════════════════════════
        CATÁLOGO DE MONSTROS
        ═══════════════════════════════════════════════════════════ */
-    #monster-catalog-btn {
-      margin-top: 12px; padding: 10px 24px; font-size: 1em;
-      background: rgba(255,255,255,.1); border: 1.5px solid rgba(255,255,255,.3);
-      color: #fff; border-radius: 8px; cursor: pointer;
-      transition: background .2s;
-    }
-    #monster-catalog-btn:hover { background: rgba(255,255,255,.2); }
+    /* #monster-catalog-btn agora usa a classe .pbtn (menu de pausa setorizado).
+       Estilo de caixa antigo removido pra não sobrescrever .pbtn por id. */
 
     #monster-catalog-overlay {
       display: none; position: fixed; inset: 0; z-index: 300;
@@ -819,16 +890,48 @@
 
   <!-- ── Overlay de pausa ── -->
   <div id="pause-overlay">
-    <h2>⏸ Pausado</h2>
-    <button class="resume-btn" style="margin-bottom: 15px;" onclick="window.toggleFocus()">▶ Voltar ao Jogo</button>
-    <button id="animator-mode-btn" style="background: #0088ff; color: white; margin-bottom: 10px;">🎬 Abrir Animador</button>
-    <button onclick="window.openMonsterDebug('monsterPlant')" style="background: #1a5a20; color: #5fa; margin-bottom: 15px; font-family: inherit; font-size: 1em; padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; letter-spacing: .5px;">🐛 Debug Monstros</button>
-    <button id="weapon-editor-btn" style="background: #e05000; color: white; margin-bottom: 10px; font-family: inherit; font-size: 1em; padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; letter-spacing: .5px;" onclick="window._weaponEditor?.toggle()">🔧 Ajustar Armas  <span style="font-size:.78em;opacity:.75">(F4)</span></button>
-    <button id="scene-editor-btn" style="background: #006e30; color: white; margin-bottom: 15px; font-family: inherit; font-size: 1em; padding: 10px 24px; border: none; border-radius: 8px; cursor: pointer; letter-spacing: .5px;" onclick="window.enterEngineMode('scene')">🗺️ Editor de Cena</button>
-    <button id="map-select-btn" style="background: #5a1f12; color: #ffcc99; margin-bottom: 10px; font-family: inherit; font-size: 1em; padding: 10px 24px; border: 1px solid #d44d2e; border-radius: 8px; cursor: pointer; letter-spacing: .5px;" onclick="window._mapSelectUI?.show()">🗺️ Mapas Chibata  <span style="font-size:.78em;opacity:.75">(N)</span></button>
-    <button id="monster-catalog-btn">📖 Catálogo de Monstros</button>
-    <button id="leave-to-menu-btn" style="background: transparent; color: #ff7a8a; border: 1px solid #ff5a5a; margin-top: 8px; font-family: inherit; font-size: .92em; padding: 9px 24px; border-radius: 8px; cursor: pointer; letter-spacing: .5px;" onclick="window._leaveToMenu?.()">✕ Voltar ao Menu</button>
-    <p class="tip">ESC  ou  clique no botão  para pausar / resumir  ·  F9 Engine Mode</p>
+    <h2>Pausado</h2>
+    <div id="pause-grid">
+
+      <!-- ── Coluna central: menu do jogador ── -->
+      <div id="pause-main" class="pause-panel">
+        <div class="panel-title">▸ Menu</div>
+        <button class="pbtn resume-btn" onclick="window.toggleFocus()">
+          <span class="pico">▶</span> Voltar ao Jogo
+        </button>
+        <button class="pbtn" onclick="window._settingsUI?.show()">
+          <span class="pico">⚙</span> Configurações
+        </button>
+        <button class="pbtn danger-btn" onclick="window._leaveToMenu?.()">
+          ✕ Voltar ao Menu
+        </button>
+      </div>
+
+      <!-- ── Card lateral: opções de DEV ── -->
+      <div id="pause-dev" class="pause-panel">
+        <div class="panel-title">⚙ Opções de Dev</div>
+        <button id="animator-mode-btn" class="pbtn">
+          <span class="pico">🎬</span> Animador <span class="pkey">F6</span>
+        </button>
+        <button class="pbtn" onclick="window.openMonsterDebug('monsterPlant')">
+          <span class="pico">🐛</span> Debug Monstros <span class="pkey">F7</span>
+        </button>
+        <button id="weapon-editor-btn" class="pbtn" onclick="window._weaponEditor?.toggle()">
+          <span class="pico">🔧</span> Ajustar Armas <span class="pkey">F4</span>
+        </button>
+        <button id="scene-editor-btn" class="pbtn" onclick="window.enterEngineMode('scene')">
+          <span class="pico">🗺️</span> Editor de Cena <span class="pkey">F9</span>
+        </button>
+        <button id="map-select-btn" class="pbtn" onclick="window._mapSelectUI?.show()">
+          <span class="pico">🧭</span> Mapas Chibata <span class="pkey">N</span>
+        </button>
+        <button id="monster-catalog-btn" class="pbtn">
+          <span class="pico">📖</span> Catálogo de Monstros
+        </button>
+      </div>
+
+    </div>
+    <p class="tip">ESC retoma · <b>Y</b> liga/desliga PVP · F9 Engine Mode</p>
   </div>
 
   <!-- ══ Catálogo de Monstros ══ -->

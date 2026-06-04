@@ -2016,9 +2016,15 @@ async function init() {
     const ov = $('pause-overlay');
     if (!ov) return;
     ov.classList.remove('visible');
+    try { document.body.classList.add('in-game'); } catch (_) {}
     window._gameInput?.activate();
     setFocusUI(true);
   }
+  // Exposto pro botão "Voltar ao Jogo" (window.toggleFocus) usar o caminho
+  // correto de resume — antes ele chamava inp.toggle() cego e, no multiplayer
+  // (gameActive segue true com o pause aberto), o toggle DESLIGAVA o input em
+  // vez de fechar o overlay → "Voltar ao Jogo" não saía do menu.
+  window._resumeFromPause = _resumeFromPause;
   function _injectPauseMenuButtons() {
     const ov = $('pause-overlay');
     if (!ov) return;
@@ -2647,6 +2653,15 @@ window.toggleFocus = function () {
   }
   const inp = window._gameInput;
   if (!inp) return;
+  // Se o menu de pause está ABERTO, "Voltar ao Jogo" SEMPRE retoma — fecha o
+  // overlay e re-captura o pointer lock. No multiplayer gameActive segue true
+  // com o pause aberto, então inp.toggle() (que olha só gameActive) DESLIGAVA
+  // o input em vez de voltar pro jogo. Por isso o resume é explícito.
+  const ov = $('pause-overlay');
+  if (ov?.classList.contains('visible')) {
+    window._resumeFromPause?.();
+    return;
+  }
   inp.toggle();
   setFocusUI(inp.gameActive);
 };

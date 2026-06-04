@@ -17,7 +17,12 @@ export class DamageNumbers {
    */
   spawn(worldPos, amount, { color = '#ffe24a', crit = false } = {}) {
     if (!worldPos || !this.scene) return;
-    const txt = String(Math.round(amount));
+    // GUARDA NaN: se o dano ou a posição vierem inválidos, não mostra "NaN"
+    //  flutuando. Sanitiza o número e ignora posições não-finitas.
+    const n = Number.isFinite(amount) ? Math.round(amount) : 0;
+    if (n <= 0) return;
+    if (!Number.isFinite(worldPos.x) || !Number.isFinite(worldPos.y) || !Number.isFinite(worldPos.z)) return;
+    const txt = String(n);
 
     // ── Textura com o número (contorno preto + cor) ──────────────────
     const W = 256, H = 128;

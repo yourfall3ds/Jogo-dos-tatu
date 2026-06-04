@@ -209,6 +209,18 @@ export class SoundManager {
     }
   }
 
+  /** Para TODOS os loops de ambiente (amb_*) — garante que a trilha do bioma
+   *  da tela de seleção NÃO vaze pra dentro da partida. Loops de gameplay
+   *  (passos, metralhadora) NÃO são tocados aqui (têm seus próprios ids). */
+  stopAmbientLoops() {
+    if (!this._loops) return;
+    for (const id of Object.keys(this._loops)) {
+      if (id.startsWith('amb_')) {
+        try { this.stopLoop(id); } catch (_) {}
+      }
+    }
+  }
+
   /** Ajusta a velocidade (pitch/rate) de um loop ativo — ex: passos mais
    *  rápidos no sprint. v2 expõe playbackRate nas instâncias do StaticSound. */
   setLoopRate(id, rate = 1.0) {

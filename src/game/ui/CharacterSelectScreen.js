@@ -874,6 +874,11 @@ export class CharacterSelectScreen {
     if (this._playing) return;
     this._playing = true;
     const c = CHARACTERS.find(x => x.id === this._selectedId) || CHARACTERS[0];
+    // PARA o som ambiente do bioma JÁ no clique do JOGAR — não pode vazar pra
+    //  dentro da partida (Lucas: "música do lobby tá indo pra partida, 2
+    //  músicas tocando"). O hide() já chama _stopAmbient, mas o fade/walk
+    //  abaixo demora ~800ms; paramos aqui pra cortar na hora.
+    this._stopAmbient();
 
     // anim de walk + desliza pra direita saindo da tela
     try {

@@ -584,6 +584,10 @@ export class Player {
     const { dx, dy } = this.input.consumeMouseDelta();
     this.yaw   += dx * this.MOUSE_SENS;
     this.pitch  = Math.max(-88, Math.min(88, this.pitch + dy * this.MOUSE_SENS));
+    // GUARDA NaN final: se yaw/pitch escaparem, fwd vira NaN → posição NaN →
+    //  tela buga + NaN no hitkill + áudio NaN. Sanitiza pra valores seguros.
+    if (!Number.isFinite(this.yaw))   this.yaw = 0;
+    if (!Number.isFinite(this.pitch)) this.pitch = 0;
 
     // ── 2. Grounded ──────────────────────────────────────────────────
     this._wasGrounded = this.isGrounded;
@@ -724,6 +728,15 @@ export class Player {
         else if (dashDir === 'back')  { dx = -fwd.x; dz = -fwd.z; }
         else if (dashDir === 'right') { dx = right.x; dz = right.z; }
         else if (dashDir === 'left')  { dx = -right.x; dz = -right.z; }
+        // GUARDA NaN: se fwd/right vierem inválidos (yaw NaN), dx/dz viram NaN →
+        //  _vx/_vz NaN → posição NaN → tela some + spam de áudio NaN. Sanitiza:
+        //  sem direção válida o dash vira pra frente (0,0,1) como fallback seguro.
+        if (!Number.isFinite(dx) || !Number.isFinite(dz)) { dx = 0; dz = 1; }
+        // _vx/_vz residuais também podem estar NaN (de algum frame anterior) e o
+        //  Lerp propagaria. Zera se não-finito ANTES de usar.
+        if (!Number.isFinite(this._vx)) this._vx = 0;
+        if (!Number.isFinite(this._vz)) this._vz = 0;
+        if (!Number.isFinite(this.velY)) this.velY = 0;
 
         if (!isUp) {
           // ── DASH NORMAL (curto, 4 cargas) ──────────────────────────
@@ -1008,6 +1021,17 @@ export class Player {
 
     // ── 8. Aplicar deslocamento ──────────────────────────────────────
     if (this._cc) {
+      // ── REDE DE SEGURANÇA NaN ────────────────────────────────────────
+      //  Se QUALQUER velocidade virar não-finita (NaN/Infinity), o integrate
+      //  do Havok produz posição NaN → o player some, a câmera vai pra NaN e
+      //  o áudio espacial floda "non-finite value: NaN" todo frame, bugando a
+      //  tela inteira. Sanitiza ANTES de alimentar o controller.
+      if (!Number.isFinite(this._vx))  this._vx  = 0;
+      if (!Number.isFinite(this._vz))  this._vz  = 0;
+      if (!Number.isFinite(this.velY)) this.velY = 0;
+      if (!Number.isFinite(this._kbVx)) this._kbVx = 0;
+      if (!Number.isFinite(this._kbVz)) this._kbVz = 0;
+
       // CHARACTER CONTROLLER (Havok): sobe escada/degrau nativamente, colide
       // com mundo e objetos, sem encravar nem afundar. Alimentamos a
       // velocidade desejada (já com dash/dodge/pulo/knockback/gravidade).
@@ -1018,7 +1042,16 @@ export class Player {
       // escorrega na rampa íngreme. No ar/pulando, gravidade cheia.
       const grav = (this.isGrounded && this.velY <= 0.1) ? this._charGravityWeak : this._charGravity;
       this._cc.integrate(dt, this._support, grav);
-      this.mesh.position.copyFrom(this._cc.getPosition());
+      const _newPos = this._cc.getPosition();
+      // Valida a posição resultante: se NaN (algo escapou), NÃO aplica — mantém
+      //  a posição anterior + zera velocidade (recupera em vez de bugar a tela).
+      if (Number.isFinite(_newPos.x) && Number.isFinite(_newPos.y) && Number.isFinite(_newPos.z)) {
+        this.mesh.position.copyFrom(_newPos);
+      } else {
+        this._vx = 0; this._vz = 0; this.velY = 0;
+        try { this._cc.setPosition(this.mesh.position); } catch (_) {}
+        console.warn('[Player] posição NaN evitada (velocidade resetada)');
+      }
       // Empurra objetos dinâmicos que o player encostou
       this._pushTouchedBodies();
     } else {
