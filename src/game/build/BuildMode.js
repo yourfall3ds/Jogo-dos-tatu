@@ -594,6 +594,7 @@ export class BuildMode {
       this._dragTool   = item.drag || null;   // 'wall' | 'floor' → arrastar A→B
       this._dragA      = null;
       this._floorRemove = false;
+      this._buildLevelOff = 0;                 // zera o deslocamento de andar (setas ↑/↓)
       const { buildPiece } = await import('./BuildPieces.js');
       const root = buildPiece(item.pieceId, this.scene, '_ghost_' + item.id);
       if (!root) return;
@@ -891,22 +892,19 @@ export class BuildMode {
     const raw = this._groundPoint();
     if (!raw) return;
 
-    // ── SNAP VERTICAL POR NÍVEL ──────────────────────────────────────
-    //  O Y vem do que o crosshair acerta (chão OU topo de uma peça já posta).
-    //  Travamos no nível mais próximo (múltiplo da altura da parede) → parede e
-    //  piso assentam em andares consistentes: parede no chão (y=0), piso no topo
-    //  da parede (y=3) = SEGUNDO ANDAR, parede do 2º andar (y=3), etc.
-    let level = Math.round(raw.y / LEVEL_H) * LEVEL_H;
-    //  ESTENDER O ANDAR EM QUE VOCÊ ESTÁ: ao mirar a célula vizinha VAZIA do 2º
-    //  andar, o raycast atravessa o vão e bate no CHÃO (nível 0) → o piso cairia
-    //  pro térreo. Se você está de pé num andar ACIMA do ponto mirado, constrói
-    //  no SEU andar. Mirar numa peça MAIS ALTA ainda sobe (max), então dá pra
-    //  subir andares normalmente.
-    const pY = this.player?.mesh?.position?.y;
-    if (Number.isFinite(pY)) {
-      const pLevel = Math.round(pY / LEVEL_H) * LEVEL_H;
-      if (pLevel > level) level = pLevel;
-    }
+    // ── SNAP VERTICAL POR NÍVEL + CONTROLE CIMA/BAIXO ────────────────
+    //  Base: o nível do que o crosshair acerta (chão / topo de peça / plano do
+    //  andar quando é vazio). Mirar numa superfície MAIS ALTA sobe, mais BAIXA
+    //  desce — então dá pra construir pra cima E pra baixo.
+    //  Setas ↑/↓ deslocam o nível-alvo em andares (construir no AR acima/abaixo).
+    if (this._buildLevelOff == null) this._buildLevelOff = 0;
+    if (this._edge('ArrowUp'))   { this._buildLevelOff += 1; window._dbg?.('andar de construção: ' + (this._buildLevelOff >= 0 ? '+' : '') + this._buildLevelOff + ' (↑/↓ ajusta)', '#9fe'); }
+    if (this._edge('ArrowDown')) { this._buildLevelOff -= 1; window._dbg?.('andar de construção: ' + (this._buildLevelOff >= 0 ? '+' : '') + this._buildLevelOff + ' (↑/↓ ajusta)', '#9fe'); }
+    let level = Math.round(raw.y / LEVEL_H) * LEVEL_H + this._buildLevelOff * LEVEL_H;
+    // Limites VERTICAIS (sem limite pros lados, por enquanto): ~20 andares p/
+    // cima e ~10 p/ baixo. Evita runaway; ajustável depois.
+    const MIN_Y = -30, MAX_Y = 60;
+    level = Math.max(MIN_Y, Math.min(MAX_Y, level));
     raw.y = level;
 
     if (this._dragTool === 'floor' && this._edge('KeyX')) this._floorRemove = !this._floorRemove;
@@ -1583,7 +1581,26 @@ export class BuildMode {
       ray,
       m => m.checkCollisions === true && m.isPickable !== false && !m.name.startsWith('_ghost'),
     );
-    return (hit?.hit && hit.pickedPoint) ? hit.pickedPoint : null;
+    if (hit?.hit && hit.pickedPoint) return hit.pickedPoint;
+
+    // ── CONSTRUIR ALÉM DO MUNDO ──────────────────────────────────────
+    //  Mira no VAZIO (além da borda do chão / fora do mapa): projeta o raio num
+    //  PLANO horizontal no NÍVEL do andar em que você está. Assim dá pra colocar
+    //  piso/parede pra QUALQUER lado e o mundo "expande" com as peças (cada piso
+    //  tem colisão real). Sem isso, não dava pra construir onde não há chão.
+    try {
+      const LEVEL_H = 3;
+      const pY = this.player?.mesh?.position?.y ?? 0;
+      const planeY = Math.round(pY / LEVEL_H) * LEVEL_H;   // nível do andar do jogador
+      const o = ray.origin, d = ray.direction;
+      if (Math.abs(d.y) > 1e-4) {
+        const t = (planeY - o.y) / d.y;
+        if (t > 0 && t < 3000) {                            // só pra frente, alcance são
+          return new BABYLON.Vector3(o.x + d.x * t, planeY, o.z + d.z * t);
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 
   _edge(code) {

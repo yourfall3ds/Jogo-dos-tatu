@@ -1731,14 +1731,13 @@ async function init() {
     g.checkCollisions = true;
     g.receiveShadows = true;
     const mat = new BABYLON.StandardMaterial("openworld_ground_mat", scene);
-    // Config estavel pra WebGPU: sem specular (mata IBL flicker), leve emissive
-    // pra nao ficar 100% preto, ambient pra captar luz ambiente da cena.
+    // Piso BRANCO (retângulo limpo, igual peça de chão). Sem specular pra estabilidade WebGPU.
     mat.backFaceCulling = true;
     mat.disableLighting = false;
     mat.specularColor = new BABYLON.Color3(0, 0, 0);
-    mat.diffuseColor = new BABYLON.Color3(0.20, 0.22, 0.27);
-    mat.emissiveColor = new BABYLON.Color3(0.02, 0.03, 0.05);
-    mat.ambientColor = new BABYLON.Color3(0.3, 0.3, 0.35);
+    mat.diffuseColor = new BABYLON.Color3(0.90, 0.91, 0.93);
+    mat.emissiveColor = new BABYLON.Color3(0.20, 0.21, 0.23);
+    mat.ambientColor = new BABYLON.Color3(0.6, 0.6, 0.62);
     // StandardMaterial nao usa IBL, mas garantimos sem reflexao residual.
     if (mat.reflectionTexture) mat.reflectionTexture = null;
     g.material = mat;
@@ -1754,9 +1753,9 @@ async function init() {
         grid.minorUnitVisibility = 0.35;
         grid.gridRatio = 4;             // celula de 4m (plano grande -> menos linhas)
         grid.backFaceCulling = true;
-        grid.mainColor = new BABYLON.Color3(0.20, 0.22, 0.27);
-        grid.lineColor = new BABYLON.Color3(0.30, 0.45, 0.55);
-        grid.opacity = 0.99;
+        grid.mainColor = new BABYLON.Color3(0.92, 0.93, 0.95);   // piso BRANCO
+        grid.lineColor = new BABYLON.Color3(0.65, 0.68, 0.72);   // linhas cinza-claro (referência de célula)
+        grid.opacity = 1.0;
         grid.freeze && grid.freeze();
         g.material = grid;
       }
