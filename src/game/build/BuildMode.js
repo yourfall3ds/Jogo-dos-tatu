@@ -536,6 +536,11 @@ export class BuildMode {
     if (/^https?:/.test(url) && url.includes('/storage/v1/object/public/')) {
       return { folder: '', file: url, extHint: '.glb' };
     }
+    // Wasabi (jogo): endpoint estável wasabi-sign (302 → URL assinada com CORS)
+    // ou URL crua do bucket → carrega DIRETO. Assets gerados hospedados no Wasabi.
+    if (/^https?:/.test(url) && (/\/functions\/v1\/wasabi-sign\?/.test(url) || /wasabisys\.com\//.test(url))) {
+      return { folder: '', file: url, extHint: '.glb' };
+    }
     // Externa (http/https) que não seja asset local → proxy → blob
     if (/^https?:/.test(url)) {
       try {
