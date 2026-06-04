@@ -20,18 +20,27 @@ export class PlayerStateMachine {
   }
 
   canAttack() {
-    // Inclui 'sword' (espada saca = pode atacar com slash) e 'armed' (pra
-    // permitir melee como fallback se o WeaponSystem habilitar isMelee).
+    // MECÂNICA LIVRE: atacar (soco/chute/espada) em QUALQUER estado —
+    // inclusive VOANDO (jumping/falling) e durante o DASH ('dodging').
+    // Só bloqueia quando o player REALMENTE não pode agir: atordoado,
+    // derrubado ou morto. 'attacking' não precisa ser listado aqui porque
+    // cada ataque já intercepta via isAttacking() antes de chamar canAttack().
     return (
-      this.state === "unarmed" ||
-      this.state === "moving"  ||
-      this.state === "idle"    ||
-      this.state === "sword"
-    ) && this.state !== "dodging";
+      this.state !== "stunned"   &&
+      this.state !== "knockdown" &&
+      this.state !== "dead"
+    );
   }
 
   canShoot() {
-    return this.state === "armed";
+    // Atirar VOANDO/no DASH liberado. WeaponSystem.shoot() não usa este gate
+    // (só checa ammo/firerate/reload), mas mantemos coerente: só bloqueia
+    // nos estados em que o player não pode agir.
+    return (
+      this.state !== "stunned"   &&
+      this.state !== "knockdown" &&
+      this.state !== "dead"
+    );
   }
 
   isAttacking() {

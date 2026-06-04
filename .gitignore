@@ -12,3 +12,6 @@ node_modules/
 
 # Certificados self-signed do servidor LAN (NUNCA commitar a chave privada)
 certs/
+
+# Backups dos GLBs de anim originais (com mesh) - NAO versionar (~500MB)
+assets/animations/.orig-backup/

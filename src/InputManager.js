@@ -56,7 +56,12 @@ export class InputManager {
 
       const wasDown = this.keys[e.code];
       this.keys[e.code] = true;
-      if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))
+      // Só engole as teclas de scroll/foco do browser DURANTE o jogo (gameActive).
+      // Fora do gameplay (menus, login, lobby) deixa o comportamento nativo —
+      // Tab navega campos, Space rola a página. Space/setas rolam a viewport e
+      // Tab tira o foco do canvas; dentro do jogo isso atrapalha o controle.
+      if (this.gameActive &&
+          ['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Tab'].includes(e.code))
         e.preventDefault();
 
       // Double-tap WASD → dash 360. Só conta como NOVO toque se a tecla estava
@@ -151,6 +156,13 @@ export class InputManager {
       if (this.gameActive) e.preventDefault();
     });
 
+    // ── AudioContext: resume no gesto + ao voltar pra aba ────────────
+    // O WebAudio cru compartilhado (window._audioCtx) usado pelos SFX
+    // procedurais (BattleBus, DropPod, LobbyHall, etc.) é criado lazy e nasce
+    // 'suspended' se o 1º som cair fora de um gesto, e o browser também o
+    // suspende ao trocar de aba. Sem isto o SFX fica mudo/cortado após alt-tab.
+    this._installAudioResume();
+
     // ── Scroll do mouse → troca de arma ──────────────────────────────
     window.addEventListener('wheel', e => {
       if (!this.gameActive) return;
@@ -194,6 +206,38 @@ export class InputManager {
       this._lockConfirmed = false;
       this._pendingLock = true;
       console.debug('[Input] pointerlockerror — re-lock adiado pro proximo clique.');
+    });
+  }
+
+  // ── Bootstrap de áudio: resume centralizado ─────────────────────
+  // (a) No 1º gesto (pointerdown/keydown) garante que o window._audioCtx
+  //     compartilhado exista e esteja 'running' — assim qualquer consumidor
+  //     procedural que toque depois nasce destravado.
+  // (b) No visibilitychange (voltar pra aba) dá resume() no ctx e destrava o
+  //     audioEngine do Babylon, que o browser tinha suspendido no alt-tab.
+  _installAudioResume() {
+    const resumeShared = () => {
+      try {
+        const ctx = window._audioCtx ||
+          (window._audioCtx = new (window.AudioContext || window.webkitAudioContext)());
+        if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+      } catch (_) {}
+      // Babylon AudioEngine v2 (se já criado) — destrava no gesto.
+      try {
+        const ae = BABYLON?.Engine?.audioEngine || window._babylonAudioEngine;
+        ae?.unlock?.();
+        ae?.unlockAsync?.().catch?.(() => {});
+      } catch (_) {}
+    };
+
+    // (a) 1º gesto do usuário — uma vez é suficiente pra sair de 'suspended'.
+    const onGesture = () => resumeShared();
+    window.addEventListener('pointerdown', onGesture, { passive: true });
+    window.addEventListener('keydown',     onGesture, { passive: true });
+
+    // (b) Voltar pra aba — o browser suspende o ctx ao ocultar; retoma aqui.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) resumeShared();
     });
   }
 

@@ -1,5 +1,10 @@
 /**
- * Rifle Pesado - Lógica Isolada
+ * Rifle Pesado - 1 TIRO, CADENCIADO, DANO ALTO.
+ *
+ * É o oposto da Metralhadora (auto, dano/tiro baixo). Um único disparo por
+ * clique com cadência alta (cdMs alto no server) e dano por tiro elevado.
+ * Os números autoritativos vivem no server (WeaponTable.WEAPONS.rifle);
+ * damage aqui espelha o server para os números flutuantes do cliente.
  *
  * Usa a mesma convenção de rotação da PistolaBucaneira (Math.PI/2 no Y)
  * para qualquer GLB exportado com o mesmo eixo de orientação.
@@ -10,12 +15,12 @@ export class RiflePesado {
   constructor(scene) {
     this.id    = 'rifle';
     this.label = 'Rifle Pesado';
-    this.damage   = 22;
-    this.fireRate  = 0.09;   // automático rápido
-    this.ammo     = 30;
-    this.maxAmmo  = 30;
-    this.automatic = true;   // SEGURA o botão → metralha (som em loop)
-    this.fireSound = 'mg_loop';
+    this.damage   = 60;       // espelha WeaponTable.rifle.dmg (server-auth)
+    this.fireRate  = 0.60;    // 1 tiro cadenciado (cdMs alto no server)
+    this.ammo     = 8;
+    this.maxAmmo  = 8;
+    this.automatic = false;   // semi-auto: 1 tiro por clique
+    this.fireSound = 'gun_rifle';
 
     // ── Ajustes Visuais (FPS) ──────────────────────────────────────
     this.viewmodelScale    = 0.7400;

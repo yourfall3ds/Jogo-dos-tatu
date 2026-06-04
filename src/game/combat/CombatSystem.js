@@ -156,9 +156,40 @@ export class CombatSystem {
     this._executeAttack('kick');
   }
 
+  // ── ATAQUE PESADO ───────────────────────────────────────────────
+  //  Golpe pesado real: mais dano + mais knockback (sempre crit, manda
+  //  longe) + cooldown maior. Reusa toda a infra de _executeNextAttack →
+  //  _applyHit (hitbox, som de impacto, sangue, hit-stop). Escolhe uma
+  //  animação GARANTIDAMENTE carregada (kick_01 sempre existe; usa uma
+  //  finisher mais pesada se estiver disponível).
   heavyAttack() {
-    // Futuro: ataque carregado (hold RMB > 0.8s)
-    console.log("Heavy attack — em desenvolvimento");
+    // Gate de cooldown — heavy é mais lento que o combo normal.
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (this._heavyCdUntil && now < this._heavyCdUntil) return;
+    if (this.stateMachine.isAttacking()) return;       // não interrompe combo em curso
+    if (!this.stateMachine.canAttack()) return;
+
+    // Escolhe a melhor anim de chute pesado que ESTIVER carregada.
+    // kick_01 é o fallback seguro (sempre presente nos GLBs base).
+    const has = (n) => { try { return !!this.animController?.library?.has?.(n); } catch (_) { return false; } };
+    const heavyAnim = ['spartan_kick', 'kick_02', 'roundhouse', 'kungfu_punch', 'kick_01']
+      .find(has) || 'kick_01';
+
+    // Perfil PESADO (independente do attackData da anim base): muito dano,
+    // knockback acima do CRIT_KB (garante crit nível 2 → voar longe).
+    const heavyData = {
+      hits: [{ hitTime: 0.22, damage: 70, bone: 'RightFoot', kb: 6.5 }],
+      comboWindow: 0.65,
+    };
+
+    this.stateMachine.setState("attacking");
+    this.comboSystem.reset();
+    this._lastAttackType = 'kick';
+    // Velocidade mais lenta (golpe encorpado) e isKick=true (som/impacto de chute).
+    this._executeNextAttack(heavyAnim, heavyData, 2.2, true);
+
+    // Cooldown maior que o combo normal (anti-spam do golpe pesado).
+    this._heavyCdUntil = now + 850;
   }
 
   // ── ESPADA ──────────────────────────────────────────────────────
@@ -307,17 +338,20 @@ export class CombatSystem {
     if (!snd) return;
     const pl = this.playerMesh?._playerRef;
     const curW = pl?.weapon?.getCurrentWeapon?.();
-    if (curW?.id === 'chibata' && curW.isMelee) {
-      // Chibata: silencia o swing (só toca chibatada no impacto)
-      return;
-    }
-    this._swingIdx = ((this._swingIdx || 0) % 3) + 1;
-    snd.playNow('swing_' + this._swingIdx, 0.5);
-    // MP: avisa o server pra parceiros OUVIREM o golpe (espacial), mesmo se errar.
+    // MP: avisa o server pra parceiros OUVIREM o golpe (espacial), mesmo se
+    // errar. FEITO ANTES do early-return da Chibata: o swing local da Chibata
+    // é silenciado, mas o parceiro AINDA precisa receber o remote_fire pra
+    // ouvir o whoosh espacial do golpe na posição do atacante.
     try {
       const wId = pl?.weapon?.getCurrentWeapon?.()?.id || 'melee';
       window._cs?.sendFire?.(wId, true);
     } catch (_) {}
+    if (curW?.id === 'chibata' && curW.isMelee) {
+      // Chibata: silencia o swing LOCAL (só toca chibatada no impacto).
+      return;
+    }
+    this._swingIdx = ((this._swingIdx || 0) % 3) + 1;
+    snd.playNow('swing_' + this._swingIdx, 0.5);
   }
 
   // Som de IMPACTO (acertou alguém). Combo normal → som CONSISTENTE; só o
@@ -398,12 +432,21 @@ export class CombatSystem {
 
     const currentPos = this.playerMesh.position;
 
-    // Direção do golpe = pra ONDE O PLAYER OLHA (yaw). O capsule tem rotação
-    // travada em 0, então getDirection(Forward) dava sempre +Z mundo (errado).
-    // Usamos o yaw real → soco/chute vão na direção da câmera.
+    // Direção do golpe = pra ONDE O PLAYER OLHA. No TPS a mira inclui PITCH
+    // (mirar pra cima/baixo), então derivamos do forward REAL da câmera —
+    // igual ao gun e à SkillSystem (camera.getDirection(Forward), que já
+    // embute yaw+pitch). O capsule tem rotação travada, por isso usamos a
+    // câmera e NÃO mesh.getDirection. Fallback p/ yaw puro se a câmera não
+    // existir (ex.: contextos sem player local).
     const _pl = this.playerMesh._playerRef;
-    const yawRad = BABYLON.Tools.ToRadians(_pl?.yaw ?? 0);
-    const moveDir = new BABYLON.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad));
+    let moveDir;
+    const _camFwd = _pl?.camera?.getDirection?.(BABYLON.Vector3.Forward());
+    if (_camFwd && _camFwd.lengthSquared() > 1e-6) {
+      moveDir = _camFwd.normalize();   // inclui pitch → paralaxe de mira no TPS
+    } else {
+      const yawRad = BABYLON.Tools.ToRadians(_pl?.yaw ?? 0);
+      moveDir = new BABYLON.Vector3(Math.sin(yawRad), 0, Math.cos(yawRad));
+    }
 
     const scene = this.playerMesh.getScene();
     let hitSomething = false;
@@ -488,6 +531,13 @@ export class CombatSystem {
           window._cs?.sendHitPlayer?.(m._remoteRef.playerId, hitDef.damage, animName);
           // Damage number visual no cliente que atacou (feedback imediato)
           window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
+          // HITMARKER imediato no crosshair do atacante (sem esperar o server).
+          window._hitMarker?.hit({ dmg: hitDef.damage, crit: isCrit });
+          // KNOCKBACK + flinch PREDITIVO no player remoto (lado do atacante):
+          //  empurrão visual na direção do golpe usando o kbEff já calculado
+          //  (mesmo do PvE). É cosmético — o snapshot do server reconverge a
+          //  posição no próximo tick, sem desync. Dá o IMPACTO que faltava.
+          try { m._remoteRef.playHit?.(moveDir, kbEff, critLevel); } catch (_) {}
           if (this.impactSystem) {
             const ip = activeHitbox.getAbsolutePosition().clone();
             if (isKick) this.impactSystem.spawnKickImpact(ip, true);

@@ -54,14 +54,23 @@ import { ChibataMapLoader }    from './game/scene/ChibataMapLoader.js';
 import { MapSelectUI }         from './game/ui/MapSelectUI.js';
 import { BloodFX }             from './game/combat/BloodFX.js';
 import { BulletTracer }        from './game/effects/BulletTracer.js';
+import { HitMarker }           from './game/effects/HitMarker.js';
 import { WaterSystem }         from './game/scene/WaterSystem.js';
 import { SkillMapExtras }      from './game/scene/SkillMapExtras.js';
+import { BiomeWorld }          from './game/scene/BiomeWorld.js';
 import { SettingsUI }          from './game/ui/SettingsUI.js';
 import { MusicSystem }         from './game/audio/MusicSystem.js';
 import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
 import { AuthSystem }          from './game/auth/AuthSystem.js';
 import { DEBUG }               from './utils/debug.js';
 import { VRSystem }            from './game/vr/VRSystem.js';
+import { injectGameUI }        from './game/ui/GameUIKit.js';
+
+// ── Design System cyberpunk: injeta fontes + tokens + classes UMA vez ──
+//  Idempotente. Chamado o mais cedo possivel (antes das telas de menu/fluxo)
+//  pra que index.html start-screen, ServerListUI, CharacterSelectScreen e o
+//  LoadingOverlay possam usar as classes gui-* / vars --cy-*.
+try { injectGameUI(); } catch (e) { console.error('[GameUIKit] inject:', e); }
 
 // OAuth callback handler — roda ANTES do init normal.
 // Se essa janela for o popup de login (tem ?code= [PKCE] ou #access_token=
@@ -116,6 +125,7 @@ import { BootLoadGuard } from './game/ui/BootLoadGuard.js';
 import { attachTransfpsFlowGuard } from './game/ui/TransfpsFlowGuard.js';
 import { BattleRoyaleMode } from './game/br/BattleRoyaleMode.js';
 import { CharacterSelect3D } from './game/br/CharacterSelect3D.js';
+import { CharacterSelectScreen } from './game/ui/CharacterSelectScreen.js';
 import { LobbyHall } from './game/br/LobbyHall.js';
 import { BloodTrail }          from './game/combat/BloodTrail.js';
 import { DeathCam }            from './game/multiplayer/DeathCam.js';
@@ -413,7 +423,12 @@ async function init() {
   shadowGen.cascadeBlendPercentage = 0.05;
   shadowGen.shadowMaxZ = 115;           // alcance das cascatas (u) — valor F8
   shadowGen.depthClamp = true;
-  shadowGen.autoCalcDepthBounds = true; // ajusta profundidade à cena
+  // autoCalcDepthBounds=false: recalcular os limites de profundidade a cada
+  //  frame fazia as cascatas RE-ENCAIXAREM quando o frustum varria ao girar
+  //  a câmera → AMPLIFICAVA o flicker do depth. Com shadowMinZ/shadowMaxZ
+  //  fixos (1..250) + stabilizeCascades, a profundidade das cascatas fica
+  //  estável durante a rotação. (era true)
+  shadowGen.autoCalcDepthBounds = false;
   // PCSS: penumbra realista (nítida no contato, suave ao longe)
   shadowGen.filter = BABYLON.ShadowGenerator.FILTER_PCSS;
   shadowGen.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM;
@@ -466,7 +481,7 @@ async function init() {
 
   // ── Névoa (leve — só pra dar profundidade no horizonte) ──────────
   scene.fogMode    = BABYLON.Scene.FOGMODE_EXP2;
-  scene.fogDensity = 0.0018;
+  scene.fogDensity = 0.001;   // alcance ~3x maior p/ mapão (cor segue o céu via DayNightCycle)
   scene.fogColor   = new BABYLON.Color3(.58, .70, .92);
 
   // ── Ciclo dia/noite (sol, lua, fases, céu HD) ────────────────────
@@ -534,6 +549,12 @@ async function init() {
   const skillExtras = new SkillMapExtras(scene, level);
   skillExtras.build();
   window._skillExtras = skillExtras;
+
+  // ── Mapão por biomas com streaming (estilo Fortnite) ──
+  // Só ativa no OPEN_WORLD (via _ensureOpenWorldGround). Carrega biomas por
+  // proximidade do player — boot rápido, nunca os ~190MB de uma vez.
+  const biomeWorld = new BiomeWorld(scene, { shadowGen, seed: 1337 });
+  window._biomeWorld = biomeWorld;
 
   // ── Music + Mute button (música começa APENAS no JOGAR) ──
   const musicSystem = new MusicSystem();
@@ -702,12 +723,23 @@ async function init() {
           window._dmgNumbers?.spawn(player.mesh.position, '+MP' + m.value, { color: '#5599ff' });
           break;
         case 'coin':
-          // Acumula localmente (futuro: server-side em PlayerState.coins)
-          player._coins = (player._coins || 0) + m.value;
+          // Saldo AUTORITATIVO: o server já somou em PlayerState.coins (schema
+          // replicado). Reflete o valor do server em vez de acumular local —
+          // assim o HUD nunca diverge do que é persistido no Supabase.
+          {
+            const srvCoins = cs.getMyCoins?.();
+            player._coins = (srvCoins != null) ? srvCoins : ((player._coins || 0) + m.value);
+          }
           window._dmgNumbers?.spawn(player.mesh.position, '+' + m.value + '🪙', { color: '#ffcc22' });
           break;
         case 'gem':
-          player._gems = (player._gems || 0) + m.value;
+          // Gem é convertido em coins no server (gem = 3x coin) e somado em
+          // PlayerState.coins. Não existe saldo de gems separado no server, então
+          // o cliente espelha o coins autoritativo (evita contagem fantasma).
+          {
+            const srvCoins = cs.getMyCoins?.();
+            if (srvCoins != null) player._coins = srvCoins;
+          }
           window._dmgNumbers?.spawn(player.mesh.position, '+💎' + m.value, { color: '#5cf' });
           break;
       }
@@ -731,10 +763,7 @@ async function init() {
     } else if (m.to === myId) {
       targetPos = player.mesh?.position;
       targetMesh = player.mesh;
-      // KNOCKBACK autoritativo: o servidor mandou o vetor — empurra meu corpo.
-      if (Number.isFinite(m.kbx) || Number.isFinite(m.kbz)) {
-        player.applyServerKnockback?.(m.kbx, m.kby, m.kbz);
-      }
+      // (knockback PvP é tratado pelo evento dedicado 'player_knockback')
     } else {
       const rp = _remotePlayers.get(m.to);
       if (rp) { targetPos = rp.root?.getAbsolutePosition?.(); targetMesh = rp.body; }
@@ -743,6 +772,13 @@ async function init() {
       const crit = m.dmg >= 80;
       const color = m.from === myId ? (crit ? '#ff5050' : '#ffffff') : '#ffaa44';
       window._dmgNumbers?.spawn(targetPos, m.dmg, { crit, color });
+    }
+    // ── HITMARKER: confirmação no crosshair quando EU fui o atacante.
+    //    Cobre melee E tiro (server confirma ambos via hit_confirmed).
+    //    Tier por dano; X de kill quando o alvo morre (hp<=0).
+    if (m.from === myId) {
+      const killed = (m.target_hp != null && m.target_hp <= 0) || m.killed === true;
+      window._hitMarker?.hit({ dmg: m.dmg || 0, crit: m.dmg >= 80, kill: killed });
     }
     if (targetPos && window._bloodFX) {
       const isSword = String(m.weapon || '').startsWith('sword');
@@ -775,7 +811,10 @@ async function init() {
   cs.on("hit_confirmed", (m) => {
     try {
       const myId = window._auth?.getUserId?.();
-      if (m.target_id && m.target_id === myId) {
+      // FIX: o server manda o alvo no campo `m.to` (hit_confirmed PvP), não
+      // `m.target_id`. Antes a condição era sempre falsa → nunca tocava som
+      // de dor nem flash ao levar dano de outro player.
+      if (m.to && m.to === myId) {
         const sm = window._soundManager || window._player?.sounds;
         if (sm?.playNow) sm.playNow("hurt", 0.9);
         _showDamageFlash();
@@ -787,7 +826,8 @@ async function init() {
   cs.on("hit_confirmed", (m) => {
     try {
       const me = window._player?.mesh?.position;
-      const target = m?.target_id ? cs.state?.players?.get?.(m.target_id) : null;
+      // FIX: alvo do hit PvP vem em `m.to`, não `m.target_id`.
+      const target = m?.to ? cs.state?.players?.get?.(m.to) : null;
       if (me && target && Number.isFinite(target.x)) {
         const tPos = new BABYLON.Vector3(target.x, target.y + 1.5, target.z);
         bulletTracer.spawn(me, tPos);
@@ -940,6 +980,34 @@ async function init() {
         } catch (_) {}
       }).catch(() => {});
     } catch (e) { console.error('[remote_fire]', e); }
+  });
+
+  // ── A7+B2: KNOCKBACK PvP REPLICADO ──────────────────────────────────────
+  //  O server (player_knockback) manda o VETOR de empurrão do golpe PvP.
+  //  Se o alvo sou EU → aplico no player local (somar em _vx/_vz via
+  //  applyKnockback, igual wall-kick) + stun curto. Senão → o RemotePlayer do
+  //  alvo reage visualmente (playHit empurra/flinch). Antes o empurrão era só
+  //  cosmético no atacante e o alvo nunca sentia.
+  cs.on('player_knockback', (m) => {
+    try {
+      const myId = auth.getUserId();
+      const dirX = +m?.dirX || 0;
+      const dirZ = +m?.dirZ || 0;
+      const force = +m?.force || 7;
+      const stunMs = +m?.stunMs || 150;
+      const crit = m?.crit === true;
+      if (m?.to === myId) {
+        // Eu fui empurrado: física local + stun travando input.
+        player.applyKnockback?.(dirX, dirZ, force, stunMs, crit);
+      } else {
+        // Outro player foi empurrado: reação visual no avatar remoto.
+        const rp = _remotePlayers.get(m?.to);
+        if (rp?.playHit) {
+          const dirVec = new BABYLON.Vector3(dirX, 0, dirZ);
+          rp.playHit(dirVec, force, crit ? 1 : 0);
+        }
+      }
+    } catch (e) { console.error('[player_knockback]', e); }
   });
 
   // ── XP/LEVEL UP (server-authoritative) ──
@@ -1524,6 +1592,12 @@ async function init() {
     // Congela o material apos config: evita recompile/flicker no WebGPU.
     if (g.material && g.material.freeze) g.material.freeze();
     console.log("[OpenWorld] plano vazio criado");
+    // BiomeWorld (mapão de vários mapas empilhados) DESLIGADO a pedido do dono:
+    // o servidor BRASIL agora é UM mapa único — a arena inicial do TransFPS
+    // (rampas/cilindros/torres do SkillMapExtras) + o chão. Os vários mapas
+    // sobrepostos causavam tela preta/artefatos. Pra religar o mapão no futuro:
+    // descomentar a linha abaixo.
+    // try { window._biomeWorld?.enable(); } catch (e) { console.error('[BiomeWorld] enable:', e); }
     return g;
   }
   // Plugamos AMBAS as UIs no mesmo handler — a ServerListUI eh o caminho
@@ -1540,6 +1614,11 @@ async function init() {
   window._charSwapper = charSwapper;
   // Injeta swapper no CharSelect3D (foi criado antes)
   if (charSelect3D) charSelect3D.swapper = charSwapper;
+  // ── Tela de seleção de personagem (entra entre "Entrar" e o spawn) ──
+  //  A ServerListUI abre window._charSelectScreen ao clicar Entrar; o JOGAR
+  //  dela continua o fluxo de join/spawn aplicando o avatar via charSwapper.
+  const charSelectScreen = new CharacterSelectScreen({ cs, swapper: charSwapper });
+  window._charSelectScreen = charSelectScreen;
   //  API de debug/experimento: troca o player por qualquer GLB e mostra a
   //  taxa de compatibilidade de rig (quantas anims casaram).
   window.setPlayerModel = async (url) => {
@@ -1561,6 +1640,10 @@ async function init() {
   // ── Hit-stop: freeze-frame de impacto nos golpes fortes ───────────
   const hitStop = new HitStop(scene, engine, player.camera);
   window._hitStop = hitStop;
+
+  // ── HitMarker: confirmação no crosshair ao ACERTAR (PvP/PvE) ──────
+  const hitMarker = new HitMarker();
+  window._hitMarker = hitMarker;
 
   // ── Drops: inimigos soltam moedas/materiais ao morrer ─────────────
   const dropSystem = new DropSystem(scene, player);
@@ -1681,6 +1764,20 @@ async function init() {
     // ferramenta/menu aberto (Biblioteca, modo colocar) → não pausa por cima
     if (window._assetGroupsUI?._visible) return;
     if (window._buildMode && window._buildMode._state !== 'inactive') return;
+    // ── MULTIPLAYER: NUNCA pausa ao perder pointer lock ───────────────
+    // O servidor (Colyseus) é autoritativo: o personagem continua VULNERÁVEL
+    // e recebendo dano mesmo sem o lock local. Perder o lock (ESC, alt-tab,
+    // clique fora) NÃO pode mostrar menu de pause nem congelar a lógica do
+    // player — só re-capturamos o pointer no próximo mousedown real (o
+    // handler de mousedown do InputManager já chama _requestLock(true)).
+    // Pra manter o player VIVO no loop (movimento/câmera/dano client-side),
+    // re-armamos gameActive — assim o update do player segue rodando; só o
+    // cursor fica visível até o jogador clicar de volta. SEM overlay de pause.
+    if (window._cs?.connected) {
+      window._gameInput && (window._gameInput.gameActive = true);
+      return;
+    }
+    // ── SOLO/OFFLINE: pausa de verdade (overlay + congela input local) ─
     _showGamePause();
   };
 
@@ -1712,6 +1809,15 @@ async function init() {
         window.exitEngineMode();
         window._gameInput?.activate();
         setFocusUI(true);
+        return;
+      }
+      // ── MULTIPLAYER: ESC nunca abre menu de pause ────────────────────
+      // Servidor autoritativo → o personagem segue VULNERÁVEL. ESC só libera
+      // o pointer lock (comportamento nativo do browser); NÃO preventDefault,
+      // NÃO mostra overlay, NÃO desativa o player. O próximo mousedown real
+      // re-captura o lock. Mantém gameActive pra o player seguir no loop/dano.
+      if (window._cs?.connected) {
+        window._gameInput && (window._gameInput.gameActive = true);
         return;
       }
       const ov = $('pause-overlay');
@@ -1986,15 +2092,22 @@ async function init() {
         if (player._dead) {
           try {
             player._serverRespawn = true;
-            // Reposiciona na posição que o server mandou (se disponível),
-            // senão respawn() usa o spawn padrão (0, 2.5, 0).
-            const sx = me?.x, sy = me?.y, sz = me?.z;
+            // REGRA DO DONO #4: renasce CAINDO DO CÉU (skydive), não no chão.
+            // respawn()->spawn() já joga o player pra (0,200,0) caindo; aqui só
+            // ajustamos o X/Z pra cair PERTO do ponto que o server mandou
+            // (mantendo a altura de skydive = 200). Sem sobrescrever pro chão.
+            const sx = me?.x, sz = me?.z;
             player.respawn();
             if (player.mesh && Number.isFinite(sx) && Number.isFinite(sz)) {
-              const py = Number.isFinite(sy) ? sy : player.mesh.position.y;
-              player.mesh.position.set(sx, py, sz);
+              const SKY = 200;
+              player.mesh.position.set(sx, SKY, sz);
+              player.velY = -15; player._isFalling = true;
+              player._prevY = SKY;
               if (player._cc) {
-                try { player._cc.setPosition(new BABYLON.Vector3(sx, py, sz)); } catch (_) {}
+                try {
+                  player._cc.setPosition(new BABYLON.Vector3(sx, SKY, sz));
+                  player._cc.setVelocity(new BABYLON.Vector3(0, -15, 0));
+                } catch (_) {}
               }
             }
           } catch (e) {
@@ -2005,6 +2118,8 @@ async function init() {
       }
       _lastDeadState = isDead;
     }
+    // Mapão por biomas: streaming por proximidade do player (2Hz interno).
+    try { biomeWorld.update(dt, player.mesh?.position); } catch (e) { /* não trava o loop */ }
     // Minimap (modo normal): atualiza a 5Hz. No BATTLE_ROYALE o próprio
     // BattleRoyaleMode cuida do minimap dele → escondemos este pra não duplicar.
     if (_minimap) {
@@ -2121,6 +2236,13 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
       }, label: 'Pistola…' },
     { key: 'rifle',  done: ms => {
         player.weapon.setGLBWeapon(ms, 'rifle');
+        // Metralhadora compartilha o modelo do rifle: clona o root pra um
+        // segundo id ('machinegun') já que setGLBWeapon reparenteia o mesh.
+        try {
+          const root = ms?.[0];
+          const mgRoot = root?.clone?.('mg_root', null, false);
+          if (mgRoot) player.weapon.setGLBWeapon([mgRoot, ...mgRoot.getChildMeshes()], 'machinegun');
+        } catch (e) { console.warn('[main] clone metralhadora falhou:', e?.message); }
         player.attachCurrentWeaponToAnimator();
       }, label: 'Rifle…' },
     // ── Espadas (Forgotten Insanity PBR) ──

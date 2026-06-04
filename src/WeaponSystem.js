@@ -1,5 +1,6 @@
 import { PistolaBucaneira } from './game/weapons/PistolaBucaneira.js';
 import { RiflePesado }      from './game/weapons/RiflePesado.js';
+import { Metralhadora }     from './game/weapons/Metralhadora.js';
 import { EspadaPaladin }    from './game/weapons/EspadaPaladin.js';
 import { EspadaZweihander } from './game/weapons/EspadaZweihander.js';
 import { Chibata }          from './game/weapons/Chibata.js';
@@ -15,24 +16,31 @@ export class WeaponSystem {
     this.level  = level;
 
     // ── Instâncias das Armas ──────────────────────────────────────
-    this.slot1 = new PistolaBucaneira(scene);
-    this.slot1.id = 'pistol';
+    //  Ordem = índice na hotbar (teclas/scroll). Default do dono:
+    //  0=rifle(1) · 1=metralhadora(2) · 2=espada(3) · 3=chibata(4) ·
+    //  4=zweihander(5) · 5=pistola(6). weaponIndex no ItemCatalog segue isto.
+    this.slot1 = new RiflePesado(scene);          // 1
+    this.slot1.id = 'rifle';
 
-    this.slot2 = new RiflePesado(scene);
-    this.slot2.id = 'rifle';
+    this.slot2 = new Metralhadora(scene);          // 2
+    this.slot2.id = 'machinegun';
 
-    // ── Espadas (melee) — ordem ao ciclar com scroll ──
-    this.slot3 = new EspadaPaladin(scene);
+    // ── Espadas (melee) ──
+    this.slot3 = new EspadaPaladin(scene);         // 3
     this.slot3.id = 'sword_paladin';
 
-    this.slot4 = new EspadaZweihander(scene);
-    this.slot4.id = 'sword_zweihander';
-
     // ── Chibata (whip) ──
-    this.slot5 = new Chibata(scene);
-    this.slot5.id = 'chibata';
+    this.slot4 = new Chibata(scene);               // 4
+    this.slot4.id = 'chibata';
 
-    this.weapons = [this.slot1, this.slot2, this.slot3, this.slot4, this.slot5];
+    this.slot5 = new EspadaZweihander(scene);      // 5
+    this.slot5.id = 'sword_zweihander';
+
+    // ── Pistola ──
+    this.slot6 = new PistolaBucaneira(scene);      // 6
+    this.slot6.id = 'pistol';
+
+    this.weapons = [this.slot1, this.slot2, this.slot3, this.slot4, this.slot5, this.slot6];
     this.currentWeaponIndex = 0;
 
     // Stats atuais (serão sobrescritos pelo init())
@@ -392,6 +400,15 @@ export class WeaponSystem {
 
   // ── GlowLayer: faz traçadores e flash brilharem ───────────────────
   _buildGlowLayer() {
+    // ⚠️ DESLIGADO no WebGPU: o GlowLayer cria o PostProcessRTT-highlights que
+    // injeta varyings extras no fragment shader → com PBR pesado o total passa
+    // de 16 ("fragment input 17 > 16") → RenderPipeline inválido → tela quebrada
+    // com spam de GPUValidationError todo frame. Glow só em WebGL2; em WebGPU os
+    // tracers/muzzle ainda aparecem pelo emissivo, só sem o bloom de contorno.
+    if (window._webgpu) {
+      console.log('[WeaponSystem] GlowLayer desligado no WebGPU (evita estouro de 16 varyings)');
+      return;
+    }
     try {
       this._glowLayer = new BABYLON.GlowLayer('weaponGlow', this.scene, {
         mainTextureFixedSize: 256,
@@ -564,6 +581,10 @@ export class WeaponSystem {
         const dmg = this.getCurrentWeapon().damage;
         window._cs?.sendHitPlayer?.(hit.pickedMesh._remoteRef.playerId, dmg, this.getCurrentWeapon().id);
         window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, { color: '#ff6666' });
+        // HITMARKER imediato no crosshair do atirador (tier por dano).
+        window._hitMarker?.hit({ dmg, crit: dmg >= 80 });
+        // Knockback + flinch PREDITIVO no alvo (visual, na direção do tiro).
+        try { hit.pickedMesh._remoteRef.playHit?.(dir, dmg >= 60 ? 4 : 2.5, dmg >= 80 ? 1 : 0); } catch (_) {}
         if (window._bloodFX) {
           window._bloodFX.spawn(hit.pickedPoint, dir, {
             multiplier: dmg >= 60 ? 1.4 : 0.85, sourceNode: hit.pickedMesh,

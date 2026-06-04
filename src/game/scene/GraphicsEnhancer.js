@@ -44,17 +44,26 @@ export class GraphicsEnhancer {
     //  mantém MSAA 4x.
     pl.samples = window._webgpu ? 1 : 4;
     pl.fxaaEnabled = true;          // AA principal (cobre a falta de MSAA no WebGPU)
-    pl.bloomEnabled = true;
-    pl.bloomThreshold = 1.0;       // só brilho REAL (>1) floresce — chão claro não estoura
-    pl.bloomWeight = 0.30;        // calibrado no painel F8
-    pl.bloomKernel = 48;
-    pl.bloomScale = 0.5;
-    pl.imageProcessingEnabled = true;
-    pl.sharpenEnabled = true;
-    pl.sharpen.edgeAmount = 0.20;
-    pl.grainEnabled = true;
-    pl.grain.intensity = 4;
-    pl.grain.animated = true;
+    // ⚠️ BLOOM/SHARPEN/GRAIN DESLIGADOS no WebGPU. O bloom cria o render pass
+    // "PostProcessRTT-highlights" (extração de áreas brilhantes) que injeta
+    // varyings extras no fragment shader → com PBR pesado o total passa de 16
+    // ("fragment input 17 > 16") → RenderPipeline inválido → TELA PRETA cheia de
+    // artefatos ao olhar pra cena (spam de GPUValidationError todo frame). ESTE
+    // era o culpado real (não o GlowLayer). No WebGL2 o bloom continua. Mantemos
+    // FXAA + tonemapping/imageProcessing (leves, sem highlights pass).
+    const _heavyFX = !window._webgpu;
+    pl.bloomEnabled = _heavyFX;
+    if (_heavyFX) {
+      pl.bloomThreshold = 1.0;     // só brilho REAL (>1) floresce
+      pl.bloomWeight = 0.30;
+      pl.bloomKernel = 48;
+      pl.bloomScale = 0.5;
+    }
+    pl.imageProcessingEnabled = true;   // tonemapping ACES + exposure (leve, ok no WebGPU)
+    pl.sharpenEnabled = _heavyFX;
+    if (_heavyFX) pl.sharpen.edgeAmount = 0.20;
+    pl.grainEnabled = _heavyFX;
+    if (_heavyFX) { pl.grain.intensity = 4; pl.grain.animated = true; }
     this.pipeline = pl;
 
     // ── SSAO2: oclusão de ambiente (profundidade nos contatos) ───────
@@ -80,20 +89,32 @@ export class GraphicsEnhancer {
     // ── GlowLayer: brilho SÓ de quem é pra brilhar (neon/plasma/sol) ──
     //  Sem filtro, o glow pegava o emissivo leve do PERSONAGEM (rato
     //  radioativo). Filtramos por nome → só tracers/muzzle/neon/sol brilham.
-    try {
-      const glow = new BABYLON.GlowLayer('glow', scene, { mainTextureSamples: 2 });
-      glow.intensity = 0.5;
-      const GLOW_OK = /tracer|muzzle|spark|neon|plasma|sunDisc|moonDisc|crystal|beam|glow/i;
-      glow.customEmissiveColorSelector = (mesh, subMesh, material, result) => {
-        if (GLOW_OK.test(mesh.name || '')) {
-          const e = material.emissiveColor || BABYLON.Color3.Black();
-          result.set(e.r, e.g, e.b, 1);
-        } else {
-          result.set(0, 0, 0, 0);   // não brilha (player, cenário, etc)
-        }
-      };
-      this.glow = glow;
-    } catch (_) {}
+    //
+    //  ⚠️ DESLIGADO no WebGPU. O GlowLayer cria o PostProcessRTT-highlights, que
+    //  injeta varyings extras no fragment shader: com os materiais PBR pesados
+    //  (uv/uv2 + normal+tangent + vColor + fog + front_facing) o total passa de
+    //  16 (erro real: "fragment input 17 > 16") → RenderPipeline inválido →
+    //  tela quebrada com spam de GPUValidationError. Igual ao SSAO acima, o glow
+    //  só roda em WebGL2. Em WebGPU os tracers/neon ainda aparecem (emissivo do
+    //  material), só não ganham o "bloom de contorno" do glow.
+    if (!window._webgpu) {
+      try {
+        const glow = new BABYLON.GlowLayer('glow', scene, { mainTextureSamples: 2 });
+        glow.intensity = 0.5;
+        const GLOW_OK = /tracer|muzzle|spark|neon|plasma|sunDisc|moonDisc|crystal|beam|glow/i;
+        glow.customEmissiveColorSelector = (mesh, subMesh, material, result) => {
+          if (GLOW_OK.test(mesh.name || '')) {
+            const e = material.emissiveColor || BABYLON.Color3.Black();
+            result.set(e.r, e.g, e.b, 1);
+          } else {
+            result.set(0, 0, 0, 0);   // não brilha (player, cenário, etc)
+          }
+        };
+        this.glow = glow;
+      } catch (_) {}
+    } else {
+      console.log('[GFX] GlowLayer desligado no WebGPU (highlights estoura limite de 16 varyings)');
+    }
 
     // — Aberração cromática sutil (lente real) → bordas com franja de cor —
     try {
@@ -105,7 +126,7 @@ export class GraphicsEnhancer {
     // nitidez: render na resolução nativa
     try { this.engine.setHardwareScalingLevel(1 / (window.devicePixelRatio || 1) <= 0.5 ? 0.5 : 1); } catch (_) {}
 
-    console.log(`[GFX] ✨ pós-processamento ligado (Bloom+ACES+FXAA+Glow+CA${this.ssao ? '+SSAO' : ''})`);
+    console.log(`[GFX] ✨ pós-processamento: ${window._webgpu ? 'ACES+FXAA (WebGPU: bloom/glow OFF)' : 'Bloom+ACES+FXAA+Glow+CA'}${this.ssao ? '+SSAO' : ''}`);
   }
 
   // ── VR: desliga TODO pós-processamento pesado ────────────────────

@@ -93,10 +93,10 @@ export class SoundManager {
       jump            : 'assets/Sound FX/voos e rushs/jump.wav',
       walljump        : 'assets/Sound FX/voos e rushs/walljumps.wav',
       deathfall       : 'assets/Sound FX/voos e rushs/Caindo morto forte.wav',
-      // wind — som de vento/voo em LOOP durante a queda do céu (skydive).
-      //  Não há .wav de vento puro → reusa o "air recover" (whoosh de ar contínuo),
-      //  que segura melhor o loop que o walljump (curto/seco).
-      wind            : 'assets/Sound FX/voos e rushs/airrecover.wav',
+      // wind — som de vento/voo em LOOP durante a queda do céu (skydive, estilo Fortnite).
+      //  Vento contínuo real (6.6s mono, OpenGameArt CC0 — domínio público, sem atribuição),
+      //  loopável sem emenda; substitui o antigo "air recover" (whoosh seco/curto).
+      wind            : 'assets/Sound FX/voos e rushs/wind_fall.ogg',
       // land — baque ao tocar o chão (impacto do groundhit; sobrevive à queda).
       land            : 'assets/Sound FX/voos e rushs/groundhit.wav',
       // Inimigo voando longe após golpe forte (ESPACIAL — abaixa com a distância)
@@ -106,8 +106,21 @@ export class SoundManager {
       pickup_item     : 'assets/Sound FX/senzu/mordendo uma fruta.wav',
       // CHIBATADA — som de impacto da arma Chibata (whip)
       chibatada       : 'assets/Sound FX/CHIBATADA.mp3',
-      // Dash (sintetizado em runtime se faltar — fallback no WaterSystem é diferente)
-      dash            : 'assets/Sound FX/voos e rushs/jump.wav',
+      // ── Tela de seleção de personagem ──
+      //  spray_bnookker fala o nome do personagem (.m4a). ui_select = whoosh
+      //  genérico (reusa swing) tocado ao escolher os demais personagens.
+      spray_bnookker  : 'assets/Sound FX/spraybnookker.m4a',
+      ui_select       : 'assets/Sound FX/ataque/ataque 2.wav',
+
+      // ── Ambiente de bioma (tela de seleção de personagem) ──────────
+      //  Loops CC0 (OpenGameArt) tocados em LOOP baixo ao escolher uma
+      //  classe; cada um casa com o tema do bioma. Se o arquivo faltar,
+      //  CreateSoundAsync falha em silêncio (nunca quebra). amb_fire reusa
+      //  o crepitar de fogo já existente em poder/ (inferno do mago).
+      amb_swamp       : 'assets/Sound FX/ambient/amb_swamp.ogg',
+      amb_cave        : 'assets/Sound FX/ambient/amb_cave.ogg',
+      amb_drums       : 'assets/Sound FX/ambient/amb_drums.ogg',
+      amb_fire        : 'assets/Sound FX/poder/burning_fire.wav',
     };
 
     this._openDB();
