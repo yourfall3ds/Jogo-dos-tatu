@@ -117,6 +117,9 @@ export class Player {
     // Dash PRA CIMA (W+S juntos): contador PRÓPRIO, máximo 2 usos no ar.
     this.DASH_UP_MAX  = 2;
     this._dashUpLeft  = 2;
+    //  Impulso vertical FORTE — ~2x o alcance do dash horizontal. Com gravidade
+    //  -28, velY=34 lança o player BEM alto (era 18 = "mal saía do lugar").
+    this.DASH_UP_FORCE = 34;
     // Volume do som: dash up = DOBRO do dash horizontal.
     this.DASH_VOL_NORMAL = 0.7;
     this.DASH_VOL_UP     = 1.4;
@@ -465,12 +468,52 @@ export class Player {
   //  empurra a velocidade pra baixo no character controller e move o mesh.
   //  Assim o player NUNCA fica parado de pe no ar enquanto o overlay
   //  'CLIQUE PARA CAIR' esta na tela — ele JA aparece caindo.
+  // ── Marcador de pouso (estilo Fortnite): anel no chão sob o player ──
+  //  Resolve o "chão infinito, não vê onde vai cair": projeta um anel
+  //  pulsante na vertical do player, em Y=0, mostrando o ponto de aterrissagem.
+  _ensureLandingMarker() {
+    if (this._landMarker) return this._landMarker;
+    try {
+      const ring = BABYLON.MeshBuilder.CreateTorus('land_marker',
+        { diameter: 6, thickness: 0.5, tessellation: 32 }, this.scene);
+      const m = new BABYLON.StandardMaterial('land_marker_mat', this.scene);
+      m.emissiveColor = new BABYLON.Color3(0.18, 1.0, 0.71);  // cyber-cyan #2effb6
+      m.diffuseColor  = new BABYLON.Color3(0, 0, 0);
+      m.specularColor = new BABYLON.Color3(0, 0, 0);
+      m.disableLighting = true;
+      m.alpha = 0.85;
+      ring.material = m;
+      ring.isPickable = false;
+      ring.rotation.x = 0;   // torus já fica no plano XZ (deitado)
+      ring.renderingGroupId = 0;
+      this._landMarker = ring;
+    } catch (_) { this._landMarker = null; }
+    return this._landMarker;
+  }
+  _updateLandingMarker(show) {
+    const ring = this._ensureLandingMarker();
+    if (!ring || ring.isDisposed) return;
+    if (!show) { ring.setEnabled(false); return; }
+    ring.setEnabled(true);
+    // Posiciona na vertical do player, no chão (Y≈0.05 pra não z-fight).
+    const p = this.mesh.position;
+    ring.position.set(p.x, 0.06, p.z);
+    // Pulsa de tamanho + fica MAIOR quanto mais alto o player (sensação de mira).
+    const h = Math.max(0, p.y);
+    const baseScale = 1 + Math.min(2.2, h / 60);          // alto = anel grande
+    const pulse = 1 + 0.12 * Math.sin(performance.now() * 0.006);
+    ring.scaling.setAll(baseScale * pulse);
+    ring.rotation.y += 0.03;                               // gira devagar
+  }
+
   _skydiveFall(dt) {
     // Vento em LOOP + anim de queda (forcadas pra entrar na hora).
     if (!this._windOn) {
       this._windOn = true;
       try { this.sounds?.startLoop?.('wind', 0.6); } catch (_) {}
     }
+    // Marcador de pouso visível durante a queda.
+    this._updateLandingMarker(true);
     try {
       if (this.animCtrl && this.animLib?.has?.('falling')) {
         this.animCtrl.play('falling', { loop: true, speed: 1.0, fade: 0.18 });
@@ -507,13 +550,14 @@ export class Player {
     }
     this._prevY = this.mesh.position.y;
 
-    // Aterrissou → encerra o skydive: para vento + baque.
+    // Aterrissou → encerra o skydive: para vento + baque + esconde marcador.
     if (this.isGrounded) {
       this._isFalling = false;
       this._windOn    = false;
       if (this.velY < 0) this.velY = 0;
       try { this.sounds?.stopLoop?.('wind'); } catch (_) {}
       try { this.sounds?.playNow?.('land', 0.9); } catch (_) {}
+      this._updateLandingMarker(false);
     }
   }
 
@@ -698,11 +742,22 @@ export class Player {
             this._airDashesLeft = Math.max(0, this._airDashesLeft - 1);
           }
         } else {
-          // Dash UP: empurrão vertical forte; consome o contador próprio.
-          this.velY = Math.max(this.velY, 0) + 18;
+          // Dash UP: empurrão vertical FORTE (~2x alcance do dash comum) + anim.
+          //  SET (não +=) pra não somar com velY residual e ficar inconsistente:
+          //  garante SEMPRE o mesmo lançamento alto, do chão ou do ar.
+          this.velY = this.DASH_UP_FORCE;
           if (!this.isGrounded) {
             this._dashUpLeft = Math.max(0, this._dashUpLeft - 1);
           }
+          // Animação: usa 'jump' (salto) como pose do dash vertical. Cai pra
+          //  vault_roll/run_fast se jump não existir. Não trava se faltar.
+          try {
+            const ac = this.animCtrl;
+            if (ac) {
+              if (ac.library?.has?.('jump')) ac.play('jump', { loop: false, fade: 0.05 });
+              else if (ac.library?.has?.('vault_roll')) ac.play('vault_roll', { loop: false, fade: 0.05 });
+            }
+          } catch (_) {}
         }
         this._dashFovT = 0.18;
         // FX baseada na direção (Vector3 só pra função existente não quebrar)
@@ -891,18 +946,27 @@ export class Player {
       const isDoubleSpace = (this._lastSpaceTapMs != null) && (nowMs - this._lastSpaceTapMs < 280);
       this._lastSpaceTapMs = nowMs;
 
-      if (isDoubleSpace && this._airDashesLeft > 0) {
-        // DASH PRA CIMA: impulso vertical 2x o pulo normal. Encadeável no ar
-        // (consome 1 dash aéreo). Reseta o duplo-toque pra não disparar 2x.
-        this.velY = this.JUMP_FORCE * 2;
-        this._airDashesLeft--;
+      if (isDoubleSpace && (this.isGrounded || this._dashUpLeft > 0)) {
+        // DASH PRA CIMA (Space 2x): impulso vertical FORTE (~2x alcance do pulo)
+        // + som de DASH (não de pulo). Do chão é livre; no ar consome 1 carga
+        // (máx 2). Reseta o duplo-toque pra não disparar 2x.
+        this.velY = this.DASH_UP_FORCE;
+        if (!this.isGrounded) this._dashUpLeft = Math.max(0, this._dashUpLeft - 1);
         this._lastSpaceTapMs = null;
-        this.sounds?.playNow?.('jump', 0.85);
+        this.sounds?.playNow?.('dash', this.DASH_VOL_UP);   // som de DASH (2x)
+        this._dashFovT = 0.18;
+        try { this._spawnDashFX(new BABYLON.Vector3(0, 1, 0)); } catch (_) {}
+        // anim de salto no dash vertical
+        try {
+          const ac = this.animCtrl;
+          if (ac?.library?.has?.('jump')) ac.play('jump', { loop: false, fade: 0.05 });
+          else if (ac?.library?.has?.('vault_roll')) ac.play('vault_roll', { loop: false, fade: 0.05 });
+        } catch (_) {}
         try { this.weapon?.applyWallJumpTilt?.(0); } catch (_) {}
         this.animator?.onWallJump?.();
       } else if (this.isGrounded) {
         this.velY = this.JUMP_FORCE;
-        this.sounds?.playNow?.('jump', 0.7);
+        this.sounds?.playNow?.('jump', 1.0);   // pulo normal (Space 1x): som de pulo audível
       } else {
         const wjVel = this.wallJump.tryWallJump();
         if (wjVel) {

@@ -307,11 +307,11 @@ export class ServerListUI {
         window._loadingOverlay?.setProgress?.(100, 'pronto!');
       }
 
-      // ── Aplica o avatar escolhido (NÃO bloqueia o load) ──
-      //  O swap carrega o GLB + re-vincula anims (pode demorar 10-30s) → NÃO
-      //  pode ser await aqui senão trava o load infinito. Roda em background.
-      //  Pra não aparecer o RATO primeiro: escondemos o mesh do player até o
-      //  swap terminar (o player cai "invisível" e materializa já trocado).
+      // ── Aplica o avatar escolhido — AGORA BLOQUEANTE (Lucas: nunca entrar
+      //  com avatar errado). O GLB já está em cache (carregado no preview da
+      //  seleção), e a sonda de compat (CharacterSwapper) faz o swap em ~1-3s.
+      //  O loading overlay fica visível até o avatar estar trocado. Só então
+      //  o jogo é revelado — com o personagem CERTO desde o 1º frame.
       if (this._pendingAvatar) {
         const av = this._pendingAvatar;
         this._pendingAvatar = null;
@@ -321,17 +321,24 @@ export class ServerListUI {
           try {
             const pl = window._gamePlayer || window._player;
             const meshRoot = pl?.mesh || pl?.root;
-            // esconde o avatar atual (rato) enquanto troca
             try { meshRoot?.setEnabled?.(false); } catch (_) {}
-            swapper.swap(av.url).then(r => {
-              if (r?.warning) console.warn('[ServerList] swap avatar:', r.warning);
-              try { meshRoot?.setEnabled?.(true); } catch (_) {}
-            }).catch(e => {
-              console.error('[ServerList] swap avatar:', e);
-              try { meshRoot?.setEnabled?.(true); } catch (_) {}  // re-mostra mesmo em erro
-            });
-            // safety: re-mostra em 8s mesmo se o swap pendurar (nunca fica invisível)
-            setTimeout(() => { try { meshRoot?.setEnabled?.(true); } catch (_) {} }, 8000);
+            window._loadingOverlay?.setProgress?.(70, 'vestindo ' + (av.name || 'avatar') + '…');
+            try { window.transfpsMark?.('JOIN: swap avatar (' + (av.id || av.url) + ')'); } catch (_) {}
+
+            const _tSwap = (performance?.now?.() || 0);
+            // Timeout de segurança: se o swap pendurar (raro), libera em 12s
+            // pra nunca travar load infinito — mas AGUARDA o swap normalmente.
+            const swapP = swapper.swap(av.url)
+              .then(r => { if (r?.warning) console.warn('[ServerList] swap avatar:', r.warning); })
+              .catch(e => console.error('[ServerList] swap avatar:', e));
+            const guardP = new Promise(res => setTimeout(res, 12000));
+            await Promise.race([swapP, guardP]);
+
+            try { meshRoot?.setEnabled?.(true); } catch (_) {}
+            const _swapMs = ((performance?.now?.() || 0) - _tSwap).toFixed(0);
+            console.log('%c[JOIN] avatar trocado em ' + _swapMs + 'ms', 'color:#2effb6');
+            try { window.transfpsMark?.('JOIN: avatar pronto (' + _swapMs + 'ms)'); } catch (_) {}
+            window._loadingOverlay?.setProgress?.(95, 'quase lá…');
           } catch (e) { console.error('[ServerList] apply avatar:', e); }
         }
       }
