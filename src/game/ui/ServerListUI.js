@@ -276,6 +276,9 @@ export class ServerListUI {
         this.auth.user?.user_metadata?.avatar_url ?? null;
       this.cs.setPlayerId(this.auth.getUserId());
 
+      const _tJoin = (performance?.now?.() || 0);
+      window._loadingOverlay?.setProgress?.(20, 'conectando ao servidor…');
+      try { window.transfpsMark?.('JOIN: chamando joinRoomById'); } catch (_) {}
       await this.cs.joinRoomById({
         roomId: roomInfo.roomId,
         token,
@@ -286,12 +289,22 @@ export class ServerListUI {
         map: roomInfo.metadata?.map || roomInfo.map || 'arena',
         mode: roomInfo.metadata?.mode || 'DEATHMATCH',
       });
+      const _joinMs = ((performance?.now?.() || 0) - _tJoin).toFixed(0);
+      console.log('%c[JOIN] sala conectada em ' + _joinMs + 'ms', 'color:#2effb6');
+      try { window.transfpsMark?.('JOIN: sala conectada (' + _joinMs + 'ms)'); } catch (_) {}
+      window._loadingOverlay?.setProgress?.(55, 'carregando mapa…');
 
       this.hide();
       try { await this.cs.leaveLobby?.(); } catch (_) {}
 
       if (this._onEnterGame) {
+        const _tMap = (performance?.now?.() || 0);
+        try { window.transfpsMark?.('JOIN: carregando mapa (_onEnterGame)'); } catch (_) {}
         await this._onEnterGame(this.cs.room);
+        const _mapMs = ((performance?.now?.() || 0) - _tMap).toFixed(0);
+        console.log('%c[JOIN] mapa carregado em ' + _mapMs + 'ms', 'color:#2effb6');
+        try { window.transfpsMark?.('JOIN: mapa pronto (' + _mapMs + 'ms) — NO JOGO'); } catch (_) {}
+        window._loadingOverlay?.setProgress?.(100, 'pronto!');
       }
 
       // ── Aplica o avatar escolhido (NÃO bloqueia o load) ──

@@ -1022,18 +1022,31 @@
       // liberar um JOGAR cru em 0% (parece crashado), tenta UM reload
       // automatico. Se ja tentou (voltou e travou de novo), mostra overlay
       // amigavel "Tivemos um problema ao carregar. [Recarregar]".
+      // 25s (era 12s): o TIER1 baixa o personagem + anims-core (~70MB). Em
+      // conexao media isso passa de 12s e o reload automatico criava um LOOP de
+      // "quebrou / do nada funciona". 25s da folga real. Se o progresso esta
+      // subindo (barra > 0), NEM consideramos travado — so reage se 0% parado.
       setTimeout(() => {
         if (_essentialReady) return;
+        // Se a barra esta avancando, NAO esta travado — espera mais 15s.
+        if (_lastPct > 8) {
+          console.warn('[ss-play] 25s mas progresso=' + _lastPct + '% — seguindo, +15s de tolerancia');
+          setTimeout(() => {
+            if (_essentialReady) return;
+            clearInterval(iv);
+            console.warn('[ss-play] fail-safe FINAL: travado em ' + _lastPct + '%');
+            if (window.__bootShowRecover) { window.__bootShowRecover(); return; }
+            _essentialReady = true; renderPlay();
+          }, 15000);
+          return;
+        }
         clearInterval(iv);
-        console.warn('[ss-play] fail-safe: _essentialReady nao resolveu em 12s');
-        // 1ª vez: reload automatico (guard em sessionStorage).
+        console.warn('[ss-play] fail-safe: _essentialReady nao resolveu em 25s (0% — travou de fato)');
         if (window.__bootAutoReloadOnce && window.__bootAutoReloadOnce()) return;
-        // Ja tinha tentado reload e travou de novo → overlay com botao claro.
         if (window.__bootShowRecover) { window.__bootShowRecover(); return; }
-        // Ultima linha de defesa (nao deveria chegar aqui): libera JOGAR.
         _essentialReady = true;
         renderPlay();
-      }, 12000);
+      }, 25000);
 
       // Render inicial (0% disabled).
       renderPlay();
@@ -1045,7 +1058,7 @@
   <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
   <!-- materialsLibrary: SkyMaterial (céu HD procedural do ciclo dia/noite) -->
   <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
-  <script type="module" src="src/main.js?v=20260603-31"></script>
+  <script type="module" src="src/main.js?v=20260604-boottrace"></script>
 
   <!-- ── Config-server status monitor ── -->
   <script>

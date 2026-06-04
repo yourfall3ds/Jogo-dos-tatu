@@ -381,6 +381,8 @@ async function init() {
     document.body.appendChild(badge);
   } catch (_) {}
   _engineRef = engine;  // expõe para enterEngineMode/exitEngineMode
+  try { window.transfpsPhase?.('engine pronto (' + window._engineKind + ')'); } catch (_) {}
+  setLoadingUI(8, 'engine ' + window._engineKind + ' ok…');
 
   const scene = new BABYLON.Scene(engine);
   gameScene = scene;
@@ -390,7 +392,11 @@ async function init() {
   // ── Física real (Havok) — habilita ANTES de criar mundo/player ──────
   //  Stage 1 da migração: motor ligado. Mundo/objetos/player passam a
   //  usar corpos rígidos nos próximos estágios.
+  try { window.transfpsPhase?.('iniciando física (Havok)'); } catch (_) {}
+  setLoadingUI(14, 'física (Havok)…');
   await initPhysics(scene, -28);
+  try { window.transfpsPhase?.('física pronta'); } catch (_) {}
+  setLoadingUI(20, 'mundo…');
 
   animatorMode     = new AnimatorMode(engine, canvas);
   monsterDebugMode = new MonsterDebugMode(engine, canvas);
@@ -490,7 +496,11 @@ async function init() {
 
   // ── Sistemas base ────────────────────────────────────────────────
   const input  = new InputManager(canvas);
+  try { window.transfpsPhase?.('criando Level (texturas do mapa)'); } catch (_) {}
+  setLoadingUI(24, 'mapa + texturas…');
   const level  = new Level(scene, shadowGen, { clean: true });   // mapa limpo c/ sombra
+  try { window.transfpsPhase?.('Level pronto'); } catch (_) {}
+  setLoadingUI(28, 'player…');
   const player = new Player(scene, canvas, input, level);
   level.player     = player;   // inimigos precisam de referência ao jogador
   player.onRespawn = () => level.resetEnemies();  // reseta posição dos inimigos ao respawnar
@@ -2021,6 +2031,8 @@ async function init() {
   }
 
   // ── Game loop ────────────────────────────────────────────────────
+  try { window.transfpsPhase?.('render loop INICIANDO (primeiro frame)'); } catch (_) {}
+  setLoadingUI(32, 'iniciando render…');
   engine.runRenderLoop(() => {
     if (monsterDebugMode && monsterDebugMode.active) {
       monsterDebugMode.render();
@@ -2346,21 +2358,25 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
           });
         });
 
-        // ── FIX VELOCIDADE: so as anims BASICAS bloqueiam a entrada. ──────
-        //  idle/walk/run/jump/falling/dead bastam pra cair do ceu e andar.
-        //  O resto (ataques, espada, chibata, chutes, parkour) carrega em
-        //  BACKGROUND depois — antes esperava ~50 GLBs sequenciais = 15s.
-        const CORE_ANIMS = new Set(['idle', 'walk', 'run', 'run_fast', 'jump', 'falling', 'dead', 'idle_aim', 'walk_aim', 'run_aim']);
+        // ── FIX VELOCIDADE: SÓ idle/walk/run bloqueiam a entrada. ─────────
+        //  Antes 10 anims-core (~70MB) bloqueavam → em conexão média passava
+        //  de 12s e o fail-safe recarregava (loop "quebrou / do nada funciona").
+        //  Agora só 3 (idle p/ não ficar T-pose + walk/run p/ mover) ≈ 21MB.
+        //  jump/falling/dead/aim_* e todo o resto entram em BACKGROUND logo
+        //  depois — o jogo já é jogável e as anims aparecem em ~1-2s.
+        const CORE_ANIMS = new Set(['idle', 'walk', 'run']);
         const coreAnims = allAnims.filter(a => CORE_ANIMS.has(a.name));
         const restAnims = allAnims.filter(a => !CORE_ANIMS.has(a.name));
 
-        // Bloqueante: so as basicas (paralelo, ~1s)
+        try { window.transfpsMark?.('anims-core: baixando ' + coreAnims.length); } catch (_) {}
+        // Bloqueante: só idle/walk/run (paralelo)
         await Promise.all(
           coreAnims.map(a =>
             p.animLib.loadExternalAnimations(a.path, a.name, root)
               .catch(e => console.error(`[anim] Falha core [${a.name}] (${a.path}):`, e))
           )
         );
+        try { window.transfpsMark?.('anims-core PRONTAS (jogo jogável)'); } catch (_) {}
 
         // Background: o resto das anims carrega sem travar a entrada no jogo.
         Promise.all(
@@ -2368,7 +2384,10 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
             p.animLib.loadExternalAnimations(a.path, a.name, root)
               .catch(e => console.error(`[anim] Falha bg [${a.name}] (${a.path}):`, e))
           )
-        ).then(() => { try { p.animLib.list?.(); } catch (_) {} });
+        ).then(() => {
+          try { window.transfpsMark?.('anims-resto (' + restAnims.length + ') prontas'); } catch (_) {}
+          try { p.animLib.list?.(); } catch (_) {}
+        });
 
 
         // ── Pós-processamento (sem Blender) ────────────────────────
@@ -2435,6 +2454,7 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     essentialDone++;
   }
   setLoadingUI(40, 'pronto pra jogar — carregando extras…');
+  try { window.transfpsPhase?.('TIER1 PRONTO — _essentialReady resolvido (JOGAR liberado)'); window.transfpsBootReport?.(); } catch (_) {}
 
   // ── TIER 1 concluído: libera startGame/lobby para entrar SEM esperar ──
   try { _essentialReadyResolve?.(); }
