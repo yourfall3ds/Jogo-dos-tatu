@@ -10,6 +10,69 @@
 //  Posição vem do schema (state.x/y/z/ry); interpolação client-side.
 // ─────────────────────────────────────────────────────────────────
 
+import { AnimationLibrary } from '../animation/AnimationLibrary.js';
+import { AnimationController } from '../animation/AnimationController.js';
+import { MOVESETS } from '../animation/animationNames.js';
+
+// ─────────────────────────────────────────────────────────────────
+//  MOVESET REAL DO AVATAR REMOTO  (mesmo sistema do player LOCAL)
+//
+//  Antes o remoto reusava os 16 AnimationGroups crus do player.glb (Meshy),
+//  cujos nomes NÃO batem com o conteúdo — daí o "pulando" e "anim de arco ao
+//  atirar". Agora cada RemotePlayer ganha sua própria AnimationLibrary +
+//  AnimationController e carrega os MESMOS clipes GLB dedicados que o player
+//  local (idle/walk/run/jump/punch/sword/aim_shoot…), redirecionados pro
+//  esqueleto do avatar remoto (mesmo rig => retarget por nome de osso bate).
+//
+//  CORE (idle/walk/run) carrega bloqueante; o resto em background. Se o
+//  retarget falhar (0 ossos), cai no sistema Meshy antigo como fallback.
+// ─────────────────────────────────────────────────────────────────
+const REMOTE_MOVESET = {
+  // locomoção
+  idle:            MOVESETS.basico.idle,
+  walk:            MOVESETS.basico.walk,
+  run:             MOVESETS.basico.run,
+  run_fast:        MOVESETS.extras.run_fast,
+  jump:            MOVESETS.basico.jump,
+  falling:         MOVESETS.extras.falling,
+  // combate (overlay one-shot via remote_fire) — cadeias REAIS do ComboSystem,
+  // pra o avatar remoto tocar EXATAMENTE o mesmo golpe que o atacante (paridade).
+  punch_01:          MOVESETS.luta_sem_arma.punch_01,
+  punch_02:          MOVESETS.luta_sem_arma.punch_02,
+  punch_03:          MOVESETS.luta_sem_arma.punch_03,
+  punch_04:          MOVESETS.luta_sem_arma.punch_04,
+  kick_01:           MOVESETS.luta_sem_arma.kick_01,
+  kick_02:           MOVESETS.luta_sem_arma.kick_02,
+  sword_attack_01:   MOVESETS.com_espada.sword_attack_01,
+  sword_left_slash:  MOVESETS.com_espada.sword_left_slash,
+  sword_thrust:      MOVESETS.com_espada.sword_thrust,
+  sword_triple_combo:MOVESETS.com_espada.sword_triple_combo,
+  aim_shoot:         MOVESETS.armado.aim_shoot,
+  // reações / estado
+  dodge:           MOVESETS.luta_sem_arma.dodge,
+  knockdown:       MOVESETS.luta_sem_arma.knockdown,
+  hit_face:        MOVESETS.extras.hit_face,
+  dead:            MOVESETS.extras.dead,
+};
+const REMOTE_CORE_CLIPS = ['idle', 'walk', 'run'];
+
+// network anim_state (locomoção) -> clipe REAL + parâmetros de play.
+const REMOTE_LOCO = {
+  idle:    { clip: 'idle',    loop: true,  speed: 1.0,  fade: 0.20 },
+  unarmed: { clip: 'idle',    loop: true,  speed: 1.0,  fade: 0.20 },
+  armed:   { clip: 'idle',    loop: true,  speed: 1.0,  fade: 0.20 },
+  sword:   { clip: 'idle',    loop: true,  speed: 1.0,  fade: 0.20 },
+  walk:    { clip: 'walk',    loop: true,  speed: 1.0,  fade: 0.16 },
+  walking: { clip: 'walk',    loop: true,  speed: 1.0,  fade: 0.16 },
+  moving:  { clip: 'walk',    loop: true,  speed: 1.0,  fade: 0.16 },
+  run:     { clip: 'run',     loop: true,  speed: 1.0,  fade: 0.18 },
+  run_fast:{ clip: 'run_fast',loop: true,  speed: 1.0,  fade: 0.16 },
+  fall:    { clip: 'falling', loop: true,  speed: 1.0,  fade: 0.14 },
+  falling: { clip: 'falling', loop: true,  speed: 1.0,  fade: 0.14 },
+  jump:    { clip: 'jump',    loop: false, speed: 1.0,  fade: 0.08 },
+};
+const REMOTE_LOCO_DEFAULT = REMOTE_LOCO.idle;
+
 const COLORS = [
   [1.0, 0.45, 0.30], [0.30, 0.85, 1.0], [0.95, 0.75, 0.25],
   [0.70, 0.45, 0.95], [0.45, 0.90, 0.50], [1.0, 0.55, 0.75],
@@ -189,6 +252,16 @@ export class RemotePlayer {
     this._weaponSocket = null;   // TransformNode socket no osso da mão
     this._weaponId     = null;   // id da arma atualmente anexada
 
+    // ── Sistema de animação REAL (mesmo do player local) ──
+    // Cada RemotePlayer tem sua AnimationLibrary/Controller próprios, com os
+    // clipes do moveset redirecionados pro esqueleto deste avatar. _realAnimsReady
+    // só vira true quando ao menos os clipes CORE (idle/walk/run) retargetaram OK;
+    // até lá (ou se falhar) usa o sistema Meshy antigo como fallback.
+    this._animLib       = null;
+    this._animCtrl      = null;
+    this._realAnimsReady = false;
+    this._curLocoState  = 'idle';   // último estado de locomoção (real)
+
     this.body._isRemotePlayer = true;
     this.body._remoteRef = this;
     // FIX PvP fidelidade: a capsule e o HITBOX dedicado do player remoto.
@@ -353,7 +426,7 @@ export class RemotePlayer {
     // Usa o mapa calibrado (estado do server -> clipe REAL do GLB) em vez do
     // antigo includes() na string crua. SEMPRE para a anim anterior e cai pra
     // idle REAL quando o estado for vazio/desconhecido (nunca congela).
-    if (field === "anim_state" && this._avatarAnims?.length) {
+    if (field === "anim_state" && (this._realAnimsReady || this._avatarAnims?.length)) {
       const v = newValue != null ? newValue : (s?.anim_state || "idle");
       // Se um overlay de ataque está rodando (via remote_fire), NÃO deixa a
       // locomoção interromper o golpe — só grava o estado pra restaurar depois.
@@ -366,12 +439,96 @@ export class RemotePlayer {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────
+  //  SISTEMA DE ANIMAÇÃO REAL (espelha o player local)
+  // ─────────────────────────────────────────────────────────────────
+
   /**
-   * Toca a animação correta do avatar remoto pro anim_state recebido.
-   * Resolve o clipe REAL via _resolveRemoteAnim (mapa calibrado), PARA a anim
-   * anterior e inicia a nova em loop com crossfade simples.
+   * Carrega o moveset REAL no esqueleto do avatar remoto. CORE (idle/walk/run)
+   * primeiro (libera _realAnimsReady assim que chegam); o resto em background.
+   * Os clipes Meshy embutidos ficam STOPADOS como fallback (não são descartados).
    */
+  async _initRealAnims() {
+    if (this._animLib || !this._avatarRoot) return;
+    const lib  = new AnimationLibrary(this.scene);
+    const ctrl = new AnimationController(lib);
+    this._animLib = lib;
+    this._animCtrl = ctrl;
+
+    const root = this._avatarRoot;
+    const loadOne = async (name) => {
+      const url = REMOTE_MOVESET[name];
+      if (!url) return false;
+      try {
+        await lib.loadExternalAnimations(url, name, root);
+        return lib.has(name);
+      } catch (_) { return false; }
+    };
+
+    // CORE bloqueante (paralelo) — idle/walk/run retargetados garantem locomoção real.
+    const coreOk = await Promise.all(REMOTE_CORE_CLIPS.map(loadOne));
+    if (this._disposed || this._disposing) return;
+    if (!coreOk.some(Boolean)) {
+      // Nenhum core retargetou (rig incompatível) → fica no Meshy fallback.
+      console.warn('[RemotePlayer] moveset real não retargetou — usando fallback Meshy');
+      return;
+    }
+
+    // Pós-processo igual ao local: trava root motion XZ das poses armadas.
+    try { lib.configureAll?.({ aim_shoot: { stripRootXZ: true } }); } catch (_) {}
+
+    // Para os clipes Meshy (não disputam os mesmos ossos) e liga o sistema real.
+    for (const a of (this._avatarAnims || [])) { try { a.stop(); } catch (_) {} }
+    this._realAnimsReady = true;
+    this._curAnim = null;               // invalida ref do clipe Meshy anterior
+    // Toca já a locomoção atual no sistema real (ou retoma o ataque/morte em curso).
+    if (this.state?.dead) { this._applyDeadRagdoll(); }
+    else if (!(this._attackingUntil && performance.now() < this._attackingUntil)) {
+      this._playLocoReal(this.state?.anim_state || 'idle');
+    }
+
+    // Resto do moveset em background (combate/reações) — sem travar nada.
+    const rest = Object.keys(REMOTE_MOVESET).filter(n => !REMOTE_CORE_CLIPS.includes(n));
+    Promise.all(rest.map(loadOne)).then(() => {
+      if (this._disposed || this._disposing) return;
+      try { this._animLib?.configureAll?.({ aim_shoot: { stripRootXZ: true } }); } catch (_) {}
+    });
+  }
+
+  /** Toca o clipe de LOCOMOÇÃO real pro anim_state da rede (idle/walk/run/fall). */
+  _playLocoReal(rawState) {
+    if (!this._realAnimsReady || !this._animCtrl) return;
+    const key = String(rawState == null ? 'idle' : rawState).toLowerCase().trim() || 'idle';
+    const m = REMOTE_LOCO[key] || REMOTE_LOCO_DEFAULT;
+    // Se o clipe pedido não existe ainda (background), cai pra idle/walk/run já prontos.
+    let clip = m.clip;
+    if (!this._animLib?.has(clip)) {
+      clip = this._animLib?.has('idle') ? 'idle' : (this._animLib?.has('run') ? 'run' : null);
+      if (!clip) return;
+    }
+    this._curLocoState = rawState;
+    this._curAnimState = rawState;
+    this._animCtrl.play(clip, { loop: m.loop !== false, speed: m.speed ?? 1.0, fade: m.fade ?? 0.16 });
+  }
+
+  /** Escolhe o clipe de ATAQUE real conforme melee/ranged + arma. Fixa o "anim
+   *  de arco ao atirar": tiro vira aim_shoot, NUNCA um clipe de arco. */
+  _attackClipFor(melee, weaponId) {
+    const w = String(weaponId || '').toLowerCase();
+    if (!melee) return 'aim_shoot';
+    if (w.includes('sword') || w.includes('espada') || w.includes('blade') || w.includes('katana')) {
+      return 'sword_attack_01';
+    }
+    // soco genérico (alterna 01/02 pra dar variedade)
+    this._punchToggle = !this._punchToggle;
+    return this._punchToggle ? 'punch_01' : 'punch_02';
+  }
+
   _playAnimState(rawState) {
+    // Sistema real pronto → usa os clipes dedicados (idle/walk/run/…).
+    if (this._realAnimsReady) { this._playLocoReal(rawState); return; }
+
+    // ── Fallback Meshy (até o moveset real retargetar / se falhar) ──
     const anims = this._avatarAnims;
     if (!anims?.length) return;
 
@@ -439,7 +596,13 @@ export class RemotePlayer {
    * @param {string} state estado de ataque ('attacking'|'punch'|'melee'|'shooting'|'sword_atk')
    * @param {number} ms    duração antes de restaurar a locomoção (default 500ms)
    */
-  playAttackOnce(state = 'attacking', ms = 500) {
+  playAttackOnce(state = 'attacking', ms = 500, opts = null) {
+    // Sistema real pronto → toca o clipe de ataque REAL (punch/sword/aim_shoot).
+    if (this._realAnimsReady && this._animCtrl) {
+      this._playAttackReal(state, ms, opts);
+      return;
+    }
+
     const anims = this._avatarAnims;
     if (!anims?.length) return;
 
@@ -487,6 +650,67 @@ export class RemotePlayer {
       const back = this.state?.anim_state || restoreTo;
       this._playAnimState(back);
     }, ms);
+  }
+
+  /**
+   * Overlay de ataque com o MOVESET REAL. Resolve o clipe certo (soco/espada/
+   * tiro/flinch), toca uma vez por cima da locomoção e volta sozinho. Espelha o
+   * que o CombatSystem faz no player local (play one-shot + onComplete).
+   * @param {object|null} opts { melee:boolean, weapon:string } do remote_fire.
+   */
+  _playAttackReal(state, ms, opts) {
+    const ctrl = this._animCtrl;
+    if (!ctrl) return;
+    const k = String(state || '').toLowerCase();
+
+    // 0) Clipe EXATO enviado pelo atacante (paridade total) — se o avatar remoto
+    //    tiver esse clipe carregado, toca o MESMO golpe que o player local.
+    let clip;
+    if (opts && typeof opts.anim === 'string' && opts.anim && this._animLib?.has(opts.anim)) {
+      clip = opts.anim;
+    } else if (opts && typeof opts.melee === 'boolean') {
+      // 1) Sem clipe exato (ou não carregado): decide por melee/weapon.
+      clip = this._attackClipFor(opts.melee, opts.weapon);
+    } else {
+      // 2) Estados internos (flinch/dodge/morte) → clipe de reação real.
+      clip = ({
+        shooting: 'aim_shoot', shoot: 'aim_shoot',
+        attacking: 'punch_01', punch: 'punch_01', melee: 'punch_01',
+        sword_atk: 'sword_attack_01', sword: 'sword_attack_01',
+        stunned: 'hit_face', knockdown: 'knockdown',
+        dodging: 'dodge', dodge: 'dodge', death: 'dead', dead: 'dead',
+      })[k] || 'punch_01';
+    }
+
+    // Clipe ainda não retargetou (background) → mantém locomoção (sem crashar).
+    if (!this._animLib?.has(clip)) return;
+
+    const isMelee = clip.startsWith('punch') || clip.startsWith('sword') || k === 'stunned';
+    if (isMelee && k !== 'stunned') { try { this._spawnSlashVFX(); } catch (_) {} }
+
+    // Janela de ataque = duração REAL do clipe (não o ms fixo) pra não cortar
+    // combos longos de espada no meio. onComplete restaura no fim de verdade;
+    // o timer é só rede de segurança. Espelha o safety-timeout do CombatSystem.
+    const realDurMs = (ctrl.getDuration?.(clip) || 0) * 1000;
+    const holdMs = Math.max(ms, realDurMs > 0 ? realDurMs + 100 : ms);
+    const restoreTo = this._curLocoState || this.state?.anim_state || 'idle';
+    this._attackingUntil = performance.now() + holdMs;
+    ctrl.play(clip, {
+      loop: false, fade: 0.08,
+      onComplete: () => {
+        if (this._disposed || this._disposing) return;
+        this._attackingUntil = 0;
+        this._playLocoReal(this.state?.anim_state || restoreTo);
+      },
+    });
+    // Fallback de restauração (se o onComplete não disparar).
+    if (this._attackTimer) { try { clearTimeout(this._attackTimer); } catch (_) {} }
+    this._attackTimer = setTimeout(() => {
+      this._attackTimer = null;
+      if (this._disposed || this._disposing) return;
+      this._attackingUntil = 0;
+      this._playLocoReal(this.state?.anim_state || restoreTo);
+    }, holdMs + 80);
   }
 
   /**
@@ -843,7 +1067,10 @@ export class RemotePlayer {
     this._attackingUntil = 0;
     if (this._attackTimer) { try { clearTimeout(this._attackTimer); } catch (_) {} this._attackTimer = null; }
     this._curAnim = null;   // forca _playAnimState a reiniciar o clipe (nao e mais o de morte)
-    if (this._avatarAnims?.length) {
+    // Sistema real pronto → retoma locomoção real; senão fallback Meshy.
+    if (this._realAnimsReady) {
+      try { this._playLocoReal(this.state?.anim_state || 'idle'); } catch (_) {}
+    } else if (this._avatarAnims?.length) {
       try { this._playAnimState(this.state?.anim_state || 'idle'); } catch (_) {}
     }
   }
@@ -855,7 +1082,16 @@ export class RemotePlayer {
     this._attackingUntil = 0;
     if (this._attackTimer) { try { clearTimeout(this._attackTimer); } catch (_) {} this._attackTimer = null; }
     try {
-      if (this._avatarRoot) {
+      // Sistema real pronto → toca o clipe de morte REAL (dead.glb), one-shot.
+      if (this._realAnimsReady && this._animCtrl) {
+        if (this._animLib?.has('dead')) {
+          this._animCtrl.play('dead', { loop: false, fade: 0.05 });
+        } else if (this._animLib?.has('knockdown')) {
+          this._animCtrl.play('knockdown', { loop: false, fade: 0.05 });
+        } else if (this._avatarRoot) {
+          this._avatarRoot.rotation.x = Math.PI / 2;
+        }
+      } else if (this._avatarRoot) {
         this._avatarAnims?.forEach(a => { try { a.stop(); } catch(_){} });
         // FIX: o GLB Meshy não tem clipe 'dead'/'death'/'fall'. Usa o mapa
         // calibrado (death -> Parkour_Vault_with_Roll, mesmo do roll/morte).
@@ -904,6 +1140,11 @@ export class RemotePlayer {
   }
 
   update(dt, camera) {
+    // Tick do crossfade do sistema de animação REAL (peso prev->cur). Sem isto
+    // as transições entre idle/walk/run/ataque ficam em "pose-snap".
+    if (this._realAnimsReady && this._animCtrl) {
+      try { this._animCtrl.update(dt); } catch (_) {}
+    }
     // Buffer interpolation (anti-borrachudo)
     const renderT = performance.now() - this.RENDER_LAG_MS;
     let target = null;
@@ -988,6 +1229,10 @@ export class RemotePlayer {
     if (this._hitFlashTimer) { try { clearTimeout(this._hitFlashTimer); } catch (_) {} this._hitFlashTimer = null; }
     try { this._detachWeapon?.(); } catch (_) {}
     try { this._weaponSocket?.dispose(); } catch (_) {}
+    // Sistema de animação real: para e descarta os clipes retargetados.
+    try { this._animCtrl?.stopAll?.(); } catch (_) {}
+    try { this._animLib?.animations?.forEach(ag => { try { ag.dispose(); } catch (_) {} }); } catch (_) {}
+    this._animLib = null; this._animCtrl = null;
     try { this.body?.dispose(); } catch (_) {}
     try { this.eye?.dispose(); } catch (_) {}
     try { this.aura?.dispose(); } catch (_) {}
@@ -1114,6 +1359,13 @@ export class RemotePlayer {
       // descarta as animationGroups do avatar antigo
       for (const a of (this._avatarAnims || [])) { try { a.dispose(); } catch (_) {} }
       this._avatarAnims = [];
+      // descarta o sistema de animação REAL (clipes retargetados no rig antigo)
+      try { this._animCtrl?.stopAll?.(); } catch (_) {}
+      try { this._animLib?.animations?.forEach(ag => { try { ag.dispose(); } catch (_) {} }); } catch (_) {}
+      this._animLib = null;
+      this._animCtrl = null;
+      this._realAnimsReady = false;
+      this._curAnim = null;
       // descarta a árvore do GLB antigo
       try { this._avatarRoot?.dispose(false, true); } catch (_) {}
       this._avatarRoot = null;
@@ -1236,9 +1488,16 @@ export class RemotePlayer {
       // Debug: lista os nomes reais das AnimationGroups do GLB remoto.
       console.log("[RemotePlayer]", shortId, "avatar carregado OK — meshes:", result.meshes.length,
         "anims:", this._avatarAnims.length, "→", this._avatarAnims.map(a => a.name).join(", "));
-      // Inicia já com o anim_state atual do schema (ou idle REAL via resolver).
+      // Inicia já com o anim_state atual do schema (Meshy fallback enquanto o
+      // moveset real ainda não retargetou — upgrade automático quando pronto).
       const initialState = this.state?.anim_state || "idle";
       this._playAnimState(initialState);
+
+      // ── Carrega o MOVESET REAL no esqueleto deste avatar (assíncrono) ──
+      // Mesmo rig do player local (player.glb) => o retarget por nome de osso
+      // bate. Quando os clipes CORE chegam, _realAnimsReady vira true e a
+      // locomoção/combate passam a usar os clipes REAIS (idle/walk/run/punch/…).
+      try { this._initRealAnims(); } catch (e) { console.warn("[RemotePlayer] real anims init fail", e?.message); }
 
       // ── FIX: anexa a arma do player remoto na mão do avatar ──
       // Usa weapon/held_item do state pra saber qual arma e clona o mesh TPS
@@ -1413,6 +1672,36 @@ export class RemotePlayer {
 
     this._weaponMesh = clone;
     this._weaponId   = id;
+  }
+
+  /**
+   * Posição MUNDIAL do cano da arma remota (muzzle). Usa o muzzleOffset real da
+   * arma (mesma fonte do player local) transformado pela matriz mundial do mesh
+   * anexado na mão. Assim o tracer/flash sai do CANO — antes era uma altura fixa
+   * (m.y+1.4 ≈ acima da cabeça, porque o y do server é o centro da cápsula).
+   * @returns {BABYLON.Vector3|null}
+   */
+  getMuzzleWorldPos() {
+    const mesh = this._weaponMesh;
+    if (mesh) {
+      try {
+        const ws = this._localWeaponSystem();
+        const wref = ws?.weapons?.find?.(w => w.id === this._weaponId);
+        mesh.computeWorldMatrix(true);
+        if (wref?.muzzleOffset) {
+          return BABYLON.Vector3.TransformCoordinates(wref.muzzleOffset, mesh.getWorldMatrix());
+        }
+        return mesh.getAbsolutePosition().clone();
+      } catch (_) {}
+    }
+    // Fallback: peito do avatar (NUNCA acima da cabeça). O socket da mão é a
+    // segunda melhor âncora se existir.
+    try {
+      if (this._weaponSocket) return this._weaponSocket.getAbsolutePosition().clone();
+    } catch (_) {}
+    const pos = this.root?.getAbsolutePosition?.();
+    if (pos) return new BABYLON.Vector3(pos.x, pos.y + 0.5, pos.z);
+    return null;
   }
 
   /** Remove e descarta a arma atualmente anexada. */

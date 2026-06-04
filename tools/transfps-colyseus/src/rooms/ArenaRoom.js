@@ -268,6 +268,8 @@ export class ArenaRoom extends Room {
     // Som de disparo/golpe (tiro/swing) — rebroadcast posicional p/ todos OUVIREM o parceiro
     // mesmo quando o tiro ERRA (hit_confirmed só dispara no acerto).
     this.onMessage('fire_sound', (client, payload) => this._onFireSound(client, payload));
+    // SFX de movimento (jump/dash/land) — rebroadcast posicional pros parceiros.
+    this.onMessage('player_sfx', (client, payload) => this._onPlayerSfx(client, payload));
     this._skillCooldowns = new Map();
 
     // ── IDLE TIMEOUT: OPEN_WORLD nunca descarta (sala 24/7). Demais salas: dispose vazio. ──
@@ -720,6 +722,9 @@ export class ArenaRoom extends Room {
     this._fireSoundCd.set(pid, now);
     const melee = payload?.melee === true;
     const weapon = String(payload?.weapon || p.weapon || 'unarmed').slice(0, 32);
+    // anim = nome do clipe REAL do golpe (opcional) — repassado pros parceiros
+    // tocarem exatamente a mesma animação no avatar remoto.
+    const anim = (typeof payload?.anim === 'string' && payload.anim) ? payload.anim.slice(0, 32) : null;
     // Direção de mira (do cliente) — só pra DESENHAR o tracer no parceiro; a
     // posição continua server-auth. Clampa em [-1,1] e ignora se não vier.
     const cl = (n) => (Number.isFinite(n) ? Math.max(-1, Math.min(1, n)) : null);
@@ -731,7 +736,28 @@ export class ArenaRoom extends Room {
       weapon,
       melee,
       dx, dy, dz,
+      anim,
     });
+  }
+
+  /**
+   * SFX de movimento (jump/dash/land) do player → rebroadcast posicional pros
+   * parceiros OUVIREM espacialmente. Posição é server-auth (não confia no cliente).
+   * Whitelist + cooldown leve por kind (anti-spam).
+   */
+  _onPlayerSfx(client, payload) {
+    const pid = client.userData?.playerId;
+    if (!this._checkMsgRate(pid, 'player_sfx')) return;
+    const p = this.state.players.get(pid);
+    if (!p || p.dead) return;
+    const KINDS = { jump: 1, dash: 1, land: 1, walljump: 1 };
+    const kind = String(payload?.kind || '').slice(0, 16);
+    if (!KINDS[kind]) return;
+    const now = Date.now();
+    const ck = `sfx:${pid}:${kind}`;
+    if (now - (this._atkCooldowns.get(ck) || 0) < 120) return; // anti-spam
+    this._atkCooldowns.set(ck, now);
+    this.broadcast('remote_sfx', { id: p.id, x: p.x, y: p.y, z: p.z, kind });
   }
 
   _onHitPlayer(client, payload) {
@@ -1228,24 +1254,48 @@ export class ArenaRoom extends Room {
     const p = this.state.players.get(pid);
     if (!p || p.dead) return;
     const itemId = String(payload?.item || '').slice(0, 32);
-    const def = ArenaRoom.ITEM_CATALOG[itemId];
-    if (!def || !def.use) return;
-    // Rate limit (anti-spam)
-    const now = Date.now();
-    const lastKey = `use:${pid}:${itemId}`;
-    const lastAt = this._atkCooldowns.get(lastKey) || 0;
-    if (now - lastAt < 500) return;
-    this._atkCooldowns.set(lastKey, now);
-    // Precisa ter no bag
-    if (!this._removeItemFromBag(p, itemId, 1)) return;
-    // Aplica efeito
-    if (def.use === 'heal') {
-      p.hp = Math.min(p.maxHp, p.hp + def.amount);
-    } else if (def.use === 'mana') {
-      // mp não está no schema ainda — broadcast pra cliente aplicar
-      this.broadcast('mp_gain', { player_id: pid, amount: def.amount });
+
+    // ── Mapa de cura/mana que aceita os ids do CLIENTE (ItemCatalog: hpSmall/
+    //   hpLarge/hpFull/mpPotion) E os do servidor (hp_small/hp_big/mp_*). O HP é
+    //   server-authoritative: aplicar aqui no state.hp é o que faz a cura aparecer
+    //   pros OUTROS players e não ser revertida pelo próximo delta de schema. ──
+    const HEAL = { hpSmall: 30, hpLarge: 80, hpFull: 99999, hp_small: 30, hp_big: 60 };
+    const MANA = { mpPotion: 40, mp_small: 25, mp_big: 50 };
+    const healAmt = HEAL[itemId];
+    const manaAmt = MANA[itemId];
+
+    // Item desconhecido pelos mapas → tenta o catálogo legado do servidor.
+    if (healAmt == null && manaAmt == null) {
+      const def = ArenaRoom.ITEM_CATALOG[itemId];
+      if (!def || !def.use) return;
+      const now0 = Date.now();
+      const lk = `use:${pid}:${itemId}`;
+      if (now0 - (this._atkCooldowns.get(lk) || 0) < 500) return;
+      this._atkCooldowns.set(lk, now0);
+      if (!this._removeItemFromBag(p, itemId, 1)) return;
+      if (def.use === 'heal') p.hp = Math.min(p.maxHp, p.hp + def.amount);
+      else if (def.use === 'mana') this.broadcast('mp_gain', { player_id: pid, amount: def.amount });
+      this.broadcast('item_used', { player_id: pid, item: itemId, amount: def.amount });
+      return;
     }
-    this.broadcast('item_used', { player_id: pid, item: itemId, amount: def.amount });
+
+    // Rate limit anti-spam (por player, não por item — evita stack de poções).
+    const now = Date.now();
+    const lastKey = `use:${pid}`;
+    if (now - (this._atkCooldowns.get(lastKey) || 0) < 400) return;
+    this._atkCooldowns.set(lastKey, now);
+
+    // Best-effort: consome do bag do servidor SE existir. NÃO bloqueia a cura
+    // se estiver vazio — o inventário do cliente (cloud) é a fonte de verdade e
+    // já consumiu o item; aqui só refletimos a cura no state autoritativo.
+    try { this._removeItemFromBag(p, itemId, 1); } catch (_) {}
+
+    if (healAmt != null) {
+      p.hp = Math.min(p.maxHp || 100, (p.hp || 0) + healAmt); // hpFull clampa no maxHp
+    } else if (manaAmt != null) {
+      this.broadcast('mp_gain', { player_id: pid, amount: manaAmt });
+    }
+    this.broadcast('item_used', { player_id: pid, item: itemId });
   }
 
   _onDropItem(client, payload) {
@@ -2034,7 +2084,17 @@ export class ArenaRoom extends Room {
             best.respawn_at = Date.now() + 5000;
             this.broadcast('died', { player_id: best.id, killer: mob.id });
           }
-          this.broadcast('mob_attack', { mob_id: mob.id, target_id: best.id, dmg: def.dmg });
+          // ── KNOCKBACK/FEEL: manda a POSIÇÃO do mob + força do empurrão.
+          //   O cliente usa from_* como origem do knockback (empurra o player
+          //   na direção mob→player) e toca a reação (hit_face) + shake. Champions
+          //   batem mais forte ('slam'); o resto é 'bite'.
+          const isHeavy = def.tier === 'champion';
+          this.broadcast('mob_attack', {
+            mob_id: mob.id, target_id: best.id, dmg: def.dmg,
+            from_x: mob.x, from_y: mob.y, from_z: mob.z,
+            kb: isHeavy ? 13 : 8,
+            atk: isHeavy ? 'slam' : 'bite',
+          });
         }
       }
       this._cooldowns.set(mob.id, cd);

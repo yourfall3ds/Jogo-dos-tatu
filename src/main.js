@@ -869,10 +869,24 @@ async function init() {
   });
 
   // ── Mob attack hit no player local ──
+  //  Agora o servidor manda a POSIÇÃO do mob (from_*) + a força do knockback (kb)
+  //  e o tipo (atk). Repassamos pro takeDamage que JÁ aplica o empurrão direcional
+  //  (mob→player), a reação (hit_face/hit_back_run) e o camera-shake. Antes ia
+  //  fromPos=null,kb=1 → o player tomava dano mas não "sentia" o soco.
   cs.on('mob_attack', (m) => {
     if (m.target_id === auth.getUserId() && !player._dead) {
-      player.takeDamage?.(m.dmg, 'bite', null, 1);
+      const fromPos = Number.isFinite(m.from_x)
+        ? new BABYLON.Vector3(m.from_x, Number.isFinite(m.from_y) ? m.from_y : 0, m.from_z)
+        : null;
+      const kb = Number.isFinite(m.kb) ? m.kb : 8;
+      const atk = (m.atk === 'slam' || m.atk === 'bite') ? m.atk : 'bite';
+      player.takeDamage?.(m.dmg, atk, fromPos, kb);
     }
+    // Toca a animação de ataque do MOB que bateu (mesmo quem não é o alvo vê o golpe).
+    try {
+      const rm = _remoteMobs?.get?.(m.mob_id);
+      rm?.playAttack?.();
+    } catch (_) {}
   });
 
   // ── Died (kill feed) ──
@@ -940,6 +954,43 @@ async function init() {
     }
   });
 
+  // ── Flash de muzzle remoto: esfera emissiva + luz curta no cano do parceiro.
+  //    Barato e transiente (~70ms). Compartilha material/textura estáticos.
+  function _spawnRemoteMuzzleFlash(scene, x, y, z) {
+    if (!scene || typeof BABYLON === 'undefined') return;
+    let sph = null, light = null;
+    try {
+      sph = BABYLON.MeshBuilder.CreateSphere('rmuzzle', { diameter: 0.26, segments: 6 }, scene);
+      sph.position.set(x, y, z);
+      sph.isPickable = false;
+      sph.doNotSyncBoundingInfo = true;
+      if (!_spawnRemoteMuzzleFlash._mat) {
+        const mt = new BABYLON.StandardMaterial('rmuzzleMat', scene);
+        mt.emissiveColor = new BABYLON.Color3(1.0, 0.82, 0.35);
+        mt.diffuseColor = new BABYLON.Color3(0, 0, 0);
+        mt.disableLighting = true;
+        mt.alphaMode = BABYLON.Engine.ALPHA_ADD;
+        _spawnRemoteMuzzleFlash._mat = mt;
+      }
+      sph.material = _spawnRemoteMuzzleFlash._mat;
+      light = new BABYLON.PointLight('rmuzzleLight', new BABYLON.Vector3(x, y, z), scene);
+      light.diffuse = new BABYLON.Color3(1.0, 0.8, 0.4);
+      light.range = 6; light.intensity = 2.4;
+    } catch (_) { try { sph?.dispose(); } catch (_) {} try { light?.dispose(); } catch (_) {} return; }
+    const start = performance.now();
+    const DUR = 70;
+    const tick = () => {
+      const f = Math.min(1, (performance.now() - start) / DUR);
+      try {
+        if (sph) { const s = 1 + f * 0.8; sph.scaling.set(s, s, s); sph.visibility = 1 - f; }
+        if (light) light.intensity = 2.4 * (1 - f) * (1 - f);
+      } catch (_) {}
+      if (f < 1) requestAnimationFrame(tick);
+      else { try { sph?.dispose(); } catch (_) {} try { light?.dispose(); } catch (_) {} }
+    };
+    requestAnimationFrame(tick);
+  }
+
   // ── DISPARO/GOLPE do parceiro (tiro/swing) — som ESPACIAL na pos do ATIRADOR.
   //    Dispara mesmo quando o tiro ERRA (hit_confirmed só toca o whiz no acerto). ──
   cs.on('remote_fire', (m) => {
@@ -953,18 +1004,28 @@ async function init() {
       const rpAtk = _remotePlayers.get(m.id);
       if (rpAtk?.playAttackOnce) {
         const atkState = m.melee ? 'attacking' : 'shooting';
-        rpAtk.playAttackOnce(atkState, m.melee ? 500 : 350);
+        // Passa melee/weapon p/ o RemotePlayer escolher o CLIPE REAL certo
+        // (soco/espada/tiro) em vez do mapa Meshy adivinhado (anim de arco no tiro).
+        rpAtk.playAttackOnce(atkState, m.melee ? 500 : 350, { melee: !!m.melee, weapon: m.weapon, anim: m.anim });
       }
     } catch (e) { console.warn('[remote_fire] attack anim', e?.message); }
     // ── TRACER do disparo do parceiro (ver a "bala vindo" / de onde atira) ──
     try {
       if (!m.melee && window._bulletTracer) {
         const rp = _remotePlayers.get(m.id);
-        // origem ≈ cano: pos do atirador (server-auth) na altura do peito
-        let ox = m.x, oy = (Number.isFinite(m.y) ? m.y : 0) + 1.4, oz = m.z;
-        if (!Number.isFinite(ox)) {
+        // origem = CANO real da arma remota (muzzleOffset transformado p/ mundo).
+        // Antes era altura fixa m.y+1.4 → como o y do server é o centro da cápsula,
+        // o tracer/flash saía ACIMA DA CABEÇA. Agora sai do cano, igual o local.
+        let ox, oy, oz;
+        const muzzle = rp?.getMuzzleWorldPos?.();
+        if (muzzle && Number.isFinite(muzzle.x)) {
+          ox = muzzle.x; oy = muzzle.y; oz = muzzle.z;
+        } else if (Number.isFinite(m.x)) {
+          // Fallback servidor: peito (≈ centro da cápsula), não acima da cabeça.
+          ox = m.x; oy = (Number.isFinite(m.y) ? m.y : 0) + 0.5; oz = m.z;
+        } else {
           const rpPos = rp?.root?.getAbsolutePosition?.();
-          if (rpPos) { ox = rpPos.x; oy = rpPos.y + 1.4; oz = rpPos.z; }
+          if (rpPos) { ox = rpPos.x; oy = rpPos.y + 0.5; oz = rpPos.z; }
         }
         if (Number.isFinite(ox)) {
           // direção: do payload (mira REAL do atirador) OU fallback no forward
@@ -979,6 +1040,8 @@ async function init() {
             new BABYLON.Vector3(ox, oy, oz),
             new BABYLON.Vector3(ox + dx * L, oy + dy * L, oz + dz * L),
           );
+          // Flash de muzzle breve no CANO remoto (o local já tem; o remoto não tinha).
+          try { _spawnRemoteMuzzleFlash(scene, ox, oy, oz); } catch (_) {}
         }
       }
     } catch (e) { console.warn('[remote_fire] tracer', e?.message); }
@@ -993,10 +1056,14 @@ async function init() {
         if (rpPos) { px = rpPos.x; py = rpPos.y; pz = rpPos.z; }
       }
       if (!Number.isFinite(px)) return;
-      // Som por tipo de arma. Melee = swing; senão som de tiro da arma (ou pistola).
+      // Som por tipo de arma. Melee diferenciado (chibata/espada/soco) p/ casar
+      // com a animação real; senão som de tiro da arma (ou pistola).
       let sid;
       if (m.melee) {
-        sid = 'swing_2';
+        const wm = String(m.weapon || '').toLowerCase();
+        if (wm.includes('chibata') || wm.includes('whip')) sid = 'chibatada';
+        else if (wm.includes('sword') || wm.includes('espada') || wm.includes('blade') || wm.includes('katana')) sid = 'swing_3';
+        else sid = 'swing_2';
       } else {
         const w = String(m.weapon || '');
         if (w.includes('cannon') || w.includes('canhao') || w.includes('bazooka')) sid = 'gun_cannon';
@@ -1011,6 +1078,34 @@ async function init() {
         } catch (_) {}
       }).catch(() => {});
     } catch (e) { console.error('[remote_fire]', e); }
+  });
+
+  // ── SFX de movimento do parceiro (pulo/dash/pouso) — som ESPACIAL ──────────
+  //   Mesmos sons que o player local toca (jump/dash/land), agora ouvidos na
+  //   posição (server-auth) do parceiro. Passos (andar/correr) já tocam via
+  //   RemotePlayer._maybePlayFootstep; tiro/golpe via remote_fire.
+  const _SFX_MAP = { jump: 'jump', dash: 'dash', land: 'land', walljump: 'walljump' };
+  cs.on('remote_sfx', (m) => {
+    if (!m || m.id === auth.getUserId()) return;       // meu próprio SFX já soou local
+    const sid = _SFX_MAP[m.kind];
+    if (!sid) return;
+    const sm = window._soundManager;
+    if (!sm?._getSpatialSound) return;
+    let px = m.x, py = m.y, pz = m.z;
+    if (!Number.isFinite(px)) {
+      const rp = _remotePlayers.get(m.id);
+      const rpPos = rp?.root?.getAbsolutePosition?.();
+      if (rpPos) { px = rpPos.x; py = rpPos.y; pz = rpPos.z; }
+    }
+    if (!Number.isFinite(px)) return;
+    sm._getSpatialSound(sid, 45).then((snd) => {
+      if (!snd) return;
+      try {
+        if (snd.spatial?.position?.set) snd.spatial.position.set(px, py, pz);
+        snd.volume = (m.kind === 'land') ? 0.7 : 0.6;
+        snd.play();
+      } catch (_) {}
+    }).catch(() => {});
   });
 
   // ── A7+B2: KNOCKBACK PvP REPLICADO ──────────────────────────────────────
@@ -1797,6 +1892,11 @@ async function init() {
 
   // ── Sistema de sons (silencioso enquanto não há arquivos de áudio) ─
   player.sounds = new SoundManager(scene);
+  // CRÍTICO: expõe o SoundManager globalmente. TODOS os sons de OUTROS players
+  // (tiro/golpe via remote_fire, passos, e jump/dash/land via remote_sfx) leem
+  // window._soundManager — sem esta linha eles saíam em `if (!sm) return` e
+  // NADA dos outros players tocava (só os seus próprios, que usam player.sounds).
+  window._soundManager = player.sounds;
 
   // ── Asset loader (GLBs) ──────────────────────────────────────────
   const loader = new AssetLoader(scene, shadowGen);

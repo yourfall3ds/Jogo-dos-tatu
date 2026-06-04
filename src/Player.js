@@ -558,6 +558,7 @@ export class Player {
       if (this.velY < 0) this.velY = 0;
       try { this.sounds?.stopLoop?.('wind'); } catch (_) {}
       try { this.sounds?.playNow?.('land', 0.9); } catch (_) {}
+      try { window._cs?.sendSfx?.('land'); } catch (_) {}
       this._updateLandingMarker(false);
     }
   }
@@ -615,6 +616,7 @@ export class Player {
         this._windOn    = false;
         try { this.sounds?.stopLoop?.('wind'); } catch (_) {}
         try { this.sounds?.playNow?.('land', 0.9); } catch (_) {}
+      try { window._cs?.sendSfx?.('land'); } catch (_) {}
       }
     }
 
@@ -760,6 +762,7 @@ export class Player {
         this._spawnDashFX(fxDir);
         // Som: dash PRA CIMA toca 2x mais alto que o dash normal.
         this.sounds?.playNow?.('dash', isUp ? this.DASH_VOL_UP : this.DASH_VOL_NORMAL);
+        try { window._cs?.sendSfx?.('dash'); } catch (_) {}
       }
     }
     // ── Reset dos dashes: ao tocar o CHÃO **ou** encostar em QUALQUER
@@ -837,6 +840,7 @@ export class Player {
       this._vx = this._slideDirX * slideSpeed;
       this._vz = this._slideDirZ * slideSpeed;
       this.sounds?.playNow?.('dash');   // reusa o som do dash p/ o slide
+      try { window._cs?.sendSfx?.('dash'); } catch (_) {}
     }
 
     // Termina cedo se soltar o agachar, sair do chão ou começar um dash.
@@ -948,6 +952,7 @@ export class Player {
         if (!this.isGrounded) this._dashUpLeft = Math.max(0, this._dashUpLeft - 1);
         this._lastSpaceTapMs = null;
         this.sounds?.playNow?.('dash', this.DASH_VOL_UP);   // som de DASH (2x)
+        try { window._cs?.sendSfx?.('dash'); } catch (_) {}
         this._dashFovT = 0.18;
         try { this._spawnDashFX(new BABYLON.Vector3(0, 1, 0)); } catch (_) {}
         // anim de salto no dash vertical
@@ -961,6 +966,7 @@ export class Player {
       } else if (this.isGrounded) {
         this.velY = this.JUMP_FORCE;
         this.sounds?.playNow?.('jump', 1.0);   // pulo normal (Space 1x): som de pulo audível
+        try { window._cs?.sendSfx?.('jump'); } catch (_) {}
       } else {
         const wjVel = this.wallJump.tryWallJump();
         if (wjVel) {

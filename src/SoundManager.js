@@ -129,10 +129,17 @@ export class SoundManager {
     // no 1º soco/chute). Os de movimento carregam sob demanda.
     getAudioEngine().then((eng) => {
       // Listener (ouvinte) segue a câmera → áudio espacial fica relativo ao
-      // ponto de vista do jogador (falloff por distância funciona certo).
+      // ponto de vista do jogador: o attach do v2 rastreia POSIÇÃO e ORIENTAÇÃO
+      // da câmera a cada frame, então "esquerda/direita" segue pra onde você olha.
+      this._engine = eng;
+      try { this._attachListener(); } catch (_) {}
+      // Re-attach se a câmera ATIVA mudar (troca de personagem/câmera, respawn…).
+      // Sem isto o listener podia ficar preso numa câmera antiga → pan/dist errados.
       try {
-        const cam = this.scene?.activeCamera;
-        if (eng && cam && eng.listener?.attach) eng.listener.attach(cam);
+        this.scene?.onBeforeRenderObservable?.add(() => {
+          const cam = this.scene?.activeCamera;
+          if (cam && cam !== this._listenerCam) { try { this._attachListener(); } catch (_) {} }
+        });
       } catch (_) {}
       this.preload([
         'punch_hit', 'punch_crit', 'punch_supercrit',
@@ -145,12 +152,26 @@ export class SoundManager {
       this._getSpatialSound('flyby', 45);   // pré-carrega o som de voar
       this._getSpatialSound("bullet_whiz", 60);
       this._getLoopSound('mg_loop');        // pré-carrega o loop da metralhadora
+      // Pré-carrega as versões ESPACIAIS dos sons de OUTROS players (tiro/golpe/
+      // passos/movimento) pra o 1º evento tocar na hora, já com HRTF + distância.
+      ['gun_pistol', 'gun_cannon', 'swing_2', 'swing_3', 'chibatada'].forEach(id => this._getSpatialSound(id, 55));
+      ['run_concrete', 'jump', 'dash', 'land'].forEach(id => this._getSpatialSound(id, 45));
     });
   }
 
   /** Pré-carrega uma lista de IDs (cria os StaticSounds no cache). */
   async preload(ids) {
     for (const id of ids) { try { await this._getSound(id); } catch (_) {} }
+  }
+
+  /** Atrela o listener (ouvinte 3D) à câmera ATIVA. O attach do Audio v2
+   *  mantém posição+orientação sincronizadas a cada frame, então o panning
+   *  esquerda/direita/frente-trás segue o olhar do jogador. Idempotente. */
+  _attachListener() {
+    const eng = this._engine;
+    const cam = this.scene?.activeCamera;
+    if (!eng?.listener || !cam) return;
+    try { eng.listener.attach(cam); this._listenerCam = cam; } catch (_) {}
   }
 
   // ── Toca um som por ID ──────────────────────────────────────────
@@ -324,8 +345,15 @@ export class SoundManager {
       try {
         const snd = await BABYLON.CreateSoundAsync(`sp_${id}`, src, {
           spatialEnabled: true,
-          spatialMaxDistance: maxDistance,
+          // HRTF = panning BINAURAL (lado esquerdo/direito + frente/trás no fone).
+          // O default 'equalpower' só faz um pan L/R fraco; HRTF dá a sensação
+          // real de "veio da minha esquerda". Essencial pra localizar tiro/passos.
+          spatialPanningModel: 'HRTF',
+          // Distância: full até referenceDistance, cai linear até maxDistance.
+          // Dá leitura clara de perto (alto) vs longe (baixo).
           spatialDistanceModel: 'linear',
+          spatialReferenceDistance: 1.5,
+          spatialMaxDistance: maxDistance,
           spatialRolloffFactor: 1,
           autoplay: false, loop: false,
         });

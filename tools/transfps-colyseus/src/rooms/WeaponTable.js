@@ -90,19 +90,27 @@ export function validateHit({ attacker, target, weaponId, now, cooldowns, pvpReq
     return { ok: false, reason: 'pvp_off' };
   }
 
-  // Cooldown
+  // Cooldown — COM MARGEM pra jitter de rede/frame.
+  // O cliente dispara na cadência REAL da arma (fireRate). O cdMs do server era
+  // igual/maior que essa cadência, então qualquer atraso de rede fazia o hit
+  // chegar "cedo demais" e ser DESCARTADO em silêncio → "acertei mas não tirou
+  // vida" (pior no rifle: cdMs 650 > fireRate 600 = rejeitava 1 sim/1 não). A
+  // margem (aceita a partir de 82% do cdMs) cobre o jitter SEM liberar turbo/macro
+  // (que dispara a 2x+ a cadência e continua barrado).
   const key = `${attacker.id}:${weaponId}`;
   const lastAt = cooldowns.get(key) || 0;
-  if (now - lastAt < w.cdMs) {
-    return { ok: false, reason: 'cooldown', remaining: w.cdMs - (now - lastAt) };
+  const cdEff = w.cdMs * 0.82;
+  if (now - lastAt < cdEff) {
+    return { ok: false, reason: 'cooldown', remaining: cdEff - (now - lastAt) };
   }
 
   // Range horizontal (XZ)
   const dx = (target.x ?? 0) - (attacker.x ?? 0);
   const dz = (target.z ?? 0) - (attacker.z ?? 0);
   const dist = Math.sqrt(dx * dx + dz * dz);
-  // Tolerância: range + 1u pra cobrir interp client-side
-  if (dist > w.range + 1.0) {
+  // Tolerância: range + 1.75u pra cobrir interp + posição defasada/arredondada
+  // (input throttled a ~20Hz; alvo pode ter andado ~1u desde o último input).
+  if (dist > w.range + 1.75) {
     return { ok: false, reason: 'out_of_range', dist: dist.toFixed(2), max: w.range };
   }
 
@@ -126,7 +134,12 @@ export function validateHit({ attacker, target, weaponId, now, cooldowns, pvpReq
   // O alvo precisa estar à FRENTE do atacante — barra aimbot melee 360 (acertar
   // de costas). Só roda se requireAngle e se attacker.ry for finito e o alvo não
   // estiver praticamente em cima do atacante (dist horizontal mínima).
-  if (requireAngle && Number.isFinite(attacker.ry) && dist > 0.25) {
+  // Armas de FOGO pulam o cone: a mira é fina e client-side (inclui pitch da
+  // câmera, que o server NÃO tem) e o ry chega defasado/arredondado — o cone
+  // rejeitava tiros legítimos em viradas rápidas. O raycast do cliente já provou
+  // a linha de visão; range/altura/pvp continuam validando. Melee/espada/chibata
+  // mantêm o cone (barra acerto 360 nas costas).
+  if (requireAngle && w.kind !== 'gun' && Number.isFinite(attacker.ry) && dist > 0.25) {
     const ryRad = (attacker.ry * Math.PI) / 180; // ry vem em GRAUS
     // forward do atacante (mesma convenção do client/mob: (sin, cos))
     const fx = Math.sin(ryRad);

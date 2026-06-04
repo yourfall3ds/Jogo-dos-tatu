@@ -344,7 +344,9 @@ export class CombatSystem {
     // ouvir o whoosh espacial do golpe na posição do atacante.
     try {
       const wId = pl?.weapon?.getCurrentWeapon?.()?.id || 'melee';
-      window._cs?.sendFire?.(wId, true);
+      // animName = clipe REAL deste golpe (punch_03/sword_combo_2/…) → o avatar
+      // remoto toca EXATAMENTE o mesmo golpe (paridade com o player local).
+      window._cs?.sendFire?.(wId, true, null, animName);
     } catch (_) {}
     if (curW?.id === 'chibata' && curW.isMelee) {
       // Chibata: silencia o swing LOCAL (só toca chibatada no impacto).

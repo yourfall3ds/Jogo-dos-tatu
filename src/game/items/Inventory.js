@@ -120,6 +120,11 @@ export class Inventory {
     def.effect?.({ player: this.player, stats: this.stats });
     this.remove(id, 1);
     this.player?.sounds?.playNow?.('item_use');
+    // ── SYNC: avisa o servidor do uso (HP é server-authoritative) ──────────
+    // Sem isto a cura só acontecia LOCAL: os outros players nunca viam a barra
+    // encher E o próximo applyServerHp (delta do schema) revertia a cura na sua
+    // tela. Agora o server aplica a cura no state.hp → todos veem e fica firme.
+    try { window._cs?.sendUseItem?.(id); } catch (_) {}
     return true;
   }
 

@@ -167,6 +167,8 @@ export class RemoteMob {
 
   _applyAnim(animState) {
     if (!this._animGroups?.length) return;
+    // Não interrompe um one-shot de ataque em andamento (playAttack).
+    if (this._attackingUntil && performance.now() < this._attackingUntil) return;
     let want = null;
     if (animState === 'run' || animState === 'walk') {
       want = this._animGroups.find((a) => /run|walk|move/i.test(a.name));
@@ -180,6 +182,33 @@ export class RemoteMob {
       try { want.start(true, 1.0); } catch (_) {}
       this._currentAnim = want;
     }
+  }
+
+  /**
+   * One-shot de ATAQUE sincronizado com o hit real (chamado no evento mob_attack,
+   * no instante exato do golpe). Toca o clipe de ataque/mordida UMA vez (não-loop)
+   * e volta pra idle/locomoção quando acaba. Dá a leitura visual do soco — antes
+   * o ataque só aparecia pela troca de schema state (loop, dessincronizado do hit).
+   */
+  playAttack() {
+    if (this.dead || !this._animGroups?.length) return;
+    const atk = this._animGroups.find((a) => /attack|bite|hit|punch|claw|slash/i.test(a.name));
+    if (!atk) return;
+    try { this._currentAnim?.stop(); } catch (_) {}
+    try { atk.start(false, 1.2); } catch (_) { try { atk.start(false, 1.0); } catch (_) {} }
+    this._currentAnim = atk;
+    // Janela em que _applyAnim não interrompe; ao fim volta pro estado atual.
+    const fps = atk.targetedAnimations?.[0]?.animation?.framePerSecond || 60;
+    const durMs = Math.min(900, Math.abs((atk.to - atk.from) / fps) * 1000 / 1.2) || 500;
+    this._attackingUntil = performance.now() + durMs;
+    if (this._atkTimer) { try { clearTimeout(this._atkTimer); } catch (_) {} }
+    this._atkTimer = setTimeout(() => {
+      this._atkTimer = null;
+      this._attackingUntil = 0;
+      if (this.dead) return;
+      this._currentAnim = null;     // força _applyAnim a reiniciar a locomoção
+      this._applyAnim(this.state?.state || 'idle');
+    }, durMs);
   }
 
   update(dt, camera) {
@@ -224,6 +253,7 @@ export class RemoteMob {
   }
 
   dispose() {
+    if (this._atkTimer) { try { clearTimeout(this._atkTimer); } catch (_) {} this._atkTimer = null; }
     try { this.placeholder?.dispose(); } catch (_) {}
     try { this.glbInstance?.rootNodes?.forEach((n) => n.dispose()); } catch (_) {}
     try { this.root.dispose(); } catch (_) {}

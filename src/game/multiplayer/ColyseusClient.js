@@ -34,6 +34,7 @@ export class ColyseusClient {
       'mob_attack': new Set(), 'mob_killed': new Set(), 'chat': new Set(),
       'state_change': new Set(), 'error': new Set(),
       'hit_confirmed': new Set(), 'pickup': new Set(), 'pickup_denied': new Set(),
+      'remote_sfx': new Set(),
       'skill_cast': new Set(), 'xp_gain': new Set(), 'level_up': new Set(),
       'prop_add': new Set(), 'prop_remove': new Set(), 'prop_change': new Set(),
       'prop_hit': new Set(), 'prop_broken': new Set(),
@@ -301,6 +302,8 @@ export class ColyseusClient {
     this.room.onMessage('world_object_destroyed', (m) => this._notify('world_object_destroyed', m));
     // Som posicional de tiro/golpe do parceiro (rebroadcast do server)
     this.room.onMessage('remote_fire', (m) => this._notify('remote_fire', m));
+    // SFX de movimento do parceiro (pulo/dash/pouso) — som espacial
+    this.room.onMessage('remote_sfx', (m) => this._notify('remote_sfx', m));
     this.room.onMessage('player_knockback', (m) => this._notify('player_knockback', m));
     // Frentes B/C
     this.room.onMessage('match_countdown', (m) => this._notify('match_countdown', m));
@@ -494,11 +497,17 @@ export class ColyseusClient {
     //   na rampa de aceleracao — o remoto via Correndo o tempo todo.
     //   Agora 'run' depende da FLAG de sprint (criterio primario) OU de um corte
     //   ENTRE walk(11) e sprint(19.25) -> 14, separando walk de run de verdade.
+    // ── PARIDADE com a locomoção LOCAL (AnimationController.updateLocomotion) ──
+    //   O remoto agora roda o MESMO moveset; então mandamos os MESMOS estados
+    //   que o local escolhe: idle / walk / run / run_fast (sprint) e jump vs fall
+    //   no ar. Antes mandava só idle/walk/run/fall e o sprint virava "run" comum.
+    const _vy = +(player.velY || 0);
     let animState;
-    if (!_grounded)                              animState = 'fall';
-    else if (player._sprinting || _speed > 14)   animState = 'run';
-    else if (_speed > 0.8)                       animState = 'walk';
-    else                                         animState = 'idle';
+    if (!_grounded)                animState = (_vy > 3) ? 'jump' : 'fall';
+    else if (player._sprinting)    animState = 'run_fast';   // sprint → corrida acelerada
+    else if (_speed > 8)           animState = 'run';         // corrida normal
+    else if (_speed > 0.8)         animState = 'walk';        // caminhada
+    else                           animState = 'idle';
     this.room.send('input', {
       x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2),
       ry: +(player.yaw || 0).toFixed(1),
@@ -550,10 +559,18 @@ export class ColyseusClient {
    * Avisa o server que DISPAROU/GOLPEOU (pra parceiros OUVIREM o tiro/swing mesmo no erro).
    * Server rebroadcast posicional (remote_fire) com a pos autoritativa do atirador.
    */
-  sendFire(weapon, melee = false, dir = null) {
+  sendFire(weapon, melee = false, dir = null, anim = null) {
     const msg = { weapon: weapon || 'unarmed', melee: !!melee };
     if (dir && Number.isFinite(dir.dx)) { msg.dx = dir.dx; msg.dy = dir.dy; msg.dz = dir.dz; }
+    // anim = NOME do clipe REAL que o player local está tocando (punch_03,
+    // sword_combo_2, …). Permite o avatar remoto tocar EXATAMENTE o mesmo golpe.
+    if (typeof anim === 'string' && anim) msg.anim = anim.slice(0, 32);
     this.room?.send('fire_sound', msg);
+  }
+  /** SFX de movimento (jump/dash/land) — server rebroadcasta posicional p/ os
+   *  parceiros OUVIREM o pulo/dash/pouso espacialmente, como o tiro/golpe. */
+  sendSfx(kind) {
+    this.room?.send('player_sfx', { kind: String(kind || '').slice(0, 16) });
   }
   /** Hit em prop destrutivel (barril/caixa). Servidor calcula dmg. */
   sendHitProp(propId, weapon) {
