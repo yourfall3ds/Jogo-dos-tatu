@@ -140,6 +140,7 @@ export class SoundManager {
         'swing_1', 'swing_2', 'swing_3',
         'gun_pistol',
         'chibatada', // som de impacto da Chibata — precarrega pra nao engolir o 1o golpe
+        'jump', 'dash', 'walljump', // movimento: precarrega pra o 1o pulo/dash tocar na hora
       ]);
       this._getSpatialSound('flyby', 45);   // pré-carrega o som de voar
       this._getSpatialSound("bullet_whiz", 60);

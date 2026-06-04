@@ -1,91 +1,65 @@
-// quietConsole.js
-// Interceptor global de console.log/info/debug pra silenciar ruído de boot/assets.
-// Importe ANTES de qualquer outro módulo no entry point.
+// quietConsole.js — DESATIVADO (Lucas pediu: liberar TODOS os logs, nada oculto).
 //
-// Controle:
-//   localStorage.setItem('TRANSFPS_QUIET','1') → silencia (default em localhost)
-//   localStorage.setItem('TRANSFPS_QUIET','0') → tudo verbose
-//   window.transfpsQuiet(true/false) também funciona em runtime
+// Antes este módulo silenciava prefixos de boot/assets. Isso escondia justamente
+// os logs de desenvolvimento necessários pra diagnosticar a demora do boot.
+// Agora NÃO filtra nada. Em vez disso, instala um RASTREADOR DE BOOT com
+// timestamps (ms desde o load) e marcadores de fase, pra deixar óbvio onde o
+// tempo está sendo gasto.
 //
-// O que é silenciado: prefixos de boot/assets/animação/mapa.
-// O que NÃO é silenciado: warn, error, e tudo que envolve [Auth], [Lobby], [CS],
-// [Colyseus], [ArenaRoom], [MpGuard], [Net], conexão, sala, login, etc.
+// API pública (window):
+//   transfpsMark('nome')         → marca um ponto no tempo (ms desde load)
+//   transfpsPhase('fase')        → marca início de fase + delta da anterior
+//   transfpsBootReport()         → imprime tabela de todas as marcas
+//   transfpsQuiet(...)           → NO-OP (mantido p/ compatibilidade)
 
-const QUIET_PATTERNS = [
-  /^\[AnimLib\]/,
-  /^\[ChibataMap\]/,
-  /^\[NavMesh\]/,
-  /^\[SkillMap\]/,
-  /^\[SceneEditor\]/,
-  /^\[Physics\]/,
-  /^\[GFX\]/,
-  /^\[PlayerAnimator\]/,
-  /^\[LobbyHall\]/,
-  /^\[Boot\]/,
-  /^\[Asset/,
-  /^\[Music/,
-  /^✅ loaded:/,
-  /^=== /,
-  /^\d+ - \[/,
-  /^🐭 /,
-  /^=============================/,
-];
+const _t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+const _now = () => ((typeof performance !== 'undefined' && performance.now) ? performance.now() : 0) - _t0;
+const _ms = () => `+${_now().toFixed(0)}ms`;
 
-const isProdHost = () => {
+const _marks = [];
+let _lastPhaseT = 0;
+
+function _mark(name) {
+  const t = _now();
+  _marks.push({ name, t });
+  // log direto (origLog não existe mais — usamos console.log real)
+  try { console.log(`%c[BOOT ${_ms()}] ${name}`, 'color:#2effb6'); } catch (_) {}
+  return t;
+}
+
+function _phase(name) {
+  const t = _now();
+  const delta = t - _lastPhaseT;
+  _lastPhaseT = t;
+  _marks.push({ name: 'PHASE:' + name, t });
   try {
-    const h = location.hostname || '';
-    if (h === 'localhost' || h === '127.0.0.1' || h.endsWith('.local')) return false;
-    return true;
-  } catch (_) { return false; }
-};
-
-const readQuietPref = () => {
-  try {
-    if (typeof window !== 'undefined' && window._QUIET_LOGS === true) return true;
-    if (typeof window !== 'undefined' && window._QUIET_LOGS === false) return false;
-    const v = localStorage.getItem('TRANSFPS_QUIET');
-    if (v === '0') return false;
-    if (v === '1') return true;
+    console.log(`%c[BOOT ${_ms()}] ▶ FASE: ${name} (Δ ${delta.toFixed(0)}ms da anterior)`,
+      'color:#ffd166;font-weight:bold');
   } catch (_) {}
-  // Default: em localhost, silencia (Lucas pediu). Em prod já é silencioso por outro caminho.
-  return !isProdHost();
-};
+  return t;
+}
 
-const isQuietLine = (args) => {
-  if (!args || !args.length) return false;
-  const first = typeof args[0] === 'string' ? args[0] : '';
-  if (!first) return false;
-  for (const p of QUIET_PATTERNS) if (p.test(first)) return true;
-  return false;
-};
-
-const origLog = console.log.bind(console);
-const origInfo = console.info.bind(console);
-const origDebug = console.debug.bind(console);
-
-console.log = function (...args) {
-  if (readQuietPref() && isQuietLine(args)) return;
-  origLog(...args);
-};
-console.info = function (...args) {
-  if (readQuietPref() && isQuietLine(args)) return;
-  origInfo(...args);
-};
-console.debug = function (...args) {
-  if (readQuietPref() && isQuietLine(args)) return;
-  origDebug(...args);
-};
-
-// console.warn e console.error NÃO são interceptados.
+function _report() {
+  try {
+    console.log('%c════ BOOT TIMELINE ════', 'color:#2effb6;font-weight:bold');
+    let prev = 0;
+    for (const m of _marks) {
+      const delta = m.t - prev; prev = m.t;
+      console.log(`  +${m.t.toFixed(0).padStart(6)}ms  (Δ${delta.toFixed(0).padStart(5)}ms)  ${m.name}`);
+    }
+    console.log('%c═══════════════════════', 'color:#2effb6;font-weight:bold');
+  } catch (_) {}
+}
 
 try {
   if (typeof window !== 'undefined') {
-    window.transfpsQuiet = (on) => {
-      window._QUIET_LOGS = !!on;
-      try { localStorage.setItem('TRANSFPS_QUIET', on ? '1' : '0'); } catch (_) {}
-      origLog('[QuietConsole] quiet =', !!on, '— reload pra efeito completo');
-    };
-    window.transfpsVerbose = () => window.transfpsQuiet(false);
-    origLog('[QuietConsole] ativo. window.transfpsQuiet(false) pra ver tudo.');
+    window.transfpsMark = _mark;
+    window.transfpsPhase = _phase;
+    window.transfpsBootReport = _report;
+    // Compat: era usado pra (des)silenciar. Agora é no-op — nada é silenciado.
+    window.transfpsQuiet = () => { console.log('[logs] filtro DESATIVADO — tudo visível'); };
+    window.transfpsVerbose = () => {};
+    console.log('%c[logs] TODOS os logs liberados. Rastreador de boot ativo (window.transfpsBootReport()).',
+      'color:#2effb6');
   }
 } catch (_) {}

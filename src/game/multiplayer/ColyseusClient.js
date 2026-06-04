@@ -33,7 +33,7 @@ export class ColyseusClient {
       'match_started': new Set(), 'died': new Set(), 'respawn': new Set(),
       'mob_attack': new Set(), 'mob_killed': new Set(), 'chat': new Set(),
       'state_change': new Set(), 'error': new Set(),
-      'hit_confirmed': new Set(), 'pickup': new Set(),
+      'hit_confirmed': new Set(), 'pickup': new Set(), 'pickup_denied': new Set(),
       'skill_cast': new Set(), 'xp_gain': new Set(), 'level_up': new Set(),
       'prop_add': new Set(), 'prop_remove': new Set(), 'prop_change': new Set(),
       'prop_hit': new Set(), 'prop_broken': new Set(),
@@ -601,8 +601,12 @@ export class ColyseusClient {
   setPlayerId(id) { this.playerId = id; }
 
   on(event, cb) {
+    // RESILIENTE: um evento faltando NUNCA pode matar o boot (era throw → tela
+    // ERRO). Se o nome não existe no mapa, cria o set on-demand e avisa. Pior
+    // caso: o evento simplesmente nunca dispara, mas o jogo carrega normal.
     if (!this._listeners[event]) {
-      throw new Error('[CS] event nao registrado: ' + event);
+      console.warn('[CS] evento "' + event + '" não pré-registrado — criando on-demand');
+      this._listeners[event] = new Set();
     }
     this._listeners[event].add(cb);
     return () => this._listeners[event].delete(cb);
