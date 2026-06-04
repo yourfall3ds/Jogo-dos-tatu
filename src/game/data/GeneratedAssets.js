@@ -60,7 +60,10 @@ export const GeneratedAssets = {
   /** Insere/atualiza um asset gerado (vira visível pra todos). */
   async add(asset) {
     const uid = await _uid();
-    if (!uid || !asset?.id) return null;
+    if (!uid || !asset?.id) {
+      try { window._dbg?.('asset NÃO salvou global: ' + (!uid ? 'sem login' : 'sem id'), '#ff5050'); } catch (_) {}
+      return null;
+    }
     // O GLB precisa ser acessível por OUTROS. Hospeda no WASABI (server-side,
     // prefixo público); se falhar, cai pro Supabase Storage. Idempotente: se já
     // for URL Wasabi/Storage, mantém. Assim o asset gerado SEMPRE fica global.
@@ -76,6 +79,7 @@ export const GeneratedAssets = {
     // Sem URL compartilhável (upload falhou / sem login) → não adianta registrar.
     if (!glbUrl || /^(blob:|data:)/.test(glbUrl)) {
       console.warn('[GeneratedAssets] add: GLB sem URL pública (upload falhou?) — não registrado global:', asset.id);
+      try { window._dbg?.('asset NÃO salvou global: upload do GLB falhou (sem URL pública) → só LocalDB', '#ff5050'); } catch (_) {}
       return null;
     }
     // Imagem/thumbnail: hospeda no Wasabi também (se vier do Meshy). blob/data
@@ -97,9 +101,11 @@ export const GeneratedAssets = {
         group_id:  asset.groupId || null,
       }, { onConflict: 'id' });
       if (error) throw error;
+      try { window._dbg?.('asset salvo no catálogo global ✓ (' + asset.id + ')', '#7efa9a'); } catch (_) {}
       return asset.id;
     } catch (e) {
       console.warn('[GeneratedAssets] add falhou:', e?.message || e);
+      try { window._dbg?.('asset NÃO salvou global (Supabase): ' + (e?.message || e), '#ff5050'); } catch (_) {}
       return null;
     }
   },

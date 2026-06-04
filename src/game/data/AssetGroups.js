@@ -262,14 +262,28 @@ export class AssetGroups {
   static async getAssets(groupId = undefined) {
     const local = await LocalDB.get(STORE_ASSETS, []);
     let merged = local;
+    let _hasSession = false, _globalN = 0, _err = null;
     try {
-      if (await GeneratedAssets.available()) {
+      _hasSession = await GeneratedAssets.available();
+      if (_hasSession) {
         const global = await GeneratedAssets.loadAll();
+        _globalN = global.length;
         const byId = new Map(local.map(a => [a.id, a]));
         for (const g of global) if (!byId.has(g.id)) byId.set(g.id, g);
         merged = Array.from(byId.values());
       }
-    } catch (_) { /* offline → segue com local */ }
+    } catch (e) { _err = e?.message || String(e); /* offline → segue com local */ }
+    // DIAGNÓSTICO (só no load completo): mostra no chat por que a biblioteca
+    // pode estar vazia (sem sessão? global 0? erro 406 do schema transfps?).
+    if (groupId === undefined) {
+      try {
+        window._dbg?.(
+          `biblioteca: ${local.length} local + ${_globalN} global · sessão: ${_hasSession ? 'sim' : 'NÃO'}` +
+          (_err ? ` · erro: ${_err}` : ''),
+          (merged.length === 0 || _err) ? '#ff5050' : '#9fe'
+        );
+      } catch (_) {}
+    }
     if (groupId === undefined) return merged;
     if (groupId === null)      return merged.filter(a => !a.groupId);
     return merged.filter(a => a.groupId === groupId);
