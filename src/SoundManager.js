@@ -111,8 +111,6 @@ export class SoundManager {
       //  genérico (reusa swing) tocado ao escolher os demais personagens.
       spray_bnookker  : 'assets/Sound FX/spraybnookker.m4a',
       ui_select       : 'assets/Sound FX/ataque/ataque 2.wav',
-      // Dash (sintetizado em runtime se faltar — fallback no WaterSystem é diferente)
-      dash            : 'assets/Sound FX/voos e rushs/jump.wav',
     };
 
     this._openDB();

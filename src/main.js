@@ -1733,6 +1733,20 @@ async function init() {
     // ferramenta/menu aberto (Biblioteca, modo colocar) → não pausa por cima
     if (window._assetGroupsUI?._visible) return;
     if (window._buildMode && window._buildMode._state !== 'inactive') return;
+    // ── MULTIPLAYER: NUNCA pausa ao perder pointer lock ───────────────
+    // O servidor (Colyseus) é autoritativo: o personagem continua VULNERÁVEL
+    // e recebendo dano mesmo sem o lock local. Perder o lock (ESC, alt-tab,
+    // clique fora) NÃO pode mostrar menu de pause nem congelar a lógica do
+    // player — só re-capturamos o pointer no próximo mousedown real (o
+    // handler de mousedown do InputManager já chama _requestLock(true)).
+    // Pra manter o player VIVO no loop (movimento/câmera/dano client-side),
+    // re-armamos gameActive — assim o update do player segue rodando; só o
+    // cursor fica visível até o jogador clicar de volta. SEM overlay de pause.
+    if (window._cs?.connected) {
+      window._gameInput && (window._gameInput.gameActive = true);
+      return;
+    }
+    // ── SOLO/OFFLINE: pausa de verdade (overlay + congela input local) ─
     _showGamePause();
   };
 
@@ -1764,6 +1778,15 @@ async function init() {
         window.exitEngineMode();
         window._gameInput?.activate();
         setFocusUI(true);
+        return;
+      }
+      // ── MULTIPLAYER: ESC nunca abre menu de pause ────────────────────
+      // Servidor autoritativo → o personagem segue VULNERÁVEL. ESC só libera
+      // o pointer lock (comportamento nativo do browser); NÃO preventDefault,
+      // NÃO mostra overlay, NÃO desativa o player. O próximo mousedown real
+      // re-captura o lock. Mantém gameActive pra o player seguir no loop/dano.
+      if (window._cs?.connected) {
+        window._gameInput && (window._gameInput.gameActive = true);
         return;
       }
       const ov = $('pause-overlay');
@@ -2028,15 +2051,22 @@ async function init() {
         if (player._dead) {
           try {
             player._serverRespawn = true;
-            // Reposiciona na posição que o server mandou (se disponível),
-            // senão respawn() usa o spawn padrão (0, 2.5, 0).
-            const sx = me?.x, sy = me?.y, sz = me?.z;
+            // REGRA DO DONO #4: renasce CAINDO DO CÉU (skydive), não no chão.
+            // respawn()->spawn() já joga o player pra (0,200,0) caindo; aqui só
+            // ajustamos o X/Z pra cair PERTO do ponto que o server mandou
+            // (mantendo a altura de skydive = 200). Sem sobrescrever pro chão.
+            const sx = me?.x, sz = me?.z;
             player.respawn();
             if (player.mesh && Number.isFinite(sx) && Number.isFinite(sz)) {
-              const py = Number.isFinite(sy) ? sy : player.mesh.position.y;
-              player.mesh.position.set(sx, py, sz);
+              const SKY = 200;
+              player.mesh.position.set(sx, SKY, sz);
+              player.velY = -15; player._isFalling = true;
+              player._prevY = SKY;
               if (player._cc) {
-                try { player._cc.setPosition(new BABYLON.Vector3(sx, py, sz)); } catch (_) {}
+                try {
+                  player._cc.setPosition(new BABYLON.Vector3(sx, SKY, sz));
+                  player._cc.setVelocity(new BABYLON.Vector3(0, -15, 0));
+                } catch (_) {}
               }
             }
           } catch (e) {

@@ -112,8 +112,14 @@ export class Player {
     this.DASH_DUR     = 0.26;
     this.DASH_FORCE   = 52;  // um toque mais forte
     this.DASH_AIR_LIFT = 3.4;   // empurrão pra cima no dash aéreo (sustenta planagem)
-    this.AIR_DASH_MAX = 6;     // 6 dashes aéreos consecutivos sem tocar chão
-    this._airDashesLeft = 6;
+    this.AIR_DASH_MAX = 5;     // 5 dashes aéreos HORIZONTAIS consecutivos sem tocar chão/objeto
+    this._airDashesLeft = 5;
+    // Dash PRA CIMA (W+S juntos): contador PRÓPRIO, máximo 2 usos no ar.
+    this.DASH_UP_MAX  = 2;
+    this._dashUpLeft  = 2;
+    // Volume do som: dash up = DOBRO do dash horizontal.
+    this.DASH_VOL_NORMAL = 0.7;
+    this.DASH_VOL_UP     = 1.4;
 
     // ── Mira (ADS — Aim Down Sights) ────────────────────────────────
     this._aiming      = false;
@@ -171,7 +177,7 @@ export class Player {
       this._updateWeaponVisibility();
     };
 
-    this.spawn();
+    this.spawn({ sky: false });   // init: placeholder no chão (main.js posiciona de verdade)
   }
 
   // ── Mesh do jogador ───────────────────────────────────────────────
@@ -250,20 +256,50 @@ export class Player {
       this.mesh.checkCollisions = false;
       // Estado SUPPORTED do Havok (2). Cache do enum c/ fallback numérico.
       this._SUPPORTED = BABYLON.CharacterSupportedState?.SUPPORTED ?? 2;
+      // Estado SLIDING do Havok (1): encostou numa parede/objeto íngreme.
+      // Usado pra resetar os dashes ao tocar QUALQUER objeto no ar.
+      this._SLIDING = BABYLON.CharacterSupportedState?.SLIDING ?? 1;
     } catch (e) {
       console.error('[Player] character controller falhou:', e.message);
       this._cc = null;
     }
   }
 
-  spawn() {
-    this.mesh.position.set(0, 2.5, 0);
-    this._vx = 0; this._vz = 0; this.velY = 0;
-    this._prevY = 2.5;
+  // REGRA #4: renasce CAINDO DO CÉU (skydive), igual à entrada no mundo
+  //  (ref. main.js ~1271-1287). Antes teleportava pro chão (0,2.5,0); agora
+  //  vai pro alto (0,200,0) com velocidade pra baixo e _isFalling=true, então
+  //  o update() roda a física de queda + vento + anim de queda até aterrissar.
+  //  @param {object} [opts]
+  //  @param {boolean} [opts.sky=true] — false = placeholder no chão (init do
+  //    construtor, antes do main.js posicionar de verdade).
+  //  @param {number} [opts.x] @param {number} [opts.z] — X/Z do ponto de queda
+  //    (MP usa a pos do server pra cair perto do ponto que o server mandou).
+  spawn(opts = {}) {
+    const sky = opts.sky !== false;
+    const x = Number.isFinite(opts.x) ? opts.x : 0;
+    const z = Number.isFinite(opts.z) ? opts.z : 0;
+    if (!sky) {
+      // Placeholder no chão (init). Sem skydive.
+      this.mesh.position.set(x, 2.5, z);
+      this._vx = 0; this._vz = 0; this.velY = 0;
+      this._prevY = 2.5; this._isFalling = false;
+      if (this._cc) {
+        try {
+          this._cc.setPosition(new BABYLON.Vector3(x, 2.5, z));
+          this._cc.setVelocity(BABYLON.Vector3.Zero());
+        } catch (_) {}
+      }
+      return;
+    }
+    const SKY = 200;
+    this.mesh.position.set(x, SKY, z);
+    this._vx = 0; this._vz = 0; this.velY = -15;
+    this._prevY = SKY;
+    this._isFalling = true;
     if (this._cc) {
       try {
-        this._cc.setPosition(new BABYLON.Vector3(0, 2.5, 0));
-        this._cc.setVelocity(BABYLON.Vector3.Zero());
+        this._cc.setPosition(new BABYLON.Vector3(x, SKY, z));
+        this._cc.setVelocity(new BABYLON.Vector3(0, -15, 0));
       } catch (_) {}
     }
   }
@@ -285,6 +321,33 @@ export class Player {
     for (const [ox, oz] of offsets) {
       const origin = new BABYLON.Vector3(c.x + ox, c.y, c.z + oz);
       const hit = this.scene.pickWithRay(new BABYLON.Ray(origin, BABYLON.Vector3.Down(), len), filter);
+      if (hit?.hit) return true;
+    }
+    return false;
+  }
+
+  // ── Side collision check (parede/objeto no ar) ────────────────────
+  //  4 raycasts horizontais a partir da capsule (N/S/L/O). Se algum
+  //  bater num objeto físico a curta distância, o player está encostado
+  //  numa parede/objeto — usado pra resetar os dashes MESMO NO AR.
+  _checkSideCollision() {
+    // Atalho barato: o Havok já reporta SLIDING quando o CC encosta numa
+    // superfície íngreme/parede. Se disponível, confia nele.
+    if (this._cc && this._support && this._support.supportedState === this._SLIDING) {
+      return true;
+    }
+    const c    = this.mesh.position;
+    const dist = (this.RADIUS + 0.15) + 0.3;
+    const dirs = [
+      new BABYLON.Vector3( 1, 0,  0),
+      new BABYLON.Vector3(-1, 0,  0),
+      new BABYLON.Vector3( 0, 0,  1),
+      new BABYLON.Vector3( 0, 0, -1),
+    ];
+    const filter = m => m !== this.mesh && m.checkCollisions === true && m.isPickable !== false;
+    const origin = new BABYLON.Vector3(c.x, c.y, c.z);
+    for (const d of dirs) {
+      const hit = this.scene.pickWithRay(new BABYLON.Ray(origin, d, dist), filter);
       if (hit?.hit) return true;
     }
     return false;
@@ -597,14 +660,19 @@ export class Player {
     //  Chão: dash livre (cd curto). Ar: consome airCharge.
     const dashDir = this.input.consumeDashDir?.();
     if (dashDir && canMove && this._dashT <= 0 && this._dodgeT <= 0 && this._dashCdT <= 0) {
-      const canDash = this.isGrounded || this._airDashesLeft > 0;
+      const isUp = (dashDir === 'up');
+      // Cada tipo de dash tem seu PRÓPRIO contador no ar:
+      //  • dash PRA CIMA → _dashUpLeft (máx 2)
+      //  • dash HORIZONTAL → _airDashesLeft (máx 5)
+      const canDash = this.isGrounded ||
+        (isUp ? this._dashUpLeft > 0 : this._airDashesLeft > 0);
       if (canDash) {
         this._dashT = this.DASH_DUR;
         this._dashCdT = 0.14;
         // Calcula vetor de dash baseado na direção
         let dx = 0, dz = 0, dy = 0;
         const right = new BABYLON.Vector3(fwd.z, 0, -fwd.x); // perpendicular horizontal
-        if (dashDir === 'up') {
+        if (isUp) {
           // Dash vertical: empurrão grande pra cima, sem componente horizontal
           dy = 1;
           this._vx *= 0.4; this._vz *= 0.4;  // freia horizontal
@@ -617,7 +685,7 @@ export class Player {
         } else if (dashDir === 'left') {
           dx = -right.x; dz = -right.z;
         }
-        if (dashDir !== 'up') {
+        if (!isUp) {
           this._vx = dx * this.DASH_FORCE;
           this._vz = dz * this.DASH_FORCE;
           if (this.isGrounded) {
@@ -627,10 +695,10 @@ export class Player {
             this._airDashesLeft = Math.max(0, this._airDashesLeft - 1);
           }
         } else {
-          // Dash UP: empurrão vertical forte
+          // Dash UP: empurrão vertical forte; consome o contador próprio.
           this.velY = Math.max(this.velY, 0) + 18;
           if (!this.isGrounded) {
-            this._airDashesLeft = Math.max(0, this._airDashesLeft - 1);
+            this._dashUpLeft = Math.max(0, this._dashUpLeft - 1);
           }
         }
         this._dashFovT = 0.18;
@@ -638,12 +706,15 @@ export class Player {
         const fxDir = new BABYLON.Vector3(dx, dy * 0.5, dz);
         if (fxDir.lengthSquared() < 0.001) fxDir.set(0, 1, 0);
         this._spawnDashFX(fxDir);
-        this.sounds?.playNow?.('dash');
+        // Som: dash PRA CIMA toca 2x mais alto que o dash normal.
+        this.sounds?.playNow?.('dash', isUp ? this.DASH_VOL_UP : this.DASH_VOL_NORMAL);
       }
     }
-    // Recarrega charges ao tocar chão
-    if (this.isGrounded && this._airDashesLeft < this.AIR_DASH_MAX) {
-      this._airDashesLeft = this.AIR_DASH_MAX;
+    // ── Reset dos dashes: ao tocar o CHÃO **ou** encostar em QUALQUER
+    //    objeto físico (parede/etc) MESMO NO AR.
+    if (this.isGrounded || this._checkSideCollision()) {
+      if (this._airDashesLeft < this.AIR_DASH_MAX) this._airDashesLeft = this.AIR_DASH_MAX;
+      if (this._dashUpLeft   < this.DASH_UP_MAX)   this._dashUpLeft   = this.DASH_UP_MAX;
     }
     if (this._dashT   > 0) this._dashT   -= dt;
     if (this._dashCdT > 0) this._dashCdT -= dt;
@@ -828,6 +899,22 @@ export class Player {
       this._kbVz *= kbDrag;
     } else {
       this._kbVx = 0; this._kbVz = 0;
+    }
+
+    // ── 7.5 TRAVA DE MORTE ───────────────────────────────────────────
+    //  REGRA DO DONO #1: ao morrer, o cadáver NÃO pode mais ser movido.
+    //  canMove já zera o input, mas a cauda do Lerp de _vx/_vz e o
+    //  knockback residual ainda arrastavam o corpo. Aqui ZERAMOS de vez
+    //  toda velocidade horizontal + knockback enquanto _dead.
+    //  Exceção: morte por queda ('fall') CONTINUA caindo (anim de queda),
+    //  então só matamos o horizontal; o vertical (velY) segue a gravidade.
+    if (this._dead) {
+      this._vx = 0; this._vz = 0;
+      this._kbVx = 0; this._kbVz = 0;
+      if (this._deathType !== 'fall') {
+        // Morte na fase: trava 100% — sem deslizar, só assenta no chão.
+        if (this.velY > 0) this.velY = 0;
+      }
     }
 
     // ── 8. Aplicar deslocamento ──────────────────────────────────────
@@ -1538,9 +1625,140 @@ export class Player {
 
     // A tela de morte aparece pelo HUD (info.dead). Expõe o respawn global.
     window.respawnPlayer = () => this.respawn();
+
+    // REGRA DO DONO #2/#3: CADÁVER estilo Fortnite. O corpo cai/fica ~1.4s,
+    // depois SOME em ~0.6s (fade cyan + partículas + encolhe) = ~2s total.
+    // Nome/vida (nameplate + HUD) somem JUNTO no mesmo instante do vanish.
+    if (this._vanishTimer) { try { clearTimeout(this._vanishTimer); } catch (_) {} }
+    this._vanishTimer = setTimeout(() => {
+      this._vanishTimer = null;
+      if (this._dead) this._playDeathVanish();
+    }, 1400);
   }
 
-  /** Renasce no topo (chamado pelo botão Renascer). */
+  /**
+   * REGRA DO DONO #2: efeito de "desmonte" do cadáver do player LOCAL,
+   * adaptado do RemotePlayer.dispose() (fade cyan + ParticleSystem vanish +
+   * encolhe em ~0.6s). Opera sobre o avatar visível (animator.root), que é o
+   * que aparece em TPS / pros outros players. Em ~0.6s o corpo encolhe pra
+   * ~15%, esmaece e some. NÃO mexe no _dead nem reposiciona — o vanish é
+   * INDEPENDENTE do respawn (regra #5).
+   */
+  _playDeathVanish() {
+    if (this._vanishPlaying) return;
+    this._vanishPlaying = true;
+    const root = this.animator?.root;
+    if (!root || root.isDisposed?.()) { return; }
+
+    // Coleta materiais do avatar pra esmaecer (fade alpha + emissive cyan).
+    const mats = [];
+    try {
+      root.getChildMeshes?.().forEach(mesh => {
+        const mat = mesh.material;
+        if (mat && !mats.includes(mat)) {
+          try {
+            mat.alphaMode = BABYLON.Engine.ALPHA_COMBINE;
+            mat.transparencyMode = BABYLON.Material.MATERIAL_ALPHABLEND;
+          } catch (_) {}
+          mats.push(mat);
+        }
+      });
+    } catch (_) {}
+
+    // Partículas de "vanish" cyan (mesmo visual do RemotePlayer.dispose).
+    try {
+      if (typeof BABYLON !== 'undefined' && root.position) {
+        const ps = new BABYLON.ParticleSystem('playerVanish', 80, this.scene);
+        const tex = new BABYLON.DynamicTexture('pVanishTex', 16, this.scene, false);
+        const ctx = tex.getContext();
+        const g = ctx.createRadialGradient(8, 8, 2, 8, 8, 8);
+        g.addColorStop(0, 'rgba(180,255,220,1)');
+        g.addColorStop(1, 'rgba(120,200,255,0)');
+        ctx.fillStyle = g; ctx.fillRect(0, 0, 16, 16); tex.update();
+        ps.particleTexture = tex;
+        const emitter = new BABYLON.TransformNode('pVanishEmit', this.scene);
+        emitter.position.copyFrom(root.position);
+        emitter.position.y += 1.0;
+        ps.emitter = emitter;
+        ps.minEmitBox = new BABYLON.Vector3(-0.4, 0, -0.4);
+        ps.maxEmitBox = new BABYLON.Vector3(0.4, 0.5, 0.4);
+        ps.color1 = new BABYLON.Color4(0.6, 1.0, 0.85, 1);
+        ps.color2 = new BABYLON.Color4(0.3, 0.8, 1.0, 0.9);
+        ps.colorDead = new BABYLON.Color4(0.3, 0.6, 1.0, 0);
+        ps.minSize = 0.15; ps.maxSize = 0.4;
+        ps.minLifeTime = 0.4; ps.maxLifeTime = 0.9;
+        ps.emitRate = 0; ps.manualEmitCount = 60;
+        ps.gravity = new BABYLON.Vector3(0, 2, 0);
+        ps.direction1 = new BABYLON.Vector3(-1.5, 1, -1.5);
+        ps.direction2 = new BABYLON.Vector3(1.5, 4, 1.5);
+        ps.minEmitPower = 1; ps.maxEmitPower = 3;
+        ps.blendMode = BABYLON.ParticleSystem.BLENDMODE_ONEONE;
+        ps.start();
+        setTimeout(() => {
+          try { ps.stop(); } catch (_) {}
+          setTimeout(() => { try { ps.dispose(); emitter.dispose(); } catch (_) {} }, 1200);
+        }, 200);
+      }
+    } catch (_) {}
+
+    // REGRA #3: nome/vida do player LOCAL somem JUNTO com o cadáver. O HUD
+    // (#death-screen) é overlay fullscreen de respawn — fica. O que tira a
+    // "vida flutuando no lugar da morte" é esconder o avatar; sinalizamos
+    // que o corpo já sumiu pra qualquer nameplate/HP worldspace local.
+    this._corpseVanished = true;
+
+    // Anima escala→~15%, alpha→0 ao longo de ~0.6s, sobe levemente. Ao fim,
+    // esconde o avatar (não dispose — o respawn reusa o mesmo root).
+    const FADE_MS = 600;
+    const startT = performance.now();
+    const startScale = (root.scaling?.x) || 1;
+    const tick = () => {
+      // Se respawnou no meio do vanish, aborta e restaura (regra #5).
+      if (!this._dead) { this._restoreAvatarAfterVanish(root, mats, startScale); return; }
+      if (root.isDisposed?.()) { this._vanishPlaying = false; return; }
+      const t = performance.now() - startT;
+      const k = Math.min(1, t / FADE_MS);
+      const s = startScale * (1 - k * 0.85);   // encolhe pra ~15%
+      try {
+        if (root.scaling) root.scaling.set(s, s, s);
+        if (root.position) root.position.y += 0.012;   // sobe enquanto some
+        for (const mat of mats) {
+          mat.alpha = 1 - k;
+          if (mat.emissiveColor) {
+            mat.emissiveColor = new BABYLON.Color3(0.3 + 0.7 * (1 - k), 1.0, 0.7 + 0.3 * k);
+          }
+        }
+      } catch (_) {}
+      if (k < 1) requestAnimationFrame(tick);
+      else {
+        // Some de vez: esconde o avatar (o respawn restaura via _restoreAvatarAfterVanish).
+        try { root.setEnabled?.(false); } catch (_) {}
+        this._vanishPlaying = false;
+      }
+    };
+    this._vanishMats = mats;
+    this._vanishRoot = root;
+    this._vanishStartScale = startScale;
+    requestAnimationFrame(tick);
+  }
+
+  /** Restaura o avatar visível ao estado normal (escala/alpha/emissive/enabled). */
+  _restoreAvatarAfterVanish(root, mats, startScale) {
+    this._vanishPlaying = false;
+    this._corpseVanished = false;
+    try {
+      if (root && !root.isDisposed?.()) {
+        if (root.scaling) root.scaling.set(startScale, startScale, startScale);
+        root.setEnabled?.(true);
+      }
+      for (const mat of (mats || [])) {
+        mat.alpha = 1;
+        if (mat.emissiveColor) mat.emissiveColor = new BABYLON.Color3(0, 0, 0);
+      }
+    } catch (_) {}
+  }
+
+  /** Renasce CAINDO DO CÉU (skydive), igual à entrada no mundo (regra #4). */
   respawn() {
     this._dead = false;
     this._deathType = null;
@@ -1548,12 +1766,25 @@ export class Player {
     this._kbVx = 0; this._kbVz = 0;
     this._vx = 0; this._vz = 0; this.velY = 0;
     this._exhausted = false; this.stamina = this.maxStamina;
+
+    // REGRA #5: garante que o cadáver antigo JÁ sumiu antes de renascer — o
+    // vanish é independente do respawn e NUNCA deve teleportar o corpo morto
+    // pro novo spawn. Cancela timer pendente e restaura o avatar visível.
+    if (this._vanishTimer) { try { clearTimeout(this._vanishTimer); } catch (_) {} this._vanishTimer = null; }
+    this._restoreAvatarAfterVanish(
+      this._vanishRoot || this.animator?.root,
+      this._vanishMats,
+      this._vanishStartScale || 1
+    );
+    this._vanishRoot = null; this._vanishMats = null;
+    this._corpseVanished = false; this._vanishPlaying = false;
+
     if (this.stateMachine) {
       this.stateMachine.setState(this.stateMachine.isArmedFlag ? 'armed' : 'unarmed');
     }
-    this.spawn();
+    this.spawn();         // skydive: (0,200,0) caindo
     this.onRespawn?.();   // reseta inimigos
-    // Re-trava o cursor e volta o jogo ao normal
+    // Re-trava o cursor e volta o jogo ao normal (reativa input — regra #4).
     try { this.input.activate?.(); } catch (_) {}
   }
 
@@ -1759,8 +1990,10 @@ export class Player {
         this._footOn = true; this._footId = surfaceId;
         this.sounds?.startLoop?.(surfaceId, 0.5);
       }
-      // velocidade do áudio ~ velocidade real (sprint acelera os passos)
-      const rate = this._sprinting ? 1.35 : 1.0;
+      // velocidade do áudio ~ velocidade real (sprint acelera os passos).
+      //  Valores reduzidos pra casar o LOOP do som com a cadência visual do
+      //  passo (antes 1.35/1.0 corria rápido demais e descolava da pisada).
+      const rate = this._sprinting ? 1.1 : 0.85;
       this.sounds?.setLoopRate?.(this._footId, rate);
     } else if (this._footOn) {
       this._stopFootsteps();

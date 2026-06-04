@@ -936,7 +936,11 @@ export class RemotePlayer {
     this.root.rotationQuaternion = null;   // garante que rotation.y e respeitado
 
     // Nameplate em screen-space
-    if (camera) {
+    // REGRA DO DONO #3: NOME + VIDA somem JUNTO com o cadáver. Quando o player
+    // remoto está morto (state.dead), escondemos o nameplate na hora — antes
+    // ele ficava boiando no lugar da morte (bug feio). Some no MESMO momento
+    // em que o ragdoll/vanish acontece, tudo conectado pra não bugar.
+    if (camera && this.state?.dead !== true) {
       const wpos = new BABYLON.Vector3(this._current.x, this._current.y + 2.2, this._current.z);
       const eng = this.scene.getEngine();
       const sc = BABYLON.Vector3.Project(wpos, BABYLON.Matrix.Identity(), this.scene.getTransformMatrix(),
@@ -946,6 +950,9 @@ export class RemotePlayer {
         this._nameEl.style.left = sc.x + 'px';
         this._nameEl.style.top = sc.y + 'px';
       } else this._nameEl.style.display = 'none';
+    } else if (this._nameEl) {
+      // Morto → nome/vida escondidos junto com o corpo.
+      this._nameEl.style.display = 'none';
     }
   }
 
