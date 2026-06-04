@@ -117,16 +117,23 @@ export class GraphicsEnhancer {
     }
 
     // — Aberração cromática sutil (lente real) → bordas com franja de cor —
-    try {
-      pl.chromaticAberrationEnabled = true;
-      pl.chromaticAberration.aberrationAmount = 14;
-      pl.chromaticAberration.radialIntensity = 0.7;
-    } catch (_) {}
+    //   ⚠️ SÓ no WebGL2. No WebGPU o CA adiciona um postprocess que injeta o
+    //   varying que estoura 16→17 (mesmo com bloom/glow já off) → tela preta +
+    //   spam de GPUValidationError. Por isso fica atrás de _heavyFX.
+    if (_heavyFX) {
+      try {
+        pl.chromaticAberrationEnabled = true;
+        pl.chromaticAberration.aberrationAmount = 14;
+        pl.chromaticAberration.radialIntensity = 0.7;
+      } catch (_) {}
+    } else {
+      try { pl.chromaticAberrationEnabled = false; } catch (_) {}
+    }
 
     // nitidez: render na resolução nativa
     try { this.engine.setHardwareScalingLevel(1 / (window.devicePixelRatio || 1) <= 0.5 ? 0.5 : 1); } catch (_) {}
 
-    console.log(`[GFX] ✨ pós-processamento: ${window._webgpu ? 'ACES+FXAA (WebGPU: bloom/glow OFF)' : 'Bloom+ACES+FXAA+Glow+CA'}${this.ssao ? '+SSAO' : ''}`);
+    console.log(`[GFX] ✨ pós-processamento: ${window._webgpu ? 'ACES+FXAA (WebGPU: bloom/glow/CA OFF)' : 'Bloom+ACES+FXAA+Glow+CA'}${this.ssao ? '+SSAO' : ''}`);
   }
 
   // ── VR: desliga TODO pós-processamento pesado ────────────────────

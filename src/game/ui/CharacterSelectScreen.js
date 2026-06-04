@@ -483,9 +483,12 @@ export class CharacterSelectScreen {
     try {
       this._previewEngine = new BABYLON.Engine(this._canvas, true, {
         preserveDrawingBuffer: true, stencil: true, antialias: true,
+        alpha: true, premultipliedAlpha: false,   // canvas TRANSPARENTE
       });
       const scene = new BABYLON.Scene(this._previewEngine);
-      scene.clearColor = new BABYLON.Color4(0.02, 0.04, 0.08, 1);
+      // clearColor com ALPHA 0 → o canvas não pinta fundo opaco; o bioma e a
+      //  decoração (atrás, no DOM) aparecem por trás do personagem 3D.
+      scene.clearColor = new BABYLON.Color4(0, 0, 0, 0);
       this._previewScene = scene;
 
       // Câmera: mira ~60% da altura (heroico), pan manual = arrastar.
