@@ -873,15 +873,35 @@ export class BuildMode {
   _buildableStock(assetId) { return window._gameInventory?.getBuildables?.().find(s => s.data?.assetId === assetId)?.qty || 0; }
 
   _updateDrag() {
-    const PW  = 4;                         // largura da peça (parede / azulejo)
+    const PW  = 4;                         // largura da peça (parede / azulejo) = célula do grid
+    const LEVEL_H = 3;                      // altura da parede = altura de UM ANDAR (BuildPieces H)
     const raw = this._groundPoint();
     if (!raw) return;
+
+    // ── SNAP VERTICAL POR NÍVEL ──────────────────────────────────────
+    //  O Y vem do que o crosshair acerta (chão OU topo de uma peça já posta).
+    //  Travamos no nível mais próximo (múltiplo da altura da parede) → parede e
+    //  piso assentam em andares consistentes: parede no chão (y=0), piso no topo
+    //  da parede (y=3) = SEGUNDO ANDAR, parede do 2º andar (y=3), etc.
+    let level = Math.round(raw.y / LEVEL_H) * LEVEL_H;
+    //  ESTENDER O ANDAR EM QUE VOCÊ ESTÁ: ao mirar a célula vizinha VAZIA do 2º
+    //  andar, o raycast atravessa o vão e bate no CHÃO (nível 0) → o piso cairia
+    //  pro térreo. Se você está de pé num andar ACIMA do ponto mirado, constrói
+    //  no SEU andar. Mirar numa peça MAIS ALTA ainda sobe (max), então dá pra
+    //  subir andares normalmente.
+    const pY = this.player?.mesh?.position?.y;
+    if (Number.isFinite(pY)) {
+      const pLevel = Math.round(pY / LEVEL_H) * LEVEL_H;
+      if (pLevel > level) level = pLevel;
+    }
+    raw.y = level;
 
     if (this._dragTool === 'floor' && this._edge('KeyX')) this._floorRemove = !this._floorRemove;
     this._setHUDMode(this._dragTool === 'wall' ? 'WALL' : (this._floorRemove ? 'FLOORDEL' : 'FLOOR'));
 
     if (this._dragTool === 'wall') {
-      const gp = this._snapVec(raw, 1);
+      // Grid 4 (igual ao piso) → parede e piso CASAM nos mesmos cantos de célula.
+      const gp = this._snapVec(raw, PW);
       if (!this._dragA) {
         this._previewWall(gp, gp);
         if (this._consumePlaceClick()) this._dragA = gp.clone();
@@ -908,7 +928,9 @@ export class BuildMode {
     let len = Math.hypot(gp.x - A.x, gp.z - A.z);
     if (len < 0.5) return A.clone();
     let ang = Math.round(Math.atan2(gp.z - A.z, gp.x - A.x) / (Math.PI / 4)) * (Math.PI / 4);
-    len = Math.max(1, Math.round(len));
+    // Comprimento em múltiplos da célula (4) → a ponta cai no grid e cada
+    // segmento cobre células inteiras, alinhado com os pisos.
+    len = Math.max(PW, Math.round(len / PW) * PW);
     const src = this._ghostSrc;
     if (src?._fromInventory) {              // clampa ao estoque
       const maxLen = this._buildableStock(src.assetId) * PW;

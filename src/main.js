@@ -2356,6 +2356,13 @@ async function init() {
   // ── Carrega assets em background (após o jogo já estar jogável) ──
   _loadAssetsBackground(loader, player, level, shadowGen, scene);
 
+  // ── Miniaturas REAIS das armas (RTT do GLB) no inventário/hotbar ──
+  //  Gera um PNG de cada arma a partir do modelo 3D e salva em LocalDB
+  //  ('asset_thumbnails' sob builtin_item_<id>) — o RpgHUD já exibe <img>
+  //  quando acha a chave. Roda 1x (pula se já cacheado). Deferido pra não
+  //  competir com o carregamento inicial dos assets.
+  setTimeout(() => { _generateWeaponThumbnails(scene).catch(() => {}); }, 4000);
+
   // ── Login screen aparece após boot ──
   //  Esconde a start-screen padrão e mostra LoginScreen.
   //  Se já logado e tem ?room=UUID na URL, vai direto pra sala.
@@ -2397,6 +2404,48 @@ async function _restoreMachines(scene) {
   }
 }
 
+// ── Miniaturas de itens NATIVOS → arquivo COMMITADO no repo (sem LocalDB) ──
+//  Itens nativos (armas etc.) têm a miniatura versionada em assets/ui/thumbs/.
+//  Em DEV, se o PNG ainda não existe, renderiza o GLB (ThumbnailGen) e salva no
+//  REPO via config-server (POST /save-thumb) → o dev commita e TODOS recebem no
+//  push. Em produção isto não roda (config-server ausente) e o jogo carrega o
+//  PNG commitado (ItemCatalog.thumb) ou cai no emoji (onerror). Zero LocalDB.
+//  (Assets gerados pela máquina têm thumbnail no Wasabi — fluxo separado.)
+async function _generateWeaponThumbnails(scene) {
+  const WEAPON_GLB = {
+    weapon_pistol:        'assets/itens 3d/Armas/Arma inicial.glb',
+    weapon_machinegun:    'assets/itens 3d/ExternalAssets/Sketchfab/Weapons/sci_fi_plasma_rifle.glb',
+    weapon_sword_paladin: 'assets/weapons/longsword_paladin.glb',
+  };
+  let gen = null;
+  for (const [id, glb] of Object.entries(WEAPON_GLB)) {
+    // Já existe commitado? (cuidado: `serve -s` faz fallback SPA → checa o
+    // content-type pra não confundir o index.html 200 com um PNG real.)
+    try {
+      const head = await fetch(`assets/ui/thumbs/${id}.png`, { cache: 'no-store' });
+      const ct = head.headers.get('content-type') || '';
+      if (head.ok && ct.startsWith('image')) continue;   // miniatura já no repo
+    } catch (_) { /* offline → tenta gerar mesmo assim */ }
+    // Não existe → renderiza e salva NO REPO (precisa do config-server em dev).
+    try {
+      if (!gen) {
+        const { ThumbnailGen } = await import('./game/debug/ThumbnailGen.js');
+        gen = new ThumbnailGen(scene);
+      }
+      const dataURL = await gen.generate(glb);
+      if (!dataURL) continue;
+      const r = await fetch('http://127.0.0.1:3099/save-thumb', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, dataURL }),
+      });
+      if (r.ok) {
+        console.log('[thumb] gerada e salva no repo: assets/ui/thumbs/' + id + '.png (commite + push)');
+        try { window._rpgHUD?._renderHotbar?.(); } catch (_) {}
+      }
+    } catch (e) { console.warn('[thumb]', id, '— config-server offline? ', e?.message); }
+  }
+}
+
 // ── Carregamento progressivo de assets ───────────────────────────
 async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
   const queue = [
@@ -2406,30 +2455,17 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
         player.attachCurrentWeaponToAnimator();
       }, label: 'Pistola…' },
     { key: 'rifle',  done: ms => {
-        player.weapon.setGLBWeapon(ms, 'rifle');
-        // Metralhadora compartilha o modelo do rifle: clona o root pra um
-        // segundo id ('machinegun') já que setGLBWeapon reparenteia o mesh.
-        try {
-          const root = ms?.[0];
-          const mgRoot = root?.clone?.('mg_root', null, false);
-          if (mgRoot) player.weapon.setGLBWeapon([mgRoot, ...mgRoot.getChildMeshes()], 'machinegun');
-        } catch (e) { console.warn('[main] clone metralhadora falhou:', e?.message); }
+        // O modelo do "rifle" (sci_fi_plasma_rifle.glb) agora é a METRALHADORA.
+        // O rifle deixou de ser arma; reaproveitamos apenas o mesh dele.
+        player.weapon.setGLBWeapon(ms, 'machinegun');
         player.attachCurrentWeaponToAnimator();
-      }, label: 'Rifle…' },
-    // ── Espadas (Forgotten Insanity PBR) ──
+      }, label: 'Metralhadora…' },
+    // ── Espada (Forgotten Insanity PBR) ──
     { key: 'sword_paladin', done: ms => {
         player.weapon.setGLBWeapon(ms, 'sword_paladin');
       }, label: 'Longsword Paladino…' },
-    { key: 'sword_zweihander', done: ms => {
-        player.weapon.setGLBWeapon(ms, 'sword_zweihander');
-      }, label: 'Zweihander…' },
-    // ── Chibata (procedural — sem GLB externo) ──
-    { key: '_procedural_chibata', done: async () => {
-        const { Chibata } = await import('./game/weapons/Chibata.js');
-        const result = Chibata.buildMesh(scene);
-        player.weapon.setGLBWeapon(result.meshes, 'chibata');
-      }, label: 'Chibata 🐭…' },
-    
+    // (rifle/chibata/zweihander removidos do loadout)
+
     // ── Props/decoração automáticos DESATIVADOS ──────────────────────
     //  Antes nasciam espalhados (pequenos) no boot. Removidos da cena pra
     //  começar LIMPO. Continuam na Biblioteca de Assets (categoria decor)

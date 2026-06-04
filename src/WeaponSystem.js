@@ -1,9 +1,6 @@
 import { PistolaBucaneira } from './game/weapons/PistolaBucaneira.js';
-import { RiflePesado }      from './game/weapons/RiflePesado.js';
 import { Metralhadora }     from './game/weapons/Metralhadora.js';
 import { EspadaPaladin }    from './game/weapons/EspadaPaladin.js';
-import { EspadaZweihander } from './game/weapons/EspadaZweihander.js';
-import { Chibata }          from './game/weapons/Chibata.js';
 import { LocalDB }           from './game/data/LocalDB.js';
 
 /**
@@ -15,32 +12,21 @@ export class WeaponSystem {
     this.scene  = scene;
     this.level  = level;
 
-    // ── Instâncias das Armas ──────────────────────────────────────
-    //  Ordem = índice na hotbar (teclas/scroll). Default do dono:
-    //  0=rifle(1) · 1=metralhadora(2) · 2=espada(3) · 3=chibata(4) ·
-    //  4=zweihander(5) · 5=pistola(6). weaponIndex no ItemCatalog segue isto.
-    this.slot1 = new RiflePesado(scene);          // 1
-    this.slot1.id = 'rifle';
+    // ── Instâncias das Armas (loadout enxuto: 2 de fogo + 1 espada) ──
+    //  Ordem = índice em weapons[] (weaponIndex no ItemCatalog segue isto):
+    //  0=pistola · 1=metralhadora(automática) · 2=espada paladino.
+    //  Removidas: rifle (o modelo dele agora só alimenta a metralhadora),
+    //  chibata e zweihander (duplicadas/extras bugadas).
+    this.slot1 = new PistolaBucaneira(scene);      // 0
+    this.slot1.id = 'pistol';
 
-    this.slot2 = new Metralhadora(scene);          // 2
+    this.slot2 = new Metralhadora(scene);          // 1 (automática, "vários tiros")
     this.slot2.id = 'machinegun';
 
-    // ── Espadas (melee) ──
-    this.slot3 = new EspadaPaladin(scene);         // 3
+    this.slot3 = new EspadaPaladin(scene);         // 2
     this.slot3.id = 'sword_paladin';
 
-    // ── Chibata (whip) ──
-    this.slot4 = new Chibata(scene);               // 4
-    this.slot4.id = 'chibata';
-
-    this.slot5 = new EspadaZweihander(scene);      // 5
-    this.slot5.id = 'sword_zweihander';
-
-    // ── Pistola ──
-    this.slot6 = new PistolaBucaneira(scene);      // 6
-    this.slot6.id = 'pistol';
-
-    this.weapons = [this.slot1, this.slot2, this.slot3, this.slot4, this.slot5, this.slot6];
+    this.weapons = [this.slot1, this.slot2, this.slot3];
     this.currentWeaponIndex = 0;
 
     // Stats atuais (serão sobrescritos pelo init())

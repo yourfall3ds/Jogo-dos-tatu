@@ -1343,12 +1343,14 @@ export class Player {
             }
           }
         } else {
-          // ── ATACANDO + correndo → RUN-WHILE-PUNCH (anti-slide) ───────
-          //  Pernas correm (lower) e os braços socam (upper). Só pra SOCO:
-          //  o chute usa as pernas, então fica corpo-inteiro.
+          // ── ATACANDO + correndo → RUN-WHILE-ATTACK (anti-slide) ──────
+          //  Pernas correm (lower) e os braços atacam (upper). Vale pra SOCO
+          //  e ESPADA (ambos movimento de tronco/braços). CHUTE fica corpo-
+          //  inteiro (usa as pernas) → não entra aqui.
           const atkAnim = this.combatSystem?._currentAttackAnim;
           const grnd    = this.groundedVisual ?? this.isGrounded;
-          if (atkAnim && atkAnim.includes('punch') && animMoving && grnd &&
+          const isUpperAtk = !!atkAnim && (atkAnim.includes('punch') || atkAnim.includes('sword'));
+          if (isUpperAtk && animMoving && grnd &&
               this.layered && this.animLib.has(atkAnim)) {
             this.layered.setEnabled(true);
             this.animCtrl.stopAll();

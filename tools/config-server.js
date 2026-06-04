@@ -122,6 +122,35 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── Miniaturas de itens NATIVOS → arquivo COMMITADO no repo ───────
+  //  POST /save-thumb  body: { id, dataURL }  → grava assets/ui/thumbs/<id>.png
+  //  Itens nativos do jogo (armas etc.) têm a miniatura versionada: quem gera
+  //  (dev) faz push e TODOS recebem em produção. (Assets da máquina vão pro
+  //  Wasabi, fluxo separado.) Roda só em DEV (config-server local).
+  if (req.method === 'POST' && req.url === '/save-thumb') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const { id, dataURL } = JSON.parse(body);
+        if (!id || !dataURL) { res.writeHead(400); res.end('faltou id/dataURL'); return; }
+        const safe = String(id).replace(/[^a-zA-Z0-9._-]/g, '_');
+        const b64  = String(dataURL).replace(/^data:image\/\w+;base64,/, '');
+        const dir  = path.join(ROOT, 'assets', 'ui', 'thumbs');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filePath = path.join(dir, `${safe}.png`);
+        fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+        console.log(`🖼️  [${new Date().toLocaleTimeString()}] Miniatura salva: assets/ui/thumbs/${safe}.png`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, path: `assets/ui/thumbs/${safe}.png` }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // ── Banco de Dados Local (JSON) ───────────────────────────────────
   // GET /db/nome_da_colecao
   if (req.method === 'GET' && req.url.startsWith('/db/')) {

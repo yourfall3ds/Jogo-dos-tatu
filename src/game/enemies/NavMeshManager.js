@@ -100,15 +100,56 @@ export class NavMeshManager {
     return out;
   }
 
+  // ── Caixa-proxy leve (AABB) p/ alimentar o Recast no lugar de uma malha
+  //  pesada. Voxelizar a malha real high-poly é o que trava. A caixa cobre
+  //  chão/parede igual pra navegação. Invisível, descartada após o build. ──
+  _navProxyBox(m) {
+    try {
+      m.computeWorldMatrix(true);
+      const bb = m.getBoundingInfo().boundingBox;
+      const min = bb.minimumWorld, max = bb.maximumWorld;
+      const size = max.subtract(min);
+      const box = BABYLON.MeshBuilder.CreateBox('_navproxy', {
+        width:  Math.max(0.1, size.x),
+        height: Math.max(0.1, size.y),
+        depth:  Math.max(0.1, size.z),
+      }, this.scene);
+      box.position.copyFrom(min.add(max).scale(0.5));
+      box.isVisible = false; box.isPickable = false;
+      return box;
+    } catch (_) { return null; }
+  }
+
   // ── (Re)gera a navmesh agora ─────────────────────────────────────
   async rebuild() {
     if (!this.plugin) return false;
-    const meshes = this._collectMeshes();
-    if (!meshes.length) return false;
+    const collected = this._collectMeshes();
+    if (!collected.length) return false;
+
+    // ── ANTI-FREEZE (asset gerado high-poly): troca malhas PESADAS por uma
+    //  CAIXA do AABB antes do createNavMesh. Um piso/parede gerado pela máquina
+    //  tem dezenas/centenas de milhares de tris; voxelizar isso no Recast
+    //  (síncrono) travava o jogo ~30s. A caixa dá a mesma cobertura de navegação
+    //  sem o custo. Boxes temporárias são descartadas após o build. ──
+    const NAV_MAX_VERTS = 6000;
+    const navInput = [];
+    const temps = [];
+    for (const m of collected) {
+      const verts = m.getTotalVertices?.() || 0;
+      if (verts > NAV_MAX_VERTS && !m._isBoxCol) {
+        const box = this._navProxyBox(m);
+        if (box) { navInput.push(box); temps.push(box); }   // sem box → pula (não trava)
+      } else {
+        navInput.push(m);
+      }
+    }
+    const meshes = collected;   // obstáculos/walkables usam as malhas REAIS (LOS por raycast)
+    if (!navInput.length) { temps.forEach(t => { try { t.dispose(); } catch (_) {} }); return false; }
     try {
       const t0 = performance.now();
-      this.plugin.createNavMesh(meshes, NAV_PARAMS);
+      this.plugin.createNavMesh(navInput, NAV_PARAMS);
       this._lastBuildMs = +(performance.now() - t0).toFixed(1);
+      temps.forEach(t => { try { t.dispose(); } catch (_) {} });   // limpa proxies
       this._dirty = false;
       // Lista de obstáculos p/ os inimigos: SÓ o que o player realmente colide
       //  (parede/construção/escada com collider). Exclui o chão e a decoração
@@ -139,6 +180,7 @@ export class NavMeshManager {
       this.walkables = [...this.obstacles, ...grounds];
       return true;
     } catch (e) {
+      temps.forEach(t => { try { t.dispose(); } catch (_) {} });   // limpa proxies mesmo no erro
       console.warn('[NavMesh] rebuild falhou:', e?.message);
       return false;
     }

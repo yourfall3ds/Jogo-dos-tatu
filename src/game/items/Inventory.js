@@ -161,13 +161,21 @@ export class Inventory {
   //  A vaga default vem de def.defaultHotbar (reorganizável depois: o jogador
   //  pode reordenar a hotbar livremente — só não sobrescrevemos vagas usadas).
   ensureStarterItems() {
+    // ── PODA: remove armas que não existem mais no catálogo (as duplicadas/
+    //  bugadas que ficaram salvas no bag/hotbar antes da limpeza). Sem isto
+    //  elas viram entradas órfãs (ícone 📦 quebrado) no inventário existente.
+    const isDeadWeapon = (id) => typeof id === 'string' && id.startsWith('weapon_') && !getItemDef(id);
+    if (Array.isArray(this.bag)) this.bag = this.bag.filter(s => !isDeadWeapon(s?.id));
+    if (Array.isArray(this.hotbar)) {
+      for (let i = 0; i < this.hotbar.length; i++) {
+        if (isDeadWeapon(this.hotbar[i])) this.hotbar[i] = null;
+      }
+    }
+
     const STARTER = [
-      'weapon_rifle',          // 1
-      'weapon_machinegun',     // 2
+      'weapon_pistol',         // 1
+      'weapon_machinegun',     // 2 (automática)
       'weapon_sword_paladin',  // 3
-      'weapon_chibata',        // 4
-      'weapon_sword_zweihander', // 5
-      'weapon_pistol',         // 6
     ];
     for (const wid of STARTER) {
       const def = getItemDef(wid);
