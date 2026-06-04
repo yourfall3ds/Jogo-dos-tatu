@@ -111,6 +111,16 @@ export class SoundManager {
       //  genérico (reusa swing) tocado ao escolher os demais personagens.
       spray_bnookker  : 'assets/Sound FX/spraybnookker.m4a',
       ui_select       : 'assets/Sound FX/ataque/ataque 2.wav',
+
+      // ── Ambiente de bioma (tela de seleção de personagem) ──────────
+      //  Loops CC0 (OpenGameArt) tocados em LOOP baixo ao escolher uma
+      //  classe; cada um casa com o tema do bioma. Se o arquivo faltar,
+      //  CreateSoundAsync falha em silêncio (nunca quebra). amb_fire reusa
+      //  o crepitar de fogo já existente em poder/ (inferno do mago).
+      amb_swamp       : 'assets/Sound FX/ambient/amb_swamp.ogg',
+      amb_cave        : 'assets/Sound FX/ambient/amb_cave.ogg',
+      amb_drums       : 'assets/Sound FX/ambient/amb_drums.ogg',
+      amb_fire        : 'assets/Sound FX/poder/burning_fire.wav',
     };
 
     this._openDB();
