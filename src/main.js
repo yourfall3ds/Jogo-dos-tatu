@@ -566,16 +566,37 @@ async function init() {
   window._settingsUI = settingsUI;
 
   // ── AUTH + LOGIN + LOBBY + MULTIPLAYER ─────────────────────────
+  // Auth FORA do caminho crítico: o jogo NUNCA espera a rede do Supabase pra
+  // bootar. init() roda em paralelo; se falhar/demorar, o jogo segue anônimo e
+  // a sessão hidrata o HUD retroativamente quando (e se) resolver. Nada de throw
+  // que mate o boot — login é opcional, jogar não é.
   const auth = new AuthSystem();
-  try { await auth.init(); }
-  catch (e) { console.error('[Auth] init FALHOU - jogo nao pode rodar:', e); throw e; }
   window._auth = auth;
 
   // ── ColyseusClient (state-authoritative MP) ───────────────────────
   const cs = new ColyseusClient();
   cs.connect(TRANSFPS_CS_URL);
   window._cs = cs;
-  cs.setPlayerId(auth.getUserId());
+  cs.setPlayerId(auth.getUserId());   // null = anônimo até a auth resolver
+
+  // init() não-awaitada, com guarda de tempo. Quando resolver, atualiza o
+  // playerId no Colyseus (sem reconectar) e o HUD via onAuthChange já existente.
+  (async () => {
+    const TIMEOUT_MS = 8000;
+    try {
+      await Promise.race([
+        auth.init(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('auth init timeout ' + TIMEOUT_MS + 'ms')), TIMEOUT_MS)),
+      ]);
+      const uid = auth.getUserId();
+      if (uid) { try { cs.setPlayerId(uid); } catch (e) { console.warn('[Auth] setPlayerId pós-init:', e?.message); } }
+      console.log('[Auth] init OK (paralelo)', uid ? 'logado' : 'anônimo');
+    } catch (e) {
+      // Offline gracioso: o jogo continua rodando, só sem cloud save/perfil.
+      console.warn('[Auth] init falhou/timeout — seguindo anônimo:', e?.message);
+      window._authOffline = true;
+    }
+  })();
 
   // ── VR (WebXR): suporte a Meta Quest browser ──────────────────────
   const vrSystem = new VRSystem(scene, player, cs);
@@ -1691,13 +1712,21 @@ async function init() {
   // ── Sistemas RPG: Stats + Skills + Inventário ────────────────────
   const stats = new PlayerStats();
   {
-    // Nuvem primeiro (Supabase transfps.settings.data.stats); cai p/ cache local.
-    let _statsData = await CloudSave.loadStats();
-    if (!_statsData) {
-      const _statsRaw = localStorage.getItem('digifps_stats');
-      if (_statsRaw) { try { _statsData = JSON.parse(_statsRaw); } catch (e) { console.error('[Stats] cache local corrompido:', e); } }
+    // CACHE LOCAL PRIMEIRO (síncrono, instantâneo) — o boot NUNCA espera a rede.
+    const _statsRaw = localStorage.getItem('digifps_stats');
+    if (_statsRaw) {
+      try { stats.load(JSON.parse(_statsRaw)); }
+      catch (e) { console.error('[Stats] cache local corrompido:', e); }
     }
-    if (_statsData) { try { stats.load(_statsData); } catch (e) { console.error('[Stats] load falhou:', e); } }
+    // Nuvem em PARALELO: se vier dado, sobrescreve e re-hidrata o HP. Falha/anônimo → no-op.
+    CloudSave.loadStats().then(_cloud => {
+      if (!_cloud) return;
+      try {
+        stats.load(_cloud);
+        if (window._gamePlayer) { window._gamePlayer.maxHp = stats.maxHp(); }
+        console.log('[Stats] hidratado da nuvem (paralelo)');
+      } catch (e) { console.error('[Stats] cloud load falhou:', e); }
+    }).catch(e => console.warn('[Stats] cloud:', e?.message));
   }
   player.stats = stats;
   player.maxHp = stats.maxHp();
@@ -1709,16 +1738,25 @@ async function init() {
   await initItemCatalog();   // popula o catálogo (consumíveis, equips, armas)
   const inventory = new Inventory(player, stats);
   {
-    // Nuvem primeiro (Supabase transfps.inventory); cai p/ cache local.
-    let _invData = await CloudSave.loadInventory();
-    if (!_invData) {
-      const _invRaw = localStorage.getItem('digifps_inv');
-      if (_invRaw) { try { _invData = JSON.parse(_invRaw); } catch (e) { console.error('[Inventory] cache local corrompido:', e); } }
+    // CACHE LOCAL PRIMEIRO (síncrono) — boot não espera rede.
+    const _invRaw = localStorage.getItem('digifps_inv');
+    if (_invRaw) {
+      try { inventory.load(JSON.parse(_invRaw)); }
+      catch (e) { console.error('[Inventory] cache local corrompido:', e); }
     }
-    if (_invData) { try { inventory.load(_invData); } catch (e) { console.error('[Inventory] load falhou:', e); } }
   }
   inventory.ensureStarterItems();   // começa com as armas no inventário
   player.inventory = inventory;
+  // Nuvem em PARALELO: sobrescreve se houver save remoto. Falha/anônimo → mantém local.
+  CloudSave.loadInventory().then(_cloud => {
+    if (!_cloud) return;
+    try {
+      inventory.load(_cloud);
+      inventory.ensureStarterItems();     // garante armas mesmo vindo da nuvem
+      player._hud?.refreshInventory?.();
+      console.log('[Inventory] hidratado da nuvem (paralelo)');
+    } catch (e) { console.error('[Inventory] cloud load falhou:', e); }
+  }).catch(e => console.warn('[Inventory] cloud:', e?.message));
   // Kit inicial de poções
   if (!inventory.bag.length) { inventory.add('hpSmall', 3); inventory.add('mpPotion', 2); }
 

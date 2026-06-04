@@ -27,18 +27,21 @@ export class AuthSystem {
     this._initPromise = (async () => {
       this._supabase = await getSupabase();
 
-      // Detecta sessão atual
+      // Detecta sessão atual. Profile é best-effort: se o load falhar (rede/schema),
+      // a sessão continua válida (user logado) e o jogo segue — perfil hidrata depois.
       const { data: { session } } = await this._supabase.auth.getSession();
       if (session?.user) {
         this.user = session.user;
-        await this._loadProfile();
+        try { await this._loadProfile(); }
+        catch (e) { console.warn('[Auth] _loadProfile inicial falhou (segue logado, sem perfil):', e?.message || e); }
       }
 
       // Escuta mudanças
       this._supabase.auth.onAuthStateChange(async (event, session) => {
         if (session?.user) {
           this.user = session.user;
-          await this._loadProfile();
+          try { await this._loadProfile(); }
+          catch (e) { console.warn('[Auth] _loadProfile (onAuthStateChange) falhou:', e?.message || e); }
         } else {
           this.user = null;
           this.profile = null;
