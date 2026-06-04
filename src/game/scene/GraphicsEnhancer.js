@@ -59,7 +59,16 @@ export class GraphicsEnhancer {
       pl.bloomKernel = 48;
       pl.bloomScale = 0.5;
     }
-    pl.imageProcessingEnabled = true;   // tonemapping ACES + exposure (leve, ok no WebGPU)
+    // ⚠️ imageProcessing do PIPELINE desligado no WebGPU. O log provou que o
+    //  "PostProcessRTT-imageProcessing" é o que injeta o 17º varying quando um
+    //  avatar PBR pesado (orc/dark_warrior, muitos canais uv/normal/tangent)
+    //  entra na cena → "fragment input 17 > 16" → tela preta + spam.
+    //  O ACES tonemapping/exposure/contrast/vignette JÁ está em
+    //  scene.imageProcessingConfiguration (configurado no topo de _build) —
+    //  aplicado direto no material, SEM render-target extra. Então desligar o
+    //  do pipeline no WebGPU NÃO perde o tonemapping. No WebGL2 mantém o do
+    //  pipeline (mais preciso, sem o problema de varyings).
+    pl.imageProcessingEnabled = _heavyFX;
     pl.sharpenEnabled = _heavyFX;
     if (_heavyFX) pl.sharpen.edgeAmount = 0.20;
     pl.grainEnabled = _heavyFX;
@@ -133,7 +142,7 @@ export class GraphicsEnhancer {
     // nitidez: render na resolução nativa
     try { this.engine.setHardwareScalingLevel(1 / (window.devicePixelRatio || 1) <= 0.5 ? 0.5 : 1); } catch (_) {}
 
-    console.log(`[GFX] ✨ pós-processamento: ${window._webgpu ? 'ACES+FXAA (WebGPU: bloom/glow/CA OFF)' : 'Bloom+ACES+FXAA+Glow+CA'}${this.ssao ? '+SSAO' : ''}`);
+    console.log(`[GFX] ✨ pós-processamento: ${window._webgpu ? 'FXAA + ACES-no-material (WebGPU: bloom/glow/CA/imgProc-RTT OFF)' : 'Bloom+ACES+FXAA+Glow+CA'}${this.ssao ? '+SSAO' : ''}`);
   }
 
   // ── VR: desliga TODO pós-processamento pesado ────────────────────
