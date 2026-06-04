@@ -819,8 +819,12 @@ async function init() {
         { multiplier: isSword ? 1.8 : 1.0, sourceNode: targetMesh, isHeavy: isSword || m.dmg >= 80 }
       );
     }
-    // Som whiz surround na posicao do alvo
-    if (targetPos) {
+    // Som whiz surround na posicao do alvo. NÃO toca em QUEM LEVOU o tiro: o
+    // bullet_whiz é o "cara voando longe ao levar golpe forte" (pesado/explosão)
+    // e ficava sobreposto ao 'hurt' (= soco quando acerta) → parecia explosão ao
+    // receber tiro. Pra mim que levei, só o 'hurt' (handler dedicado). Pra alvos
+    // remotos/mobs mantém como pista posicional.
+    if (targetPos && m.to !== myId) {
       const tPos = targetPos;
       try {
         const sm = window._soundManager;
