@@ -281,23 +281,33 @@ export class ServerListUI {
         await this._onEnterGame(this.cs.room);
       }
 
-      // ── Aplica o avatar escolhido ANTES de revelar o jogo ──
-      //  ANTES o swap rodava em background (.then) DEPOIS do spawn → o player
-      //  aparecia com o RATO e só depois trocava (feio). Agora esperamos o swap
-      //  COMPLETAR (await), com o loading ainda cobrindo, pra quando aparecer já
-      //  estar com o avatar certo. O player já existe (spawn no _onEnterGame).
+      // ── Aplica o avatar escolhido (NÃO bloqueia o load) ──
+      //  O swap carrega o GLB + re-vincula anims (pode demorar 10-30s) → NÃO
+      //  pode ser await aqui senão trava o load infinito. Roda em background.
+      //  Pra não aparecer o RATO primeiro: escondemos o mesh do player até o
+      //  swap terminar (o player cai "invisível" e materializa já trocado).
       if (this._pendingAvatar) {
         const av = this._pendingAvatar;
         this._pendingAvatar = null;
-        try {
-          const swapper = window._charSwapper;
-          const defaultUrl = 'assets/characters/player.glb';
-          if (swapper && av.url && av.url !== defaultUrl) {
-            try { window._loadingOverlay?.setDetail?.('preparando ' + (av.name || 'avatar') + '…'); } catch (_) {}
-            const r = await swapper.swap(av.url);   // ESPERA o avatar trocar
-            if (r?.warning) console.warn('[ServerList] swap avatar:', r.warning);
-          }
-        } catch (e) { console.error('[ServerList] apply avatar:', e); }
+        const swapper = window._charSwapper;
+        const defaultUrl = 'assets/characters/player.glb';
+        if (swapper && av.url && av.url !== defaultUrl) {
+          try {
+            const pl = window._gamePlayer || window._player;
+            const meshRoot = pl?.mesh || pl?.root;
+            // esconde o avatar atual (rato) enquanto troca
+            try { meshRoot?.setEnabled?.(false); } catch (_) {}
+            swapper.swap(av.url).then(r => {
+              if (r?.warning) console.warn('[ServerList] swap avatar:', r.warning);
+              try { meshRoot?.setEnabled?.(true); } catch (_) {}
+            }).catch(e => {
+              console.error('[ServerList] swap avatar:', e);
+              try { meshRoot?.setEnabled?.(true); } catch (_) {}  // re-mostra mesmo em erro
+            });
+            // safety: re-mostra em 8s mesmo se o swap pendurar (nunca fica invisível)
+            setTimeout(() => { try { meshRoot?.setEnabled?.(true); } catch (_) {} }, 8000);
+          } catch (e) { console.error('[ServerList] apply avatar:', e); }
+        }
       }
     } catch (e) {
       console.error('[ServerList] join:', e);
