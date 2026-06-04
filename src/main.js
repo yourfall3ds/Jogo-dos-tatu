@@ -139,7 +139,12 @@ import { TerrainEditorUI }     from './game/terrain/TerrainEditorUI.js';
 import { TextureMachineUI }    from './game/terrain/TextureMachine.js';
 import { InteractableManager } from './game/interactive/InteractableManager.js';
 
-const TRANSFPS_CS_URL = 'wss://app.overpixel.online/transfps-cs';
+// Em localhost → Colyseus LOCAL (ws://localhost:2567) pra dev/teste; em produção
+// → o servidor da VPS via nginx. Detecta automático (produção fica intacta).
+const TRANSFPS_CS_URL = (typeof location !== 'undefined' &&
+  (location.hostname === 'localhost' || location.hostname === '127.0.0.1'))
+  ? `ws://${location.hostname}:2567`
+  : 'wss://app.overpixel.online/transfps-cs';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
