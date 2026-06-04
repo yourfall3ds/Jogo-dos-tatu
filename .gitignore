@@ -15,3 +15,8 @@ certs/
 
 # Backups dos GLBs de anim originais (com mesh) - NAO versionar (~500MB)
 assets/animations/.orig-backup/
+
+# ferramentas locais de deploy (uso pessoal)
+tools/deploy-trans-fps.py
+deploy-trans-fps.py
+.deploy-tmp-transfps/
