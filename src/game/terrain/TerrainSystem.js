@@ -128,6 +128,9 @@ export class TerrainSystem {
     this._col = new Float32Array(this._nVerts * 4);
     this._col.fill(1);
     g.setVerticesData(VB().ColorKind, this._col, true);
+    // Subdivide UMA vez em submeshes → o octree de colisão consegue particionar
+    // por região (ground tem 1 submesh sozinho; sem isto o octree não ajuda).
+    try { g.subdivide(64); } catch (_) {}
 
     this._recomputeNormals();
     this._refreshCollision();
@@ -237,17 +240,12 @@ export class TerrainSystem {
     if (!this.mesh) return;
     try {
       this.mesh.refreshBoundingInfo(true);
-      if (physicsReady()) {
-        // Reconstrói o corpo estático Havok com a nova malha (sobe degraus nativo).
-        try { this.mesh._staticBody?.dispose?.(); } catch (_) {}
-        this.mesh._staticBody = null;
-        makeStaticBody(this.mesh, this.scene, 'mesh');
-      } else {
-        // Sem física: octree p/ colisão barata por região (anti-lag no move).
-        this.mesh.createOrUpdateSubmeshesOctree(64);
-        this.mesh.useOctreeForCollisions = true;
-        this.mesh.checkCollisions = true;
-      }
+      // checkCollisions + OCTREE (barato). NÃO usar corpo Havok 'mesh' aqui:
+      // gerar um shape de malha com ~15k vértices TRAVA o jogo dezenas de segundos
+      // (era o congelamento de 40s+ na conexão). O player anda por moveWithCollisions
+      // (igual o chão antigo) e o octree de submeshes deixa a colisão barata por região.
+      this.mesh.checkCollisions = true;
+      try { this.mesh.createOrUpdateSubmeshesOctree(64); this.mesh.useOctreeForCollisions = true; } catch (_) {}
     } catch (e) { console.warn('[Terrain] colisão refresh falhou:', e?.message); }
     this._colDirty = false;
   }
