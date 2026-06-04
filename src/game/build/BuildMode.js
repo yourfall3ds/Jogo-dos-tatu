@@ -165,6 +165,26 @@ export class BuildMode {
            Math.abs((pa[2] || 0) - (pb[2] || 0)) < 0.5;
   }
 
+  // ── Helpers p/ o sistema de INTERATIVOS (porta/elevador) ─────────
+  /** Acha o objeto colocado cujo root é ancestral do mesh dado.
+   *  @returns {{root, worldId}|null} */
+  findPlacedByMesh(mesh) {
+    if (!mesh) return null;
+    let node = mesh;
+    while (node) {
+      for (const e of this._placed) {
+        if (e && e.root && e.root === node) return { root: e.root, worldId: e.worldId || null, entry: e };
+      }
+      node = node.parent;
+    }
+    return null;
+  }
+  /** Root de um objeto colocado pelo worldId (pra anexar o interativo no load). */
+  getPlacedRoot(worldId) {
+    const e = worldId && this._worldEntries.get(worldId);
+    return e?.root || null;
+  }
+
   /** Remove (visual + colisor) um objeto do mundo pelo worldId. */
   _removeWorldEntry(worldId) {
     const entry = worldId && this._worldEntries.get(worldId);

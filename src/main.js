@@ -137,6 +137,7 @@ import { CloudSave }           from './game/data/CloudSave.js';
 import { TerrainSystem, TerrainStore } from './game/terrain/TerrainSystem.js';
 import { TerrainEditorUI }     from './game/terrain/TerrainEditorUI.js';
 import { TextureMachineUI }    from './game/terrain/TextureMachine.js';
+import { InteractableManager } from './game/interactive/InteractableManager.js';
 
 const TRANSFPS_CS_URL = 'wss://app.overpixel.online/transfps-cs';
 
@@ -1845,6 +1846,12 @@ async function init() {
   // ── Modo Construção (tecla B) + Máquina de Criação Meshy AI ───────
   const buildMode = new BuildMode(scene, player, level);
   window._buildMode = buildMode;
+  // ── Itens INTERATIVOS (porta/elevador/botão) — editor + runtime ──
+  try {
+    const interactables = new InteractableManager(scene, player, buildMode);
+    window._interactables = interactables;
+    interactables.loadForWorld();   // carrega os interativos salvos (retry até o build restaurar)
+  } catch (e) { console.warn('[Interactable] init falhou:', e?.message); }
   // Limpar terreno colocado (objetos/quadros/máquinas/colisores órfãos) por código
   window.clearTerrain = () => buildMode.clearAllTerrain();
   const meshyPanel = new MeshyPanel(scene, buildMode);
@@ -2401,6 +2408,7 @@ async function init() {
     charSelectUI.update();
     buildMode.update();
     try { window._terrainUI?.update(dt); } catch (_) {}   // pincel de terreno (enquanto segura o botão)
+    try { window._interactables?.update(dt); } catch (_) {}   // portas/elevadores (anim + E)
     rpgHUD.update(dt);
     hud.update();
     scene.render();
