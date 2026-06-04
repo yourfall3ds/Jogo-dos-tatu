@@ -68,7 +68,7 @@ export class InteractableManager {
     // E (edge) — só fora do editor/chat
     let eDown = false;
     try { eDown = !!window._gameInput?.isDown?.('KeyE'); } catch (_) {}
-    if (near && eDown && !this._wasE) { try { near.trigger(); } catch (_) {} }
+    if (near && eDown && !this._wasE) { try { near.trigger(); this._broadcastState(near); } catch (_) {} }
     this._wasE = eDown;
   }
 
@@ -77,6 +77,47 @@ export class InteractableManager {
     const rows = await Store.loadAll();
     for (const r of rows) this._tryAttach(r, 0);
     if (rows.length) window._dbg?.(`${rows.length} interativo(s) no mundo`, '#9fe');
+    this._initRealtime();   // liga o tempo real (criar/editar/abrir-fechar pra todos)
+  }
+
+  // ── REALTIME (Supabase) — todos veem ao vivo, sem reload ─────────
+  async _initRealtime() {
+    if (this._rtOn) return; this._rtOn = true;
+    try {
+      const supa = await getSupabase();
+      try { const { data } = await supa.auth.getSession(); const tok = data?.session?.access_token; if (tok) supa.realtime.setAuth(tok); } catch (_) {}
+      // 1) Mudanças de CONFIG (alguém tornou um objeto interativo / editou / removeu)
+      supa.channel('transfps_interactables')
+        .on('postgres_changes', { event: 'INSERT', schema: 'transfps', table: 'interactables' }, (p) => this._onRowChange(p.new))
+        .on('postgres_changes', { event: 'UPDATE', schema: 'transfps', table: 'interactables' }, (p) => this._onRowChange(p.new))
+        .on('postgres_changes', { event: 'DELETE', schema: 'transfps', table: 'interactables' }, (p) => this._onRowRemove(p.old?.id))
+        .subscribe((s) => { if (s === 'SUBSCRIBED') console.log('[Interactable] 🌍 realtime ATIVO'); });
+      // 2) ESTADO ao vivo (abrir/fechar) via broadcast — sem escrever no DB.
+      this._stateCh = supa.channel('transfps_interact_state', { config: { broadcast: { self: false } } })
+        .on('broadcast', { event: 'state' }, (m) => this._onRemoteState(m.payload))
+        .subscribe();
+    } catch (e) { console.warn('[Interactable] realtime', e?.message); }
+  }
+  _onRowChange(row) {
+    if (!row?.id) return;
+    const i = this.items.findIndex((it) => it.id === row.id);
+    if (i >= 0) { try { this.items[i].dispose(); } catch (_) {} this.items.splice(i, 1); }
+    this._tryAttach({ id: row.id, object_id: row.object_id, type: row.type, config: row.config }, 0);
+  }
+  _onRowRemove(id) {
+    const i = this.items.findIndex((it) => it.id === id);
+    if (i >= 0) { try { this.items[i].dispose(); } catch (_) {} this.items.splice(i, 1); }
+  }
+  _onRemoteState(p) {
+    if (!p?.id) return;
+    const it = this.items.find((x) => x.id === p.id);
+    if (it) { try { it.setState(p.state); } catch (_) {} }
+  }
+  _broadcastState(it) {
+    try {
+      const state = it._dir > 0 ? 1 : 0;   // após trigger(): dir indica pra onde vai
+      this._stateCh?.send({ type: 'broadcast', event: 'state', payload: { id: it.id, state } });
+    } catch (_) {}
   }
   _tryAttach(row, tries) {
     if (this.items.some((it) => it.id === row.id)) return;            // já anexado

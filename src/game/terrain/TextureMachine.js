@@ -100,6 +100,16 @@ export const TextureStore = {
     return { id, name, url, prompt };
   },
 
+  /** Realtime: nova textura criada por qualquer player → callback. */
+  async subscribe(onInsert) {
+    try {
+      const supa = await getSupabase();
+      try { const { data } = await supa.auth.getSession(); const tok = data?.session?.access_token; if (tok) supa.realtime.setAuth(tok); } catch (_) {}
+      supa.channel('transfps_textures')
+        .on('postgres_changes', { event: 'INSERT', schema: 'transfps', table: 'textures' }, () => { try { onInsert?.(); } catch (_) {} })
+        .subscribe((s) => { if (s === 'SUBSCRIBED') console.log('[Textures] 🌍 realtime ATIVO'); });
+    } catch (_) {}
+  },
   /** Lista as texturas globais (todos veem). */
   async list() {
     try {
@@ -117,6 +127,8 @@ export class TextureMachineUI {
     this.scene = scene;
     this.terrain = terrain;   // pra "aplicar no chão"
     this._build();
+    // Realtime: textura nova de qualquer player aparece na biblioteca ao vivo.
+    try { TextureStore.subscribe(() => { if (this._panel?.style.display !== 'none') this._refreshGallery(); }); } catch (_) {}
   }
 
   _build() {

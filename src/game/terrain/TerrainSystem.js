@@ -36,6 +36,17 @@ export const TerrainStore = {
       return data;
     } catch (_) { return null; }
   },
+  /** Realtime: avisa quando o terreno muda (outro player editou). cb(row.updated_by). */
+  async subscribe(onChange) {
+    try {
+      const supa = await getSupabase();
+      try { const { data } = await supa.auth.getSession(); const tok = data?.session?.access_token; if (tok) supa.realtime.setAuth(tok); } catch (_) {}
+      supa.channel('transfps_terrain')
+        .on('postgres_changes', { event: 'UPDATE', schema: 'transfps', table: 'terrain' }, (p) => { try { onChange?.(p.new?.updated_by); } catch (_) {} })
+        .on('postgres_changes', { event: 'INSERT', schema: 'transfps', table: 'terrain' }, (p) => { try { onChange?.(p.new?.updated_by); } catch (_) {} })
+        .subscribe((s) => { if (s === 'SUBSCRIBED') console.log('[Terrain] 🌍 realtime ATIVO'); });
+    } catch (e) { console.warn('[Terrain] subscribe', e?.message); }
+  },
   /** Salva SÓ a textura do chão (todos veem). Upsert pra criar a linha se faltar. */
   async saveTextureUrl(url) {
     try {

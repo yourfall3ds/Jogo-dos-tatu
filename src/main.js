@@ -1740,6 +1740,21 @@ async function init() {
           window._dbg?.('terreno carregado do servidor', '#7fd');
         } catch (_) {}
       });
+      // REALTIME: outro player editou o terreno → recarrega ao vivo (ignora meu save).
+      try {
+        TerrainStore.subscribe((updatedBy) => {
+          const myId = window._auth?.getUserId?.();
+          if (updatedBy && myId && updatedBy === myId) return;
+          TerrainStore.load().then((r) => {
+            if (!r || terrain._disposed) return;
+            const h = Array.isArray(r.heights) ? Float32Array.from(r.heights) : null;
+            const c = Array.isArray(r.colors) ? Float32Array.from(r.colors) : null;
+            terrain.load(h, c);
+            if (r.texture_url) terrain.setGroundTexture(r.texture_url);
+            window._dbg?.('terreno atualizado por outro player', '#9fe');
+          }).catch(() => {});
+        });
+      } catch (_) {}
       console.log('[Terrain] chão do mundo esculpível criado');
       return terrain;
     } catch (e) { console.warn('[Terrain] criação falhou:', e?.message); return null; }
