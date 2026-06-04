@@ -119,6 +119,12 @@ export class InputManager {
     // ── Mouse movement ───────────────────────────────────────────────
     document.addEventListener('mousemove', e => {
       if (!this.gameActive) return;
+      // SÓ acumula movimento quando o pointer lock está ATIVO (raw input).
+      //  Sem o lock, e.movementX/Y vêm do cursor LIVRE andando pela tela — se
+      //  acumulássemos isso, a câmera giraria com o mouse solto E o cursor
+      //  vazaria pra fora da janela clicando em coisas do Windows. Ignorando
+      //  aqui, o mouse solto não mexe a mira; o próximo clique re-trava o lock.
+      if (document.pointerLockElement !== this.canvas) return;
       this._mouseX += e.movementX;
       this._mouseY += e.movementY;
     });
@@ -267,11 +273,28 @@ export class InputManager {
     this._pendingLock = false;
     try {
       this.canvas.focus();              // garante foco no elemento (precisa tabindex no canvas)
-      // requestPointerLock pode retornar undefined (API antiga) ou uma Promise (API nova).
-      const ret = this.canvas.requestPointerLock();
+      // unadjustedMovement: true → RAW INPUT do mouse, 100% capturado pela
+      //  janela. Sem isso o cursor podia "vazar" pra fora da tela e clicar em
+      //  coisas do Windows enquanto se mirava. Com raw input o mouse fica
+      //  TRAVADO de verdade no jogo. Fallback pro lock padrão se não suportado.
+      let ret;
+      try {
+        ret = this.canvas.requestPointerLock({ unadjustedMovement: true });
+      } catch (_) {
+        ret = this.canvas.requestPointerLock();   // navegador sem a opção
+      }
       if (ret && typeof ret.then === 'function') {
         ret.then(() => { this._lockConfirmed = true; this._pendingLock = false; })
            .catch(err => {
+             // Se falhou POR CAUSA do unadjustedMovement (alguns SOs recusam),
+             //  tenta o lock padrão antes de desistir.
+             if (err?.name === 'NotSupportedError') {
+               try {
+                 const r2 = this.canvas.requestPointerLock();
+                 if (r2?.then) r2.then(() => { this._lockConfirmed = true; this._pendingLock = false; }).catch(() => { this._pendingLock = true; });
+                 return;
+               } catch (_) {}
+             }
              // NotAllowedError/SecurityError: gesto não-confiável ou cooldown.
              // NÃO entra em loop — só re-tenta no próximo mousedown real.
              this._lockConfirmed = false;
