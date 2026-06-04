@@ -467,8 +467,14 @@ export class LeaderboardScreen {
     this._open = true; this._el.style.display = 'block';
     this._list.innerHTML = '<div style="opacity:0.6;">Carregando…</div>';
     if (!this.supa) { this._list.innerHTML = '<div style="opacity:0.6;">Indisponível</div>'; return; }
-    const { data, error } = await this.supa.from('transfps_leaderboard').select('*');
-    if (error || !data) { this._list.innerHTML = '<div style="opacity:0.6;">Erro</div>'; return; }
+    // Servico externo (leaderboard) e NAO-essencial: 522/timeout nao pode
+    // quebrar o painel nem floodar o console. try/catch silencioso.
+    let data = null, error = null;
+    try {
+      const res = await this.supa.from('transfps_leaderboard').select('*');
+      data = res?.data; error = res?.error;
+    } catch (_) { error = _; }
+    if (error || !data) { this._list.innerHTML = '<div style="opacity:0.6;">Indisponível no momento</div>'; return; }
     this._list.innerHTML = data.map((r, i) => `
       <div style="display:grid; grid-template-columns:40px 1fr 60px 60px 60px;
                   gap:10px; padding:6px 8px; align-items:center;

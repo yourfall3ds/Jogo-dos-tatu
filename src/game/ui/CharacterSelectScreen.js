@@ -142,7 +142,7 @@ const RE_IDLE = /idle|ideal|stand|walk/i;
 const RE_ATTACK = /attack|punch|slash|fire|shot/i;
 const RE_COMBO = /combo|spin|360|purify|jumping_jack/i;
 
-import { injectGameUI } from './GameUIKit.js';
+import { injectGameUI, ambientBackdrop } from './GameUIKit.js';
 
 const CYAN = '#2effb6';
 const CYAN_RGB = '46,255,182';
@@ -241,6 +241,11 @@ export class CharacterSelectScreen {
         </main>
       </div>
     `;
+    // Fundo de jogo com profundidade atras dos paineis (grid/scanlines/glow/
+    // particulas). O canvas 3D (opaco) cobre o lado direito normalmente.
+    // particles baixo (10) pra nao competir com o preview 3D.
+    el.insertBefore(ambientBackdrop({ particles: 10, scanlines: false }), el.firstChild);
+
     document.body.appendChild(el);
     this._el = el;
     this._listEl = el.querySelector('#css-list');

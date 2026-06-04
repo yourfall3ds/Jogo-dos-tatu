@@ -114,6 +114,66 @@ export function card(html = '', opts = {}) {
   return el;
 }
 
+/**
+ * ambientBackdrop(opts) -> camada de FUNDO de jogo (profundidade) pra
+ * plugar atras de qualquer tela de menu. Tudo CSS/SVG leve: grid em
+ * perspectiva, scanlines, vinheta, glow pulsante cyan, noise SVG e
+ * particulas flutuando (DOM, animadas por CSS — zero JS por frame).
+ *
+ * Uso: const bg = ambientBackdrop(); container.appendChild(bg);
+ *      (o container precisa ser position:relative/fixed/absolute)
+ *
+ * opts: { particles=18, grid=true, scanlines=true, vignette=true,
+ *         glow=true, noise=true, className }
+ */
+export function ambientBackdrop(opts = {}) {
+  injectGameUI();
+  const {
+    particles = 18, grid = true, scanlines = true, vignette = true,
+    glow = true, noise = true, className = '',
+  } = opts;
+  const root = document.createElement('div');
+  root.className = ['gui-ambient', className].filter(Boolean).join(' ');
+  root.setAttribute('aria-hidden', 'true');
+
+  if (glow)     root.appendChild(_ambLayer('gui-amb-glow'));
+  if (grid)     root.appendChild(_ambLayer('gui-amb-grid'));
+  if (noise)    root.appendChild(_ambLayer('gui-amb-noise'));
+
+  if (particles > 0) {
+    const field = document.createElement('div');
+    field.className = 'gui-amb-particles';
+    const n = Math.max(0, Math.min(40, particles | 0));
+    for (let i = 0; i < n; i++) {
+      const p = document.createElement('span');
+      // posicao/tamanho/tempo pseudo-aleatorios mas estaveis (so no build).
+      const left = Math.round(_rand(0, 100) * 100) / 100;
+      const size = (_rand(1.5, 4)).toFixed(2);
+      const dur  = (_rand(14, 30)).toFixed(2);
+      const delay = (-_rand(0, 30)).toFixed(2);
+      const drift = Math.round(_rand(-40, 40));
+      const op = (_rand(0.25, 0.7)).toFixed(2);
+      p.style.cssText =
+        `left:${left}%;width:${size}px;height:${size}px;` +
+        `--amb-dur:${dur}s;animation-delay:${delay}s;` +
+        `--amb-drift:${drift}px;--amb-op:${op};`;
+      field.appendChild(p);
+    }
+    root.appendChild(field);
+  }
+
+  if (scanlines) root.appendChild(_ambLayer('gui-amb-scanlines'));
+  if (vignette)  root.appendChild(_ambLayer('gui-amb-vignette'));
+  return root;
+}
+
+function _ambLayer(cls) {
+  const d = document.createElement('div');
+  d.className = cls;
+  return d;
+}
+function _rand(a, b) { return a + Math.random() * (b - a); }
+
 function _applyAttrs(el, attrs, dataset) {
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v == null) continue;
@@ -436,11 +496,134 @@ const CSS = `
   mix-blend-mode: multiply;
 }
 
+/* ── AMBIENT BACKDROP (profundidade de jogo, 100% CSS/SVG leve) ──── */
+/* container: fica ATRAS do conteudo da tela (z negativo dentro do pai) */
+.gui-ambient {
+  position: absolute; inset: 0; overflow: hidden;
+  pointer-events: none; z-index: 0;
+}
+/* todas as camadas cobrem tudo */
+.gui-ambient > * { position: absolute; inset: 0; pointer-events: none; }
+
+/* glow cyan pulsante (2 orbes suaves) */
+.gui-amb-glow {
+  background:
+    radial-gradient(42% 42% at 22% 28%, rgba(46,255,182,0.16), transparent 70%),
+    radial-gradient(46% 46% at 82% 78%, rgba(27,191,138,0.13), transparent 72%);
+  filter: blur(8px);
+  animation: gui-amb-glow-pulse 9s ease-in-out infinite;
+}
+@keyframes gui-amb-glow-pulse {
+  0%,100% { opacity: 0.65; transform: scale(1); }
+  50%     { opacity: 1;    transform: scale(1.06); }
+}
+
+/* grid em perspectiva (chao de HUD) — duas linhas finas cyan, fade pra cima */
+.gui-amb-grid {
+  background-image:
+    linear-gradient(to right, rgba(46,255,182,0.10) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(46,255,182,0.10) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 62%);
+          mask-image: linear-gradient(to top, #000 0%, transparent 62%);
+  opacity: 0.5;
+  animation: gui-amb-grid-pan 22s linear infinite;
+}
+@keyframes gui-amb-grid-pan {
+  0%   { background-position: 0 0, 0 0; }
+  100% { background-position: 0 46px, 0 46px; }
+}
+
+/* noise sutil via SVG fractalNoise embutido (data-uri, leve) */
+.gui-amb-noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+}
+
+/* scanlines sutis sobre tudo */
+.gui-amb-scanlines {
+  background: repeating-linear-gradient(0deg,
+    rgba(46,255,182,0.045) 0px, rgba(46,255,182,0.045) 1px,
+    transparent 2px, transparent 4px);
+  opacity: 0.5; mix-blend-mode: screen;
+}
+
+/* vinheta escura nas bordas (foco no centro) */
+.gui-amb-vignette {
+  background: radial-gradient(ellipse at 50% 42%,
+    transparent 38%, rgba(2,4,12,0.55) 78%, rgba(1,2,8,0.9) 100%);
+}
+
+/* particulas flutuando lentas (DOM + CSS, sem JS por frame) */
+.gui-amb-particles span {
+  position: absolute; bottom: -8px;
+  border-radius: 50%;
+  background: var(--cy-cyan);
+  box-shadow: 0 0 6px rgba(46,255,182,0.8);
+  opacity: 0;
+  animation: gui-amb-float var(--amb-dur, 20s) linear infinite;
+  will-change: transform, opacity;
+}
+@keyframes gui-amb-float {
+  0%   { transform: translateY(0) translateX(0); opacity: 0; }
+  10%  { opacity: var(--amb-op, 0.5); }
+  90%  { opacity: var(--amb-op, 0.5); }
+  100% { transform: translateY(-104vh) translateX(var(--amb-drift, 0px)); opacity: 0; }
+}
+
+/* ── TITLE: glitch sutil ocasional (alem do glow) ───────────────── */
+/* aplique .gui-title-glitch num elemento que tenha data-text="TEXTO"  */
+.gui-title-glitch { position: relative; }
+.gui-title-glitch::before,
+.gui-title-glitch::after {
+  content: attr(data-text);
+  position: absolute; left: 0; top: 0; width: 100%;
+  pointer-events: none; opacity: 0.85;
+  clip-path: inset(0 0 0 0);
+}
+.gui-title-glitch::before {
+  color: var(--cy-cyan);
+  animation: gui-glitch-a 6.5s steps(1) infinite;
+}
+.gui-title-glitch::after {
+  color: var(--cy-danger);
+  animation: gui-glitch-b 6.5s steps(1) infinite;
+}
+/* deslocamentos so disparam em ~2 janelas curtas a cada ciclo (sutil) */
+@keyframes gui-glitch-a {
+  0%, 92%, 100% { transform: none; clip-path: inset(0 0 100% 0); }
+  93% { transform: translate(-2px, 1px);  clip-path: inset(8% 0 60% 0); }
+  95% { transform: translate(2px, -1px);  clip-path: inset(40% 0 25% 0); }
+  97% { transform: translate(-1px, 0);    clip-path: inset(70% 0 5% 0); }
+}
+@keyframes gui-glitch-b {
+  0%, 92%, 100% { transform: none; clip-path: inset(100% 0 0 0); }
+  93% { transform: translate(2px, -1px);  clip-path: inset(60% 0 8% 0); }
+  95% { transform: translate(-2px, 1px);  clip-path: inset(25% 0 40% 0); }
+  97% { transform: translate(1px, 0);     clip-path: inset(5% 0 70% 0); }
+}
+
+/* ── TRANSICOES de tela (fluir como jogo) ───────────────────────── */
+/* adicione .gui-screen na raiz fixed de cada tela. Estado inicial =   */
+/* leve fade+slide; .is-shown solta a animacao de entrada.             */
+.gui-screen-enter {
+  animation: gui-screen-in .32s cubic-bezier(.2,.8,.25,1) both;
+}
+@keyframes gui-screen-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.995); }
+  to   { opacity: 1; transform: none; }
+}
+
 /* respeita usuarios que pedem menos movimento */
 @media (prefers-reduced-motion: reduce) {
   .gui-btn-primary { animation: none; }
   .gui-btn, .gui-card { transition: none; }
+  .gui-amb-glow, .gui-amb-grid, .gui-amb-particles span,
+  .gui-title-glitch::before, .gui-title-glitch::after,
+  .gui-screen-enter { animation: none !important; }
+  .gui-title-glitch::before, .gui-title-glitch::after { opacity: 0; }
 }
 `;
 
-export default { injectGameUI, panel, button, card, TOKENS };
+export default { injectGameUI, panel, button, card, ambientBackdrop, TOKENS };

@@ -8,7 +8,7 @@
 //  É plug-and-play: pediu pra entrar, entra. Game On.
 // ─────────────────────────────────────────────────────────────────
 import { MapCatalog } from '../scene/ChibataMapLoader.js';
-import { injectGameUI, button, card } from './GameUIKit.js';
+import { injectGameUI, button, card, ambientBackdrop } from './GameUIKit.js';
 
 const REGION_LABEL = {
   BR: '🇧🇷 Brasil',
@@ -48,7 +48,7 @@ export class ServerListUI {
       color: var(--cy-text,#dfeaf2); font-family: var(--cy-font-body,'Fira Code',monospace);
     `;
     el.innerHTML = `
-      <header style="display:flex;align-items:center;justify-content:space-between;
+      <header style="position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;
                      padding:16px 28px;border-bottom:1px solid var(--cy-line,rgba(46,255,182,0.28));
                      background:rgba(8,13,26,0.7);">
         <div style="display:flex;align-items:center;gap:14px;">
@@ -63,7 +63,7 @@ export class ServerListUI {
         </div>
       </header>
 
-      <div style="flex:1;display:flex;justify-content:center;padding:26px;overflow-y:auto;" class="gui-scroll">
+      <div style="position:relative;z-index:2;flex:1;display:flex;justify-content:center;padding:26px;overflow-y:auto;" class="gui-scroll">
         <div style="width:100%;max-width:820px;">
           <div id="sl-list" style="display:flex;flex-direction:column;gap:12px;"></div>
           <div id="sl-empty" class="gui-panel" style="display:none;text-align:center;padding:48px;">
@@ -75,10 +75,13 @@ export class ServerListUI {
         </div>
       </div>
 
-      <div class="gui-dim" style="text-align:center;padding:16px;letter-spacing:3px;text-transform:uppercase;">
+      <div class="gui-dim" style="position:relative;z-index:2;text-align:center;padding:16px;letter-spacing:3px;text-transform:uppercase;">
         TRANSFPS · ENTRE NUM SERVIDOR PRA CAIR DE CABEÇA NO MUNDO
       </div>
     `;
+    // Fundo de jogo com profundidade (grid/scanlines/particulas/glow/vinheta),
+    // atras de tudo (z-index:0). Inserido como 1o filho.
+    el.insertBefore(ambientBackdrop({ particles: 20 }), el.firstChild);
     document.body.appendChild(el);
     this._el = el;
 
@@ -92,6 +95,10 @@ export class ServerListUI {
   async show() {
     this._visible = true;
     this._el.style.display = 'flex';
+    // transicao de entrada (fade+slide) — fluir como jogo.
+    this._el.classList.remove('gui-screen-enter');
+    void this._el.offsetWidth;
+    this._el.classList.add('gui-screen-enter');
     this._renderServers();
     this._setStatus('procurando servidores…');
     await this._startSubscription();
