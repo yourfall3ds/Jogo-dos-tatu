@@ -108,7 +108,10 @@ export class TerrainSystem {
       width: this.size, height: this.size,
       subdivisions: this.subdivisions, updatable: true,
     }, this.scene);
-    g.position.y = 0;
+    // Levemente ABAIXO de y=0 pra NÃO fazer z-fighting (piscar) com o chão/arena
+    // do mapa que já existe em y=0. Onde houver chão do mapa, ele ganha; o terreno
+    // branco aparece só ao redor.
+    g.position.y = -0.12;
     g.checkCollisions = true;
     g.receiveShadows = true;
     g.isPickable = true;
