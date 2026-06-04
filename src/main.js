@@ -954,41 +954,56 @@ async function init() {
     }
   });
 
-  // ── Flash de muzzle remoto: esfera emissiva + luz curta no cano do parceiro.
-  //    Barato e transiente (~70ms). Compartilha material/textura estáticos.
+  // ── Flash de muzzle remoto: esfera emissiva curta (~70ms). ────────────────
+  //  CRÍTICO: NÃO usa PointLight. Criar/remover luz recompila os shaders de TODOS
+  //  os materiais (catastrófico em WebGPU e em rajada de metralhadora → travava
+  //  tudo ao levar tiro). Usa um POOL de esferas reaproveitadas (zero alocação
+  //  por tiro) + material aditivo compartilhado. Um token de "geração" por slot
+  //  evita dois RAFs animando a mesma esfera quando o slot é reusado.
   function _spawnRemoteMuzzleFlash(scene, x, y, z) {
     if (!scene || typeof BABYLON === 'undefined') return;
-    let sph = null, light = null;
+    const F = _spawnRemoteMuzzleFlash;
     try {
-      sph = BABYLON.MeshBuilder.CreateSphere('rmuzzle', { diameter: 0.26, segments: 6 }, scene);
-      sph.position.set(x, y, z);
-      sph.isPickable = false;
-      sph.doNotSyncBoundingInfo = true;
-      if (!_spawnRemoteMuzzleFlash._mat) {
+      if (!F._mat) {
         const mt = new BABYLON.StandardMaterial('rmuzzleMat', scene);
         mt.emissiveColor = new BABYLON.Color3(1.0, 0.82, 0.35);
-        mt.diffuseColor = new BABYLON.Color3(0, 0, 0);
+        mt.diffuseColor  = new BABYLON.Color3(0, 0, 0);
+        mt.specularColor = new BABYLON.Color3(0, 0, 0);
         mt.disableLighting = true;
         mt.alphaMode = BABYLON.Engine.ALPHA_ADD;
-        _spawnRemoteMuzzleFlash._mat = mt;
+        F._mat = mt;
       }
-      sph.material = _spawnRemoteMuzzleFlash._mat;
-      light = new BABYLON.PointLight('rmuzzleLight', new BABYLON.Vector3(x, y, z), scene);
-      light.diffuse = new BABYLON.Color3(1.0, 0.8, 0.4);
-      light.range = 6; light.intensity = 2.4;
-    } catch (_) { try { sph?.dispose(); } catch (_) {} try { light?.dispose(); } catch (_) {} return; }
-    const start = performance.now();
-    const DUR = 70;
-    const tick = () => {
-      const f = Math.min(1, (performance.now() - start) / DUR);
-      try {
-        if (sph) { const s = 1 + f * 0.8; sph.scaling.set(s, s, s); sph.visibility = 1 - f; }
-        if (light) light.intensity = 2.4 * (1 - f) * (1 - f);
-      } catch (_) {}
-      if (f < 1) requestAnimationFrame(tick);
-      else { try { sph?.dispose(); } catch (_) {} try { light?.dispose(); } catch (_) {} }
-    };
-    requestAnimationFrame(tick);
+      if (!F._pool) {
+        F._pool = []; F._idx = 0;
+        for (let i = 0; i < 6; i++) {
+          const s = BABYLON.MeshBuilder.CreateSphere('rmuzzle' + i, { diameter: 0.26, segments: 6 }, scene);
+          s.material = F._mat;
+          s.isPickable = false;
+          s.doNotSyncBoundingInfo = true;
+          s.alwaysSelectAsActiveMesh = true;
+          s.setEnabled(false);
+          F._pool.push({ mesh: s, gen: 0 });
+        }
+      }
+      const item = F._pool[F._idx];
+      F._idx = (F._idx + 1) % F._pool.length;
+      const sph = item.mesh;
+      const gen = (item.gen = item.gen + 1);   // marca esta ativação do slot
+      sph.position.set(x, y, z);
+      sph.scaling.set(1, 1, 1);
+      sph.visibility = 1;
+      sph.setEnabled(true);
+      const start = performance.now();
+      const DUR = 70;
+      const tick = () => {
+        if (item.gen !== gen) return;          // slot reusado por outro tiro → para
+        const f = Math.min(1, (performance.now() - start) / DUR);
+        try { const s = 1 + f * 0.8; sph.scaling.set(s, s, s); sph.visibility = 1 - f; } catch (_) {}
+        if (f < 1) requestAnimationFrame(tick);
+        else { try { sph.setEnabled(false); } catch (_) {} }
+      };
+      requestAnimationFrame(tick);
+    } catch (_) {}
   }
 
   // ── DISPARO/GOLPE do parceiro (tiro/swing) — som ESPACIAL na pos do ATIRADOR.
