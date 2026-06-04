@@ -34,7 +34,17 @@ export class MusicSystem {
     this._currentIdx = -1;
     this._playlist = this._shuffle([...TRACKS]);
     this._started = false;
-    this._muted = this._loadBool(STORAGE_MUTED, false);
+    // MÚSICA DESLIGADA POR PADRÃO (só SFX). O sistema continua existindo — o
+    // jogador pode religar nas Configurações. Como jogadores antigos já tinham
+    // a chave salva como '0' (música ligada), rodamos UMA migração que força o
+    // mute uma vez. Depois disso, a escolha do jogador é respeitada.
+    try {
+      if (localStorage.getItem('transfps_music_default_off_v1') !== '1') {
+        localStorage.setItem(STORAGE_MUTED, '1');
+        localStorage.setItem('transfps_music_default_off_v1', '1');
+      }
+    } catch (_) {}
+    this._muted = this._loadBool(STORAGE_MUTED, true);
     this._volume = this._loadVolume();   // 0..1
     this._fadeT = null;
   }
@@ -69,6 +79,9 @@ export class MusicSystem {
   /** Chamado quando o jogador clica JOGAR. */
   start() {
     if (this._started) return;
+    // Mudo por padrão → nem começa a baixar/tocar mp3 (economiza banda/CPU).
+    // Quando religar nas Configurações, setMuted(false) inicia a playlist.
+    if (this._muted) return;
     this._started = true;
     this._playNext();
   }
@@ -117,6 +130,12 @@ export class MusicSystem {
     this._muted = !!m;
     try { localStorage.setItem(STORAGE_MUTED, m ? '1' : '0'); } catch (_) {}
     if (this._audio) this._audio.volume = m ? 0 : this._volume;
+    // Religou a música mas a playlist nunca começou (start() pulou por estar
+    // mudo) → inicia agora.
+    if (!m && !this._started) {
+      this._started = true;
+      this._playNext();
+    }
   }
 
   isMuted() { return this._muted; }
