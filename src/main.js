@@ -832,6 +832,7 @@ async function init() {
       // `m.target_id`. Antes a condição era sempre falsa → nunca tocava som
       // de dor nem flash ao levar dano de outro player.
       if (m.to && m.to === myId) {
+        try { window._dbgLastOp = 'levar dano (PvP)'; } catch (_) {}
         const sm = window._soundManager || window._player?.sounds;
         if (sm?.playNow) sm.playNow("hurt", 0.5);
         _showDamageFlash();
@@ -861,6 +862,7 @@ async function init() {
   //  fromPos=null,kb=1 → o player tomava dano mas não "sentia" o soco.
   cs.on('mob_attack', (m) => {
     if (m.target_id === auth.getUserId() && !player._dead) {
+      try { window._dbgLastOp = 'levar dano (mob)'; } catch (_) {}
       const fromPos = Number.isFinite(m.from_x)
         ? new BABYLON.Vector3(m.from_x, Number.isFinite(m.from_y) ? m.from_y : 0, m.from_z)
         : null;
@@ -1235,6 +1237,33 @@ async function init() {
   const killCam = { start(){}, stop(){}, isActive(){ return false; } };
   window._killCam = killCam;
   window._chatHud = chatHud;
+
+  // ── DEBUG LOG NO CHAT ─────────────────────────────────────────────
+  //  window._dbg(msg, color) → mostra no chat in-game + console. Use pra ver
+  //  erros do server e timings (por que trava ao construir/destruir/levar dano).
+  //  _dbgTime(label, fn) cronometra fn e loga se passar de ~120ms (hitch).
+  window._dbg = (msg, color) => {
+    try { window._chatHud?.system?.(String(msg), color); } catch (_) {}
+    try { console.log('[DBG]', msg); } catch (_) {}
+  };
+  window._dbgTime = (label, fn) => {
+    const t0 = performance.now();
+    try { return fn(); }
+    finally {
+      const ms = performance.now() - t0;
+      if (ms > 120) window._dbg(`${label}: ${ms.toFixed(0)}ms` + (ms > 1000 ? ' ⚠ TRAVOU' : ''), ms > 1000 ? '#ff5050' : '#ffd24a');
+    }
+  };
+  // Erros não tratados → chat (pra ver "quando der merda").
+  try {
+    window.addEventListener('error', (e) => {
+      window._dbg('ERRO: ' + (e?.message || e?.error?.message || e?.error || 'desconhecido'), '#ff5050');
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      const r = e?.reason; window._dbg('PROMISE FALHOU: ' + (r?.message || r || 'desconhecida'), '#ff5050');
+    });
+  } catch (_) {}
+
   window._scoreboard = scoreboard;
   window._pingDisplay = pingDisplay;
   window._deathTimer = deathTimer;
@@ -2183,6 +2212,22 @@ async function init() {
     }
 
     const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
+
+    // ── DETECTOR DE TRAVADA DE FRAME ─────────────────────────────────
+    //  Se o frame anterior demorou demais (>400ms), o jogo "engasgou". Mostra
+    //  no chat QUANTO travou + a última operação marcada (window._dbgLastOp) →
+    //  revela o que congela (construir/destruir/dano/rede). Throttle 800ms.
+    {
+      const realMs = engine.getDeltaTime();
+      if (realMs > 400) {
+        const now = performance.now();
+        if (!window.__lastHitchLog || now - window.__lastHitchLog > 800) {
+          window.__lastHitchLog = now;
+          const op = window._dbgLastOp ? ` · após: ${window._dbgLastOp}` : '';
+          try { window._dbg?.(`FRAME TRAVOU ${realMs.toFixed(0)}ms${op}`, '#ff5050'); } catch (_) {}
+        }
+      }
+    }
 
     // Engine mode: cena renderiza mas lógica congela (editor ativo)
     if (_engineMode) {

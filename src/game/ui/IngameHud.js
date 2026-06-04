@@ -78,6 +78,28 @@ export class ChatHud {
     this._close();
   }
 
+  /** Log de SISTEMA/DEBUG no chat (erros do server, timings, travadas). Não
+   *  vem da rede — é local, pra a gente VER o que está acontecendo in-game. */
+  system(text, color = '#ffd24a') {
+    try {
+      if (!this._linesEl) return;
+      const line = document.createElement('div');
+      line.style.cssText = `
+        background: rgba(18,10,4,0.85); padding: 3px 9px; border-radius: 4px;
+        color: ${color}; text-shadow: 0 1px 2px black; opacity: 1;
+        border-left: 3px solid ${color};
+        transition: opacity 4s linear 8s; font: 600 11px 'Segoe UI', monospace;
+      `;
+      line.textContent = '🛠 ' + String(text);
+      this._linesEl.appendChild(line);
+      setTimeout(() => { line.style.opacity = '0'; }, 50);
+      setTimeout(() => { try { this._linesEl.removeChild(line); } catch (_) {} }, 12100);
+      while (this._linesEl.children.length > 8) {
+        this._linesEl.removeChild(this._linesEl.firstChild);
+      }
+    } catch (_) {}
+  }
+
   _append(m) {
     const isMe = m.from === this.auth.getUserId();
     const line = document.createElement('div');

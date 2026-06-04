@@ -151,6 +151,14 @@ export class NavMeshManager {
       this._lastBuildMs = +(performance.now() - t0).toFixed(1);
       temps.forEach(t => { try { t.dispose(); } catch (_) {} });   // limpa proxies
       this._dirty = false;
+      // DEBUG: mostra a duração real no chat. Se isto for pequeno (~50-200ms) mas
+      // o jogo ainda travar ao construir/destruir, o culpado NÃO é o navmesh.
+      try {
+        if (typeof window !== 'undefined' && window._dbg && this._lastBuildMs > 60) {
+          window._dbg(`navmesh: ${this._lastBuildMs.toFixed(0)}ms (${navInput.length} meshes)`,
+            this._lastBuildMs > 800 ? '#ff5050' : '#9fe');
+        }
+      } catch (_) {}
       // Lista de obstáculos p/ os inimigos: SÓ o que o player realmente colide
       //  (parede/construção/escada com collider). Exclui o chão e a decoração
       //  pura (Sketchfab solto sem colisão), que o player atravessa → senão a

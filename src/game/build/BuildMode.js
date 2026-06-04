@@ -182,10 +182,17 @@ export class BuildMode {
   /** Persiste um objeto recém-colocado no mundo compartilhado (Supabase). */
   async _persistPlaced(entry) {
     if (!this._sharedWorld || !entry?.record) return;
+    try { window._dbgLastOp = 'colocar peça'; } catch (_) {}
+    const t0 = performance.now();
     try {
       const worldId = await WorldObjects.place(entry.record);
       if (worldId) { entry.worldId = worldId; this._worldEntries.set(worldId, entry); }
-    } catch (e) { console.warn('[BuildMode] persist mundo falhou:', e?.message || e); }
+      const ms = performance.now() - t0;
+      if (ms > 300) window._dbg?.(`servidor colocar: ${ms.toFixed(0)}ms` + (ms > 2000 ? ' ⚠ LENTO' : ''), ms > 2000 ? '#ff5050' : '#9fe');
+    } catch (e) {
+      window._dbg?.('ERRO ao colocar no servidor: ' + (e?.message || e), '#ff5050');
+      console.warn('[BuildMode] persist mundo falhou:', e?.message || e);
+    }
   }
 
   /**
@@ -307,6 +314,7 @@ export class BuildMode {
         }
       } catch (_) {}
     };
+    try { window._dbgLastOp = 'quebrar objeto'; } catch (_) {}
     // remove os colisores/corpos (peça: _pieceBodies Havok; senão some o
     //  VISUAL mas o colisor INVISÍVEL fica → "parede fantasma" bloqueando).
     try { this._disposeColliderArtifacts(entry.root); } catch (_) {}
@@ -314,7 +322,12 @@ export class BuildMode {
     // vencedor da corrida atômica ganha o drop; o perdedor remove via Realtime.
     if (entry.worldId) {
       this._worldEntries?.delete(entry.worldId);
-      WorldObjects.markBroken(entry.worldId).then((won) => { if (won) award(); });
+      const t0 = performance.now();
+      WorldObjects.markBroken(entry.worldId).then((won) => {
+        const ms = performance.now() - t0;
+        if (ms > 300) window._dbg?.(`servidor quebrar: ${ms.toFixed(0)}ms` + (ms > 2000 ? ' ⚠ LENTO' : ''), ms > 2000 ? '#ff5050' : '#9fe');
+        if (won) award();
+      }).catch((e) => window._dbg?.('ERRO ao quebrar no servidor: ' + (e?.message || e), '#ff5050'));
     } else {
       award(); // single-player: sempre concede
     }
