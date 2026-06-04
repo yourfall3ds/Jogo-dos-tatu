@@ -68,11 +68,33 @@ export class CharacterSwapper {
       const newLib = new AnimationLibrary(this.scene);
       const allAnims = this._allAnims();
       let animsOk = 0;
-      await Promise.all(allAnims.map(a =>
-        newLib.loadExternalAnimations(a.path, a.name, root)
-          .then(() => { if (newLib.animations.has(a.name)) animsOk++; })
-          .catch(() => {})
-      ));
+
+      // ── SONDA DE COMPATIBILIDADE (1 anim) ───────────────────────────
+      //  Antes baixávamos as 82 anims externas (82 × 7MB ≈ 574MB!) SÓ pra
+      //  descobrir que o rig não casa (avatar Sketchfab tem ossos Cylinder/
+      //  RetopoFlow, não biped). Isso demorava horrores e floodava 82 erros.
+      //  Agora testamos SÓ 'idle' primeiro: se 0 ossos casarem, o rig é
+      //  incompatível → pula DIRETO pro fallback baked (anims próprias do GLB),
+      //  sem baixar as outras 81. Economiza ~570MB e ~30s.
+      const probe = allAnims.find(a => a.name === 'idle') || allAnims[0];
+      if (probe) {
+        try {
+          await newLib.loadExternalAnimations(probe.path, probe.name, root);
+          if (newLib.animations.has(probe.name)) animsOk++;
+        } catch (_) {}
+      }
+
+      if (animsOk > 0) {
+        // Rig COMPATÍVEL (Meshy) → vale baixar o resto das anims externas.
+        const rest = allAnims.filter(a => a !== probe);
+        await Promise.all(rest.map(a =>
+          newLib.loadExternalAnimations(a.path, a.name, root)
+            .then(() => { if (newLib.animations.has(a.name)) animsOk++; })
+            .catch(() => {})
+        ));
+      } else {
+        console.warn('[Swap] rig incompatível com anims externas (sonda idle 0/72) — usando anims próprias do GLB, sem baixar as outras 81');
+      }
       const matchRate = allAnims.length ? animsOk / allAnims.length : 0;
 
       // ── FALLBACK por anims PRÓPRIAS do avatar ───────────────────────

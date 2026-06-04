@@ -26,12 +26,15 @@ export const AVATAR_ANIM_PROFILES = {
     punch_02: ['Archery_Shot_3', 'Run_and_Shoot'],
   },
   'assets/characters/dark_warrior_aaa_ready.glb': {
+    // anims REAIS embutidas: Standing Idle Looking Ver. 1 / Boss-Walking /
+    // Boss-Run / Attack 360 Low / Attack Horizontal / Punch / Dying
     idle:     ['Standing Idle Looking Ver. 1', 'Standing Idle Looking', 'Idle'],
     walk:     ['Boss-Walking', 'Walking', 'Walk'],
-    run:      ['Boss-Walking', 'Run', 'Walking'],
-    punch_01: ['Attack Horizontal', 'Attack'],
-    punch_02: ['Attack 360 Low', '360'],
+    run:      ['Boss-Run', 'Boss-Walking', 'Run'],
+    punch_01: ['Attack Horizontal', 'Punch', 'Attack'],
+    punch_02: ['Attack 360 Low', '360', 'Punch'],
     attack_01:['Attack Horizontal', 'Attack'],
+    dead:     ['Dying'],
   },
   'assets/characters/orc_warrior_ready.glb': {
     idle:     ['Armature|Orc_Ideal', 'Orc_Ideal', 'Idle'],
