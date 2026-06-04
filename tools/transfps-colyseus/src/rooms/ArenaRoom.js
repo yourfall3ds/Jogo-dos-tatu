@@ -321,33 +321,51 @@ export class ArenaRoom extends Room {
   // ── AUTH: valida JWT do Supabase ANTES do join ───────────────
   async onAuth(client, options /*, request */) {
     const token = options?.token;
-    if (!JWT_REQUIRED) {
-      return { sub: options?.player_id || client.sessionId, nickname: options?.nickname || 'Player' };
-    }
-    if (!token) throw new Error('JWT obrigatorio');
-    let payload;
-    try {
-      if (SUPABASE_JWT_SECRET) {
-        const enc = new TextEncoder().encode(SUPABASE_JWT_SECRET);
-        const r = await jwtVerify(token, enc, { algorithms: ['HS256'] });
-        payload = r.payload;
-      } else {
-        const r = await jwtVerify(token, JWKS);
-        payload = r.payload;
+
+    // Senha de sala SEMPRE validada (independe de login).
+    const checkPassword = () => {
+      if (this._password && options?.password !== this._password) {
+        throw new Error('senha incorreta');
       }
-    } catch (e) {
-      console.warn('[onAuth] JWT inválido:', e.message);
-      throw new Error('JWT inválido');
+    };
+
+    // Token OPCIONAL: se vier, validamos (identidade confiável do Supabase).
+    // Se NÃO vier e JWT não for obrigatório, aceitamos anônimo (jogar != logar).
+    if (token) {
+      let payload;
+      try {
+        if (SUPABASE_JWT_SECRET) {
+          const enc = new TextEncoder().encode(SUPABASE_JWT_SECRET);
+          const r = await jwtVerify(token, enc, { algorithms: ['HS256'] });
+          payload = r.payload;
+        } else {
+          const r = await jwtVerify(token, JWKS);
+          payload = r.payload;
+        }
+      } catch (e) {
+        console.warn('[onAuth] JWT inválido:', e.message);
+        // Token presente mas inválido: se JWT é obrigatório, rejeita; senão, cai p/ anônimo.
+        if (JWT_REQUIRED) throw new Error('JWT inválido');
+        payload = null;
+      }
+      if (payload?.sub) {
+        checkPassword();
+        return {
+          sub: payload.sub,
+          email: payload.email,
+          nickname: options?.nickname || payload.email?.split('@')[0] || 'Player',
+          avatar_url: options?.avatar_url || payload.user_metadata?.avatar_url || '',
+        };
+      }
     }
-    if (!payload.sub) throw new Error('JWT sem sub');
-    if (options?.password && this._password && options.password !== this._password) {
-      throw new Error('senha incorreta');
-    }
+
+    // Sem token válido. Se JWT é obrigatório, barra; senão, entra anônimo.
+    if (JWT_REQUIRED) throw new Error('JWT obrigatorio');
+    checkPassword();
     return {
-      sub: payload.sub,
-      email: payload.email,
-      nickname: options?.nickname || payload.email?.split('@')[0] || 'Player',
-      avatar_url: options?.avatar_url || payload.user_metadata?.avatar_url || '',
+      sub: options?.player_id || client.sessionId,
+      nickname: options?.nickname || 'Player',
+      avatar_url: options?.avatar_url || '',
     };
   }
 

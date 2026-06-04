@@ -33,13 +33,12 @@ const MONITOR_PASS = process.env.MONITOR_PASS || 'transfps-admin-2026';
 //    Limita N joins/joinOrCreate por IP numa janela, pra cortar flood de
 //    criação de sala (DoS barato). Folgado pro tráfego legítimo.
 //
-//  JWT_REQUIRED (NÃO travado em 1 por padrão — ver nota abaixo):
-//    O ArenaRoom HOJE não tem onAuth/validação de JWT. Forçar JWT_REQUIRED=1
-//    aqui SEM um onAuth que valide o token derrubaria TODOS os clientes atuais
-//    (que ainda não mandam Authorization). Logo: deixamos JWT_REQUIRED como
-//    flag DOCUMENTADA (default '0'); habilitar de verdade exige implementar
-//    onAuth no ArenaRoom validando o JWT do Google OAuth. Travar aqui = quebrar
-//    gameplay legítimo, então fica como TODO seguro e não como default.
+//  JWT_REQUIRED (default '0' = login OPCIONAL):
+//    ArenaRoom.onAuth JÁ valida o JWT do Supabase (HS256 via SUPABASE_JWT_SECRET,
+//    ou JWKS). Com JWT_REQUIRED=0 o onAuth aceita conexão anônima E valida o token
+//    quando ele vem (identidade confiável p/ quem logou). Com JWT_REQUIRED=1 ele
+//    EXIGE token válido — isso QUEBRA o modo anônimo (jogar sem login), que é o
+//    fluxo padrão do jogo. Por isso o default é '0': jogar nunca depende de login.
 // ─────────────────────────────────────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
