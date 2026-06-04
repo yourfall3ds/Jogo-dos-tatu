@@ -829,7 +829,7 @@ async function init() {
             if (!snd) return;
             try {
               if (snd.spatial?.position?.set) snd.spatial.position.set(tPos.x, tPos.y, tPos.z);
-              snd.volume = 0.7;
+              snd.volume = 0.4;
               snd.play();
             } catch (_) {}
           }).catch(() => {});
@@ -847,7 +847,7 @@ async function init() {
       // de dor nem flash ao levar dano de outro player.
       if (m.to && m.to === myId) {
         const sm = window._soundManager || window._player?.sounds;
-        if (sm?.playNow) sm.playNow("hurt", 0.9);
+        if (sm?.playNow) sm.playNow("hurt", 0.5);
         _showDamageFlash();
       }
     } catch (e) { console.error("[DamageFeedback]", e); }
@@ -2015,9 +2015,13 @@ async function init() {
   function _resumeFromPause() {
     const ov = $('pause-overlay');
     if (!ov) return;
+    // Esconde o overlay de forma DURA (classe + display) — o clique em "Retomar"
+    //  é um gesto real, então pedimos o lock direto (fromGesture=true) pra
+    //  re-capturar o mouse na hora, sem cair no cooldown.
     ov.classList.remove('visible');
     try { document.body.classList.add('in-game'); } catch (_) {}
-    window._gameInput?.activate();
+    try { if (canvas) canvas.style.cursor = 'none'; } catch (_) {}
+    window._gameInput?.activate(true);
     setFocusUI(true);
   }
   // Exposto pro botão "Voltar ao Jogo" (window.toggleFocus) usar o caminho
@@ -2642,6 +2646,16 @@ window.toggleFocus = function () {
     window._gameInput?.activate();
     return;
   }
+  // PRIORIDADE MÁXIMA: se o menu de pause está ABERTO, "Voltar ao Jogo" SEMPRE
+  // retoma — fecha o overlay e re-captura o pointer lock. Isto vem ANTES do
+  // guard de "jogo iniciado" porque ao abrir o pause no multiplayer removemos a
+  // classe 'in-game' do body; o guard então barrava o resume e o menu NÃO
+  // sumia. Resume primeiro, sempre.
+  const ov = $('pause-overlay');
+  if (ov?.classList.contains('visible')) {
+    window._resumeFromPause?.();
+    return;
+  }
   // GUARDA: se o jogo NAO foi iniciado (start-screen visivel, login screen
   // visivel ou lobby visivel), o botao Pausar e no-op. Nao ativa pointer lock.
   const ss        = $('start-screen');
@@ -2653,15 +2667,6 @@ window.toggleFocus = function () {
   }
   const inp = window._gameInput;
   if (!inp) return;
-  // Se o menu de pause está ABERTO, "Voltar ao Jogo" SEMPRE retoma — fecha o
-  // overlay e re-captura o pointer lock. No multiplayer gameActive segue true
-  // com o pause aberto, então inp.toggle() (que olha só gameActive) DESLIGAVA
-  // o input em vez de voltar pro jogo. Por isso o resume é explícito.
-  const ov = $('pause-overlay');
-  if (ov?.classList.contains('visible')) {
-    window._resumeFromPause?.();
-    return;
-  }
   inp.toggle();
   setFocusUI(inp.gameActive);
 };

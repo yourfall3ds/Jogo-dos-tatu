@@ -49,8 +49,10 @@ export class SoundManager {
       player_land     : 'sounds/player/land.ogg',
       player_walljump : 'sounds/player/walljump.ogg',
       player_damage   : 'sounds/player/damage.ogg',
-      // hurt — som ao RECEBER dano (reusa impacto "soco quando acerta"; sem .ogg dedicado em disco)
-      hurt            : 'assets/Sound FX/socos/soco quando acerta.wav',
+      // hurt — som ao RECEBER dano. ANTES usava "soco quando acerta" (= som de
+      //  LUTA/golpe), errado pra quem leva TIRO. Agora é um impacto seco curto
+      //  de projétil no corpo (explosão pequena, volume baixo na hora de tocar).
+      hurt            : 'assets/Sound FX/explosoes/boom.wav',
       player_death    : 'sounds/player/death.ogg',
       // Arma
       weapon_fire     : 'sounds/weapons/fire.ogg',
@@ -101,7 +103,12 @@ export class SoundManager {
       land            : 'assets/Sound FX/voos e rushs/groundhit.wav',
       // Inimigo voando longe após golpe forte (ESPACIAL — abaixa com a distância)
       flyby           : 'assets/Sound FX/voos e rushs/Barulho do cara voando longe quando recebe um golpe forte.wav',
-      bullet_whiz     : "assets/Sound FX/voos e rushs/Barulho do cara voando longe quando recebe um golpe forte.wav",
+      // bullet_whiz — impacto da bala no alvo (ESPACIAL). ANTES era o som de
+      //  "cara voando longe" (= golpe de luta), totalmente errado pra projétil.
+      //  Agora é o impacto seco de explosão pequena.
+      bullet_whiz     : "assets/Sound FX/explosoes/boom.wav",
+      // bullet_impact — impacto direto de projétil no corpo (alias usado nos hits PvP).
+      bullet_impact   : "assets/Sound FX/explosoes/boom.wav",
       // Coleta de drop (moeda/material)
       pickup_item     : 'assets/Sound FX/senzu/mordendo uma fruta.wav',
       // CHIBATADA — som de impacto da arma Chibata (whip)
@@ -148,6 +155,7 @@ export class SoundManager {
         'gun_pistol',
         'chibatada', // som de impacto da Chibata — precarrega pra nao engolir o 1o golpe
         'jump', 'dash', 'walljump', // movimento: precarrega pra o 1o pulo/dash tocar na hora
+        'hurt', 'bullet_impact', // dano recebido: precarrega pra o 1o tiro NÃO travar o jogo
       ]);
       this._getSpatialSound('flyby', 45);   // pré-carrega o som de voar
       this._getSpatialSound("bullet_whiz", 60);

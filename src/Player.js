@@ -723,8 +723,9 @@ export class Player {
         // Calcula vetor de dash baseado na direção
         let dx = 0, dz = 0, dy = 0;
         const right = new BABYLON.Vector3(fwd.z, 0, -fwd.x); // perpendicular horizontal
-        // Direção horizontal (vale pro normal E pro longo). 'up' (W+S) usa fwd.
-        if (isUp || dashDir === 'forward') { dx = fwd.x; dz = fwd.z; }
+        // Direção horizontal. 'up' (W+S) é PURAMENTE VERTICAL — dx=dz=0, só sobe.
+        if (isUp)                     { dx = 0;     dz = 0;     }
+        else if (dashDir === 'forward') { dx = fwd.x; dz = fwd.z; }
         else if (dashDir === 'back')  { dx = -fwd.x; dz = -fwd.z; }
         else if (dashDir === 'right') { dx = right.x; dz = right.z; }
         else if (dashDir === 'left')  { dx = -right.x; dz = -right.z; }
@@ -946,37 +947,15 @@ export class Player {
       this._vz *= 0.30;
     }
 
-    // ── 6. Pulo / Wall jump / DASH PRA CIMA (double-tap Space) ───────
+    // ── 6. Pulo / Wall jump ─────────────────────────────────────────
+    //  Space = SÓ pulo (1x). O dash pra cima é EXCLUSIVO do W+S (2x).
+    //  Não há mais double-tap de Space.
     const spaceNow  = this.input.isDown('Space');
     const jumpPress = spaceNow && !this._wasSpace && canMove;
     this._wasSpace  = spaceNow;
 
     if (jumpPress) {
-      // Detecta DOUBLE-TAP do espaço: 2 toques < 280ms = dash pra cima 2x.
-      const nowMs = performance.now();
-      const isDoubleSpace = (this._lastSpaceTapMs != null) && (nowMs - this._lastSpaceTapMs < 280);
-      this._lastSpaceTapMs = nowMs;
-
-      if (isDoubleSpace && (this.isGrounded || this._dashUpLeft > 0)) {
-        // DASH PRA CIMA (Space 2x): impulso vertical FORTE (~2x alcance do pulo)
-        // + som de DASH (não de pulo). Do chão é livre; no ar consome 1 carga
-        // (máx 2). Reseta o duplo-toque pra não disparar 2x.
-        this.velY = this.DASH_UP_FORCE;
-        if (!this.isGrounded) this._dashUpLeft = Math.max(0, this._dashUpLeft - 1);
-        this._lastSpaceTapMs = null;
-        this.sounds?.playNow?.('dash', this.DASH_VOL_UP);   // som de DASH (2x)
-        try { window._cs?.sendSfx?.('dash'); } catch (_) {}
-        this._dashFovT = 0.18;
-        try { this._spawnDashFX(new BABYLON.Vector3(0, 1, 0)); } catch (_) {}
-        // anim de salto no dash vertical
-        try {
-          const ac = this.animCtrl;
-          if (ac?.library?.has?.('jump')) ac.play('jump', { loop: false, fade: 0.05 });
-          else if (ac?.library?.has?.('vault_roll')) ac.play('vault_roll', { loop: false, fade: 0.05 });
-        } catch (_) {}
-        try { this.weapon?.applyWallJumpTilt?.(0); } catch (_) {}
-        this.animator?.onWallJump?.();
-      } else if (this.isGrounded) {
+      if (this.isGrounded) {
         this.velY = this.JUMP_FORCE;
         this.sounds?.playNow?.('jump', 1.0);   // pulo normal (Space 1x): som de pulo audível
         try { window._cs?.sendSfx?.('jump'); } catch (_) {}
@@ -1578,7 +1557,7 @@ export class Player {
     // ── Som de impacto/dor ao LEVAR dano (mob/queda/melee local) ──────
     // PvP via rede já toca 'hurt' no handler hit_confirmed; aqui garante
     // feedback sonoro também em dano de inimigo e knockback local.
-    try { this.sounds?.playNow?.('hurt', 0.9); } catch (_) {}
+    try { this.sounds?.playNow?.('hurt', 0.45); } catch (_) {}
 
     // ── Camera shake por tipo de ataque ───────────────────────────
     if (attackType === 'slam') {
@@ -1757,9 +1736,18 @@ export class Player {
       ? 'Você caiu do mapa! 🔄 Renascer pra voltar ao topo.'
       : 'Você foi derrotado! 🔄 Renascer pra continuar.';
 
-    // Libera o cursor (pra clicar Renascer). O loop continua atualizando a
-    // morte mesmo sem pointer-lock (ver main.js / update).
-    try { document.exitPointerLock?.(); } catch (_) {}
+    // SOLO: libera o cursor (pra clicar Renascer). O loop continua atualizando
+    //   a morte mesmo sem pointer-lock (ver main.js / update).
+    // MULTIPLAYER: NÃO solta o cursor — o respawn é AUTOMÁTICO (~5s) e não há
+    //   botão pra clicar. Soltar o mouse fazia ele VAZAR pra fora da tela e
+    //   perder o controle da câmera. Mantém o lock + gameActive: a câmera
+    //   segue controlável até o renascimento automático.
+    const _isMp = !!window._cs?.connected;
+    if (!_isMp) {
+      try { document.exitPointerLock?.(); } catch (_) {}
+    } else {
+      try { this.input.gameActive = true; } catch (_) {}
+    }
 
     // A tela de morte aparece pelo HUD (info.dead). Expõe o respawn global.
     window.respawnPlayer = () => this.respawn();
