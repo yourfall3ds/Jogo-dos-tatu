@@ -19,9 +19,12 @@ import { S3Client, PutObjectCommand } from "npm:@aws-sdk/client-s3";
 //    • `url` só pode ser de hosts do Meshy (anti-SSRF).
 // ─────────────────────────────────────────────────────────────────
 
-const region = Deno.env.get("WASABI_REGION") || Deno.env.get("VITE_WASABI_REGION") || "us-east-2";
-const endpoint = (Deno.env.get("WASABI_ENDPOINT") || Deno.env.get("VITE_WASABI_ENDPOINT") || `https://s3.${region}.wasabisys.com`).replace(/\/$/, "");
-const bucket = Deno.env.get("WASABI_BUCKET") || Deno.env.get("VITE_WASABI_BUCKET") || Deno.env.get("WASABI_BUCKET_NAME") || Deno.env.get("VITE_WASABI_BUCKET_NAME") || "";
+// Bucket DEDICADO do jogo (público). Se GAME_WASABI_BUCKET existir, usa ele —
+// assim o jogo escreve/le num bucket público próprio, separado do bucket
+// privado do site. Cai pro WASABI_BUCKET (site) se o do jogo não estiver setado.
+const region = Deno.env.get("GAME_WASABI_REGION") || Deno.env.get("WASABI_REGION") || Deno.env.get("VITE_WASABI_REGION") || "us-east-2";
+const endpoint = (Deno.env.get("GAME_WASABI_ENDPOINT") || Deno.env.get("WASABI_ENDPOINT") || Deno.env.get("VITE_WASABI_ENDPOINT") || `https://s3.${region}.wasabisys.com`).replace(/\/$/, "");
+const bucket = Deno.env.get("GAME_WASABI_BUCKET") || Deno.env.get("WASABI_BUCKET") || Deno.env.get("VITE_WASABI_BUCKET") || Deno.env.get("WASABI_BUCKET_NAME") || Deno.env.get("VITE_WASABI_BUCKET_NAME") || "";
 const accessKeyId = Deno.env.get("WASABI_ACCESS_KEY_ID") || Deno.env.get("VITE_WASABI_ACCESS_KEY_ID") || "";
 const secretAccessKey = Deno.env.get("WASABI_SECRET_ACCESS_KEY") || Deno.env.get("VITE_WASABI_SECRET_ACCESS_KEY") || "";
 
