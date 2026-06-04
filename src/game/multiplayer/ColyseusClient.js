@@ -73,7 +73,45 @@ export class ColyseusClient {
 
   /** Conecta ao gameServer (URL base sem path). */
   connect(wsUrl) {
+    this._wsUrl = wsUrl;
     this.client = new Client(wsUrl);
+  }
+
+  /**
+   * Retry com backoff exponencial p/ operações de join. O Colyseus pode demorar
+   * pra aceitar conexão logo após um restart (cold start) ou sob rede instável —
+   * sem retry, o usuário vê "erro ao conectar" no primeiro tropeço. Aqui a gente
+   * tenta de novo com 300ms → 600ms → 1200ms (+jitter), até `tries` vezes.
+   *
+   * Erros NÃO-transitórios (senha incorreta, sala cheia/locked, JWT inválido) NÃO
+   * são retriados — re-lança na hora pra UI mostrar a mensagem correta.
+   * @param {() => Promise<any>} fn  closure que executa o join
+   * @param {string} label  rótulo p/ log
+   * @param {number} tries  máximo de tentativas (default 4)
+   */
+  async _withRetry(fn, label = 'join', tries = 4) {
+    const NON_RETRYABLE = /senha incorreta|password|locked|is locked|full|lotad|JWT|unauthorized|forbidden|not found|seat reservation expired/i;
+    let lastErr;
+    for (let i = 0; i < tries; i++) {
+      try {
+        return await fn();
+      } catch (e) {
+        lastErr = e;
+        const msg = e?.message || String(e);
+        if (NON_RETRYABLE.test(msg)) {
+          console.warn(`[Colyseus] ${label}: erro não-retriável, abortando:`, msg);
+          throw e;
+        }
+        if (i === tries - 1) break;
+        const base = 300 * Math.pow(2, i);           // 300, 600, 1200
+        const jitter = Math.floor(base * 0.3 * ((i * 7 + 3) % 10) / 10); // determinístico, sem Math.random
+        const delay = base + jitter;
+        console.warn(`[Colyseus] ${label} tentativa ${i + 1}/${tries} falhou (${msg}); retry em ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+    console.error(`[Colyseus] ${label}: todas as ${tries} tentativas falharam.`);
+    throw lastErr;
   }
 
   /**
@@ -109,7 +147,7 @@ export class ColyseusClient {
     }
     this._lobbyCallback = onRooms;
     this._lobbyPromise = (async () => {
-      this._lobby = await this.client.joinOrCreate('lobby');
+      this._lobby = await this._withRetry(() => this.client.joinOrCreate('lobby'), 'subscribeLobby');
       this._lobbyRooms = [];
       this._lobby.onMessage('rooms', (rooms) => {
         this._lobbyRooms = rooms || [];
@@ -170,17 +208,34 @@ export class ColyseusClient {
       host_nickname: nickname,
       mode,
     };
-    this.room = await this.client.create('arena', options);
+    this.room = await this._withRetry(() => this.client.create('arena', options), 'createRoom');
     this._bindRoom();
     return this.room;
   }
 
-  /** Entra em sala existente por id. */
-  async joinRoomById({ roomId, token, nickname, avatar_url, password }) {
+  /** Entra em sala existente por id. Se o roomId estiver morto (sala fechou),
+   *  cai p/ joinOrCreate por matchmaking — nunca trava num roomId cacheado. */
+  async joinRoomById({ roomId, token, nickname, avatar_url, password, map, mode }) {
     if (!this.client) throw new Error('client not initialized');
-    this.room = await this.client.joinById(roomId, {
-      token, nickname, avatar_url, password,
-    });
+    try {
+      this.room = await this._withRetry(
+        () => this.client.joinById(roomId, { token, nickname, avatar_url, password }),
+        'joinById',
+      );
+    } catch (e) {
+      const msg = e?.message || String(e);
+      // Sala morta / inexistente: NÃO insistir no id cacheado. Tenta matchmaking
+      // (a menos que tenha senha — aí o usuário precisa escolher outra sala).
+      if (/not found|seat reservation|no rooms/i.test(msg) && !password && nickname && map) {
+        console.warn('[Colyseus] joinById falhou (sala morta?), caindo p/ joinOrCreate:', msg);
+        this.room = await this._withRetry(
+          () => this.client.joinOrCreate('arena', { token, nickname, avatar_url, map, mode: mode || 'DEATHMATCH', name: 'QuickPlay', maxPlayers: 8 }),
+          'joinById→joinOrCreate',
+        );
+      } else {
+        throw e;
+      }
+    }
     this._bindRoom();
     return this.room;
   }
@@ -189,10 +244,13 @@ export class ColyseusClient {
   async quickPlay({ token, nickname, avatar_url, map }) {
     if (!nickname) throw new Error('[QuickPlay] nickname obrigatorio');
     if (!map) throw new Error('[QuickPlay] map obrigatorio');
-    this.room = await this.client.joinOrCreate('arena', {
-      token, nickname, avatar_url, map,
-      name: 'QuickPlay', maxPlayers: 8,
-    });
+    this.room = await this._withRetry(
+      () => this.client.joinOrCreate('arena', {
+        token, nickname, avatar_url, map,
+        name: 'QuickPlay', maxPlayers: 8,
+      }),
+      'quickPlay',
+    );
     this._bindRoom();
     return this.room;
   }

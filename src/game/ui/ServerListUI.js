@@ -260,8 +260,17 @@ export class ServerListUI {
         try { await this.cs.leave(); }
         catch (e) { console.error('[ServerList] leave atual:', e); }
       }
-      const session = await this.auth.getSupabase().auth.getSession();
-      const token = session.data?.session?.access_token;
+      // Token é OPCIONAL (jogar não depende de login). Se a auth estiver offline/
+      // anônima, segue sem token — o server aceita (JWT_REQUIRED=0).
+      let token = null;
+      try {
+        const supa = this.auth.getSupabase?.();
+        if (supa) {
+          const session = await supa.auth.getSession();
+          token = session.data?.session?.access_token ?? null;
+        }
+      } catch (e) { console.warn('[ServerList] getSession (segue anônimo):', e?.message); }
+
       const avatarUrl =
         this.auth.profile?.avatar_url ??
         this.auth.user?.user_metadata?.avatar_url ?? null;
@@ -270,9 +279,12 @@ export class ServerListUI {
       await this.cs.joinRoomById({
         roomId: roomInfo.roomId,
         token,
-        nickname: this.auth.getNickname(),
+        nickname: this.auth.getNickname?.() || 'Player',
         avatar_url: avatarUrl,
         password: null,
+        // p/ fallback joinOrCreate se a sala estiver morta:
+        map: roomInfo.metadata?.map || roomInfo.map || 'arena',
+        mode: roomInfo.metadata?.mode || 'DEATHMATCH',
       });
 
       this.hide();
