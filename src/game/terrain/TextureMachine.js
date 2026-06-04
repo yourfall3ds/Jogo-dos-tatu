@@ -13,6 +13,10 @@
 import { getSupabase } from '../auth/SupabaseClient.js';
 import { WasabiHosting } from '../data/WasabiHosting.js';
 
+// MODELO: Nano Banana NORMAL (rápido e barato). NÃO usar o 'pro' (Nano Banana 2/Pro)
+// — é mais lento e caro. A edge function só vai pro Pro se o slug tiver 'pro'.
+const NANO_BANANA_MODEL = 'google/nano-banana';
+
 function _rand() { return 'tex_' + Math.random().toString(36).slice(2, 10); }
 
 // Extrai a URL da imagem do recordInfo do Kie (formato varia).
@@ -40,7 +44,7 @@ export const TextureStore = {
   async generate(prompt) {
     const supa = await getSupabase();
     const { data: t, error: e1 } = await supa.functions.invoke('kie-nano-banana', {
-      body: { mode: 'generate', prompt, model: 'google/nano-banana', output_format: 'png', image_size: '1:1' },
+      body: { mode: 'generate', prompt, model: NANO_BANANA_MODEL, output_format: 'png', image_size: '1:1' },
     });
     if (e1 || !t?.taskId) throw new Error(e1?.message || t?.error || 'falha ao iniciar geração');
     const taskId = t.taskId;
