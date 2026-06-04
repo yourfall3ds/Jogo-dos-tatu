@@ -1727,7 +1727,7 @@ async function init() {
   function _ensureTerrain(scene) {
     if (window._terrain) return window._terrain;
     try {
-      const terrain = new TerrainSystem(scene, { size: 240, subdivisions: 120, minY: -30, maxY: 60 });
+      const terrain = new TerrainSystem(scene, { size: 200, subdivisions: 80, minY: -30, maxY: 60 });
       const ui = new TerrainEditorUI(terrain, scene);
       terrain.onSave = (h, c) => TerrainStore.save(terrain.size, terrain.subdivisions, h, c);
       window._terrain = terrain;
@@ -1774,12 +1774,17 @@ async function init() {
       .filter(m => /^ground|procedural/i.test(m.name) && m.name !== "openworld_ground")
       .forEach(m => { try { m.setEnabled(false); } catch (e) {} });
 
-    // CHÃO DO MUNDO = TERRENO esculpível. Cria (1x) e usa no lugar do plano liso.
-    const terrain = _ensureTerrain(scene);
-    if (terrain?.mesh) {
-      const old = scene.getMeshByName("openworld_ground");
-      if (old) { try { old.setEnabled(false); } catch (_) {} }   // some o plano liso
-      return terrain.mesh;
+    // CHÃO no boot = plano liso branco (RÁPIDO). O TERRENO esculpível (pesado:
+    // milhares de vértices) é criado DEFERIDO — uns segundos APÓS entrar — pra não
+    // travar a fase de "preparando shaders"/conexão. Quando ele nasce, some o liso.
+    if (!window._terrain && !window._terrainDeferred) {
+      window._terrainDeferred = true;
+      setTimeout(() => {
+        try {
+          const terrain = _ensureTerrain(scene);
+          if (terrain?.mesh) { try { scene.getMeshByName("openworld_ground")?.setEnabled(false); } catch (_) {} }
+        } catch (_) {}
+      }, 5000);
     }
 
     let g = scene.getMeshByName("openworld_ground");

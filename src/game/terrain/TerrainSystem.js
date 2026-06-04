@@ -130,7 +130,7 @@ export class TerrainSystem {
     g.setVerticesData(VB().ColorKind, this._col, true);
     // Subdivide UMA vez em submeshes → o octree de colisão consegue particionar
     // por região (ground tem 1 submesh sozinho; sem isto o octree não ajuda).
-    try { g.subdivide(64); } catch (_) {}
+    try { g.subdivide(24); } catch (_) {}
 
     this._recomputeNormals();
     this._refreshCollision();
