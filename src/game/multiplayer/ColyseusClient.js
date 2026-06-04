@@ -523,9 +523,13 @@ export class ColyseusClient {
     });
   }
 
-  /** ⚠️ dmg NÃO é enviado — servidor calcula via WeaponTable. */
-  sendHitPlayer(targetId, _dmgIgnored, weapon) {
-    this.room?.send('hit_player', { to: targetId, weapon });
+  /** ⚠️ dmg NÃO é enviado — servidor calcula via WeaponTable.
+   *  launch = golpe que ARREMESSA (chute ou crit) → o server manda knockback
+   *  forte + crit (sobe e voa). Sem isso só chega o empurrão normal. */
+  sendHitPlayer(targetId, _dmgIgnored, weapon, launch = false) {
+    const msg = { to: targetId, weapon };
+    if (launch) msg.launch = true;
+    this.room?.send('hit_player', msg);
   }
   /** ⚠️ dmg NÃO é enviado — servidor calcula via WeaponTable. */
   sendHitMob(mobId, _dmgIgnored, weapon) {

@@ -817,15 +817,22 @@ export class ArenaRoom extends Room {
       let force = KB_BY_KIND[w?.kind] ?? 7;
       if (v.dmg >= 80) force *= 1.5;        // golpe pesado/crit empurra mais
       else if (v.dmg >= 50) force *= 1.25;
+      let crit = v.dmg >= 80;
+      // ── ARREMESSO (launch): chute ou soco crítico → o cliente sinaliza
+      //   payload.launch. Empurra FORTE e marca crit=true (o applyKnockback do
+      //   alvo dá velocidade pra CIMA → ele voa, não só desliza). Também cobre
+      //   kicks pelo id da arma (kick_*) como rede de segurança.
+      const isKick = /(^|_)kick/i.test(weaponId);
+      if (payload.launch === true || isKick) { force = Math.max(force, 18); crit = true; }
       // Stun curto proporcional ao peso do golpe.
-      const stunMs = v.dmg >= 80 ? 250 : (w?.kind === 'sword' ? 200 : 150);
+      const stunMs = crit ? 250 : (w?.kind === 'sword' ? 200 : 150);
       this.broadcast('player_knockback', {
         to: target.id,
         from: attacker.id,
         dirX: kdx, dirZ: kdz,
         force,
         stunMs,
-        crit: v.dmg >= 80,
+        crit,
       });
     }
 

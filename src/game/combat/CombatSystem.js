@@ -529,8 +529,11 @@ export class CombatSystem {
           hitSomething = true;
           hitEnemies.add(m._remoteRef);
           if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
-          // Envia hit via MP — o cliente-alvo recebe e aplica dano local
-          window._cs?.sendHitPlayer?.(m._remoteRef.playerId, hitDef.damage, animName);
+          // Envia hit via MP — o cliente-alvo recebe e aplica dano local.
+          // launch = CHUTE ou CRIT → server arremessa o alvo (knockback forte
+          // + pra cima). Sem isso chute/crit só empurravam de leve.
+          const _launch = !!isKick || (critLevel || 0) >= 1;
+          window._cs?.sendHitPlayer?.(m._remoteRef.playerId, hitDef.damage, animName, _launch);
           // Damage number visual no cliente que atacou (feedback imediato)
           window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
           // HITMARKER imediato no crosshair do atacante (sem esperar o server).

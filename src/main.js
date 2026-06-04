@@ -819,27 +819,9 @@ async function init() {
         { multiplier: isSword ? 1.8 : 1.0, sourceNode: targetMesh, isHeavy: isSword || m.dmg >= 80 }
       );
     }
-    // Som whiz surround na posicao do alvo. NÃO toca em QUEM LEVOU o tiro: o
-    // bullet_whiz é o "cara voando longe ao levar golpe forte" (pesado/explosão)
-    // e ficava sobreposto ao 'hurt' (= soco quando acerta) → parecia explosão ao
-    // receber tiro. Pra mim que levei, só o 'hurt' (handler dedicado). Pra alvos
-    // remotos/mobs mantém como pista posicional.
-    if (targetPos && m.to !== myId) {
-      const tPos = targetPos;
-      try {
-        const sm = window._soundManager;
-        if (sm?._getSpatialSound) {
-          sm._getSpatialSound("bullet_whiz", 60).then(snd => {
-            if (!snd) return;
-            try {
-              if (snd.spatial?.position?.set) snd.spatial.position.set(tPos.x, tPos.y, tPos.z);
-              snd.volume = 0.4;
-              snd.play();
-            } catch (_) {}
-          }).catch(() => {});
-        }
-      } catch (e) { console.error("[BulletWhiz]", e); }
-    }
+    // (Som de "voar longe" NÃO toca aqui: era o bullet_whiz tocando em TODO hit,
+    //  parecendo explosão. Agora só toca no ARREMESSO real — ver player_knockback,
+    //  gated por crit/launch.)
   });
 
   // ── Feedback de DANO local: som "hurt" + flash vermelho ao RECEBER tiro ──
@@ -1141,15 +1123,31 @@ async function init() {
       const force = +m?.force || 7;
       const stunMs = +m?.stunMs || 150;
       const crit = m?.crit === true;
+      let tPos = null;
       if (m?.to === myId) {
         // Eu fui empurrado: física local + stun travando input.
         player.applyKnockback?.(dirX, dirZ, force, stunMs, crit);
+        tPos = player.mesh?.position || null;
       } else {
         // Outro player foi empurrado: reação visual no avatar remoto.
         const rp = _remotePlayers.get(m?.to);
         if (rp?.playHit) {
           const dirVec = new BABYLON.Vector3(dirX, 0, dirZ);
           rp.playHit(dirVec, force, crit ? 1 : 0);
+        }
+        tPos = rp?.root?.getAbsolutePosition?.() || null;
+      }
+      // ── SOM DE ARREMESSO ("cara voando longe") — SÓ no launch real ──────
+      //  crit=true vem do server quando é chute/soco-crítico (arremesso). Toca
+      //  o flyby na posição do alvo. Em hit NORMAL (crit=false) NÃO toca → fim
+      //  do "barulho de voar/explosão" em todo golpe.
+      if (crit && tPos) {
+        const sm = window._soundManager;
+        if (sm?._getSpatialSound) {
+          sm._getSpatialSound('flyby', 55).then(snd => {
+            if (!snd) return;
+            try { if (snd.spatial?.position?.set) snd.spatial.position.set(tPos.x, tPos.y, tPos.z); snd.volume = 0.7; snd.play(); } catch (_) {}
+          }).catch(() => {});
         }
       }
     } catch (e) { console.error('[player_knockback]', e); }
