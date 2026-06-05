@@ -266,8 +266,10 @@ export class AssetGroupsUI {
     this._visible = true;
     this._el.style.display = 'flex';
     window._gameInput?.deactivate?.();
-    await AssetGroups.migrateOld();   // migra assets antigos se houver
-    await this._refresh();
+    // BLINDADO: se a migração (Supabase/LocalDB) lançar, NÃO pode impedir o
+    // _refresh — senão a biblioteca abria VAZIA mesmo com os 160 assets nativos.
+    try { await AssetGroups.migrateOld(); } catch (e) { console.warn('[AssetGroups] migrateOld falhou:', e?.message); }
+    try { await this._refresh(); } catch (e) { console.warn('[AssetGroups] refresh falhou:', e?.message); }
   }
 
   close() {
@@ -280,22 +282,31 @@ export class AssetGroupsUI {
   //  Renderização
   // ══════════════════════════════════════════════════════════════
   async _refresh() {
-    // BLINDADO: cada fonte é independente. Se a busca de grupos OU dos gerados
-    // (Supabase) falhar, os 160 assets NATIVOS do jogo (builtin, hardcoded)
-    // AINDA aparecem. Antes, um throw em qualquer await deixava a lib vazia.
-    let groups = [], generated = [], builtin = [], thumbs = {};
-    try { groups    = await AssetGroups.getGroups();       } catch (e) { console.warn('[AssetGroups] getGroups falhou:', e?.message); }
-    try { generated = await AssetGroups.getAssets();        } catch (e) { console.warn('[AssetGroups] getAssets falhou:', e?.message); }
-    try { builtin   = await AssetGroups.getBuiltinAssets(); } catch (e) { console.warn('[AssetGroups] getBuiltinAssets falhou:', e?.message); }
-    try { thumbs    = await LocalDB.get('asset_thumbnails', {}); } catch (_) {}
-    this._groups = groups || [];
-    this._assets = [...(generated || []), ...(builtin || [])];
-    this._thumbs = thumbs || {};
+    // BLINDADO contra EXCEÇÃO **e TRAVAMENTO**: nada de rede pode segurar a lib.
+    //  Helper: corre a promessa contra um timeout que resolve num default.
+    const race = (p, ms, def) => Promise.race([
+      Promise.resolve().then(() => p).catch(() => def),
+      new Promise(r => setTimeout(() => r(def), ms)),
+    ]);
+
+    // 1) NATIVOS primeiro (hardcoded, SEM rede) → os 160 assets do jogo aparecem
+    //    JÁ, mesmo se o Supabase estiver fora/lento. Era isto que faltava: a lib
+    //    abria vazia esperando grupos/gerados que travavam/lançavam.
+    let builtin = [];
+    try { builtin = await AssetGroups.getBuiltinAssets(); } catch (e) { console.warn('[AssetGroups] builtin:', e?.message); }
+    this._groups = await race(AssetGroups.getGroups(), 1200, []) || [];
+    this._assets = [...builtin];
     this._renderGroups();
     this._renderAssets();
-    const gen = (generated || []).length, blt = (builtin || []).length;
+
+    // 2) GERADOS depois (rede, com timeout) → mescla quando/se chegarem.
+    const generated = await race(AssetGroups.getAssets(), 2500, []) || [];
+    this._thumbs    = await race(LocalDB.get('asset_thumbnails', {}), 1000, {}) || {};
+    this._assets = [...generated, ...builtin];
+    this._renderGroups();
+    this._renderAssets();
     const tot = this._el.querySelector('#agui-total');
-    if (tot) tot.textContent = `${this._assets.length} assets (${gen} gerados · ${blt} do jogo)`;
+    if (tot) tot.textContent = `${this._assets.length} assets (${generated.length} gerados · ${builtin.length} do jogo)`;
   }
 
   _renderGroups() {

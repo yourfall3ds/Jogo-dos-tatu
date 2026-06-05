@@ -771,15 +771,23 @@ export class RemotePlayer {
     const isMelee = clip.startsWith('punch') || clip.startsWith('sword') || k === 'stunned';
     if (isMelee && k !== 'stunned') { try { this._spawnSlashVFX(); } catch (_) {} }
 
-    // Janela de ataque = duração REAL do clipe (não o ms fixo) pra não cortar
-    // combos longos de espada no meio. onComplete restaura no fim de verdade;
-    // o timer é só rede de segurança. Espelha o safety-timeout do CombatSystem.
+    // ── VELOCIDADE do golpe = MESMA do player local (CombatSystem) ──────
+    //  O local toca socos/chutes a ~3.4x e espada a ~2.6x ("rápido e seco").
+    //  O remoto tocava a 1.0 → na visão do outro o golpe saía em câmera lenta.
+    //  Agora casa: punch/kick 3.4, sword 2.6, tiro/reação 1.0.
+    const atkSpeed = clip.startsWith('sword') ? 2.6
+                   : (clip.startsWith('punch') || clip.startsWith('kick')) ? 3.4
+                   : 1.0;
+    // Janela de ataque = duração REAL do clipe / velocidade (toca mais rápido →
+    // janela mais curta). onComplete restaura no fim de verdade; o timer é só
+    // rede de segurança. Espelha o safety-timeout do CombatSystem.
     const realDurMs = (ctrl.getDuration?.(clip) || 0) * 1000;
-    const holdMs = Math.max(ms, realDurMs > 0 ? realDurMs + 100 : ms);
+    const playDurMs = atkSpeed > 0 ? realDurMs / atkSpeed : realDurMs;
+    const holdMs = Math.max(120, playDurMs > 0 ? playDurMs + 90 : ms);
     const restoreTo = this._curLocoState || this.state?.anim_state || 'idle';
     this._attackingUntil = performance.now() + holdMs;
     ctrl.play(clip, {
-      loop: false, fade: 0.08,
+      loop: false, fade: 0.08, speed: atkSpeed,
       onComplete: () => {
         if (this._disposed || this._disposing) return;
         this._attackingUntil = 0;
