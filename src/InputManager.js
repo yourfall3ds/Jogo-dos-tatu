@@ -156,7 +156,16 @@ export class InputManager {
         document.getElementById('pause-overlay')?.classList.contains('visible') ||
         window._assetGroupsUI?._visible ||
         (window._buildMode && window._buildMode._state !== 'inactive');
-      if (!document.pointerLockElement && e.target === this.canvas && !_menuOpen) {
+      // IMPORTANTE: NÃO exigir e.target === canvas — o canvas costuma ficar COBERTO
+      //  por overlays do HUD (vida/hotbar/minimapa), então o clique cai num <div>
+      //  transparente e não no canvas. Em vez disso, re-trava em QUALQUER clique
+      //  que NÃO seja num controle interativo (botão/input/link/painel de UI).
+      //  Assim, depois do alt-tab, clicar em qualquer ponto do jogo prende o mouse.
+      const _onUI = !!e.target?.closest?.(
+        'button, input, select, textarea, a, label, [contenteditable], [data-ui], ' +
+        '#pause-overlay, #start-screen, .agui, .bm-panel, .meshy-panel, .tex-panel'
+      );
+      if (!document.pointerLockElement && !_menuOpen && !_onUI) {
         this._requestLock(true);
       }
       // Cliques de tiro/ação só contam jogando (ou posicionando peça no build).
