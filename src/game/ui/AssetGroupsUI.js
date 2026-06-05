@@ -280,16 +280,22 @@ export class AssetGroupsUI {
   //  Renderização
   // ══════════════════════════════════════════════════════════════
   async _refresh() {
-    this._groups = await AssetGroups.getGroups();
-    const generated = await AssetGroups.getAssets();
-    const builtin   = await AssetGroups.getBuiltinAssets();
-    // gerados primeiro, depois os assets do jogo
-    this._assets = [...generated, ...builtin];
-    this._thumbs = await LocalDB.get('asset_thumbnails', {});
+    // BLINDADO: cada fonte é independente. Se a busca de grupos OU dos gerados
+    // (Supabase) falhar, os 160 assets NATIVOS do jogo (builtin, hardcoded)
+    // AINDA aparecem. Antes, um throw em qualquer await deixava a lib vazia.
+    let groups = [], generated = [], builtin = [], thumbs = {};
+    try { groups    = await AssetGroups.getGroups();       } catch (e) { console.warn('[AssetGroups] getGroups falhou:', e?.message); }
+    try { generated = await AssetGroups.getAssets();        } catch (e) { console.warn('[AssetGroups] getAssets falhou:', e?.message); }
+    try { builtin   = await AssetGroups.getBuiltinAssets(); } catch (e) { console.warn('[AssetGroups] getBuiltinAssets falhou:', e?.message); }
+    try { thumbs    = await LocalDB.get('asset_thumbnails', {}); } catch (_) {}
+    this._groups = groups || [];
+    this._assets = [...(generated || []), ...(builtin || [])];
+    this._thumbs = thumbs || {};
     this._renderGroups();
     this._renderAssets();
-    const gen = generated.length, blt = builtin.length;
-    this._el.querySelector('#agui-total').textContent = `${this._assets.length} assets (${gen} gerados · ${blt} do jogo)`;
+    const gen = (generated || []).length, blt = (builtin || []).length;
+    const tot = this._el.querySelector('#agui-total');
+    if (tot) tot.textContent = `${this._assets.length} assets (${gen} gerados · ${blt} do jogo)`;
   }
 
   _renderGroups() {

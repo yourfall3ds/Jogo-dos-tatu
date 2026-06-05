@@ -182,7 +182,12 @@ export class DayNightCycle {
   update(dt) {
     if (this.manual) { this._apply(); return; }   // re-impõe o sol manual
     if (this.paused) return;
-    this.t = (this.t + dt / this.dayLengthSec) % 1;
+    // SINCRONIZADO ENTRE TODOS: a hora do dia NÃO é mais um acumulador local de
+    // dt (que divergia entre clientes — um de dia, outro de noite). Agora deriva
+    // do RELÓGIO global (Date.now()), igual em todas as máquinas (±skew de poucos
+    // segundos, irrelevante num ciclo de 4 min). Mesmo mundo, mesma hora pra todos.
+    const secs = Date.now() / 1000;
+    this.t = ((secs / this.dayLengthSec) + 0.30) % 1;   // +0.30 = começa de manhã
     this._apply();
   }
 

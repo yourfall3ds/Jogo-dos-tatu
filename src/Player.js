@@ -1261,7 +1261,10 @@ export class Player {
         const isArmedNow = this.stateMachine && this.stateMachine.state === 'armed';
         const targetYaw = yawRad;
 
-        if (this.animator.root) {
+        // MORTO: NÃO reorienta o corpo. Em MP a câmera segue controlável até o
+        // respawn; sem este guard, mexer o mouse girava o cadáver pra encarar a
+        // câmera (personagem "invertido, de frente"). Congela no facing da morte.
+        if (this.animator.root && !this._dead) {
           // Garante euler (rotationQuaternion bloquearia rotation.y)
           if (this.animator.root.rotationQuaternion) this.animator.root.rotationQuaternion = null;
           const curYaw = this.animator.root.rotation.y;

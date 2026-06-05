@@ -533,6 +533,26 @@ export class RemotePlayer {
     this._animCtrl.play(clip, { loop: m.loop !== false, speed: m.speed ?? 1.0, fade: m.fade ?? 0.16 });
   }
 
+  /** Ajusta o speedRatio do clipe de locomoção atual conforme a velocidade real
+   *  do remoto — MESMA fórmula do player local (updateLocomotion). Chamado todo
+   *  frame; play() já evita re-fade quando o clipe não muda. */
+  _applyLocoSpeed() {
+    if (!this._realAnimsReady || !this._animCtrl) return;
+    if (this.state?.dead) return;
+    if (this._attackingUntil && performance.now() < this._attackingUntil) return;
+    const name = this._animCtrl.currentName;
+    if (name !== 'walk' && name !== 'run' && name !== 'run_fast') return;
+    const cur = this._animCtrl.currentAnim;
+    if (!cur) return;
+    const moveAmount = (this._instSpeed || 0) / 11;   // 11 = mesma escala do local
+    let sp;
+    if (name === 'walk')     sp = Math.max(0.8, moveAmount * 2.2);
+    else if (name === 'run') sp = 0.9 + moveAmount * 0.3;
+    else                     sp = 1.0 + Math.max(0, moveAmount - 1.18) * 0.5;
+    sp = Math.max(0.5, Math.min(2.2, sp));
+    try { cur.speedRatio = sp; } catch (_) {}
+  }
+
   /** Escolhe o clipe de ATAQUE real conforme melee/ranged + arma. Fixa o "anim
    *  de arco ao atirar": tiro vira aim_shoot, NUNCA um clipe de arco. */
   _attackClipFor(melee, weaponId) {
@@ -1212,6 +1232,17 @@ export class RemotePlayer {
       }
     }
     this.root.position.set(this._current.x, this._current.y, this._current.z);
+    // ── VELOCIDADE da animação de locomoção casada com o movimento REAL ──
+    //  Antes o remoto tocava walk/run em speed FIXO 1.0 → na visão do outro o
+    //  player parecia em câmera lenta (enquanto o local acelera a passada com a
+    //  velocidade). Agora derivamos a velocidade horizontal interpolada e
+    //  aplicamos a MESMA fórmula do player local (AnimationController.updateLocomotion).
+    if (this._prevWX != null && dt > 0) {
+      const inst = Math.hypot(this._current.x - this._prevWX, this._current.z - this._prevWZ) / dt;
+      this._instSpeed = (this._instSpeed == null) ? inst : this._instSpeed + (inst - this._instSpeed) * Math.min(1, dt * 8);
+    }
+    this._prevWX = this._current.x; this._prevWZ = this._current.z;
+    this._applyLocoSpeed();
     // FIX orientacao: player.glb (Meshy) exporta de COSTAS (rosto para -Z).
     // O player LOCAL compensa com FACING_OFFSET = Math.PI (PlayerAnimator.js:82,391).
     // Aqui o ry vem cru do server, entao replicamos o MESMO +Math.PI; sem isso

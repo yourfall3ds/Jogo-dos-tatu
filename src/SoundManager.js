@@ -49,10 +49,9 @@ export class SoundManager {
       player_land     : 'sounds/player/land.ogg',
       player_walljump : 'sounds/player/walljump.ogg',
       player_damage   : 'sounds/player/damage.ogg',
-      // hurt — som ao RECEBER dano. ANTES usava "soco quando acerta" (= som de
-      //  LUTA/golpe), errado pra quem leva TIRO. Agora é um impacto seco curto
-      //  de projétil no corpo (explosão pequena, volume baixo na hora de tocar).
-      hurt            : 'assets/Sound FX/explosoes/boom.wav',
+      // hurt — som ao RECEBER dano. O dono PEDIU explicitamente: NÃO é explosão
+      //  (boom soava como bomba ao levar tiro). É o impacto seco de SOCO acertando.
+      hurt            : 'assets/Sound FX/socos/soco quando acerta.wav',
       player_death    : 'sounds/player/death.ogg',
       // Arma
       weapon_fire     : 'sounds/weapons/fire.ogg',
