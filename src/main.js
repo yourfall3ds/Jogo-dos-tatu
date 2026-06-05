@@ -135,7 +135,35 @@ import { LocalAura }           from './game/combat/LocalAura.js';
 import { getConfig }           from './game/auth/SupabaseClient.js';
 import { CloudSave }           from './game/data/CloudSave.js';
 
-const TRANSFPS_CS_URL = 'wss://app.overpixel.online/transfps-cs';
+// ── Endereço do servidor Colyseus ────────────────────────────────
+//  Resolve automaticamente pra funcionar em 3 cenários sem editar código:
+//   1) OVERRIDE manual: ?cs=ws://192.168.0.10:2567  ou  localStorage
+//      'transfps_cs_url' (fica salvo). Útil se o servidor estiver noutro PC.
+//   2) LAN / localhost: se a página foi aberta por localhost ou por um IP
+//      privado (192.168.x / 10.x / 172.16-31.x), aponta pro MESMO host na
+//      porta 2567. Assim, abrir http://<IP-do-host>:PORTA já conecta no
+//      Colyseus rodando nesse host (jogo HTTP → ws; jogo HTTPS → wss).
+//   3) Produção: domínio público atrás do nginx (wss).
+function _resolveCsUrl() {
+  try {
+    const q = new URLSearchParams(location.search).get('cs');
+    if (q) { try { localStorage.setItem('transfps_cs_url', q); } catch (_) {} return q; }
+    const saved = localStorage.getItem('transfps_cs_url');
+    if (saved) return saved;
+  } catch (_) {}
+  try {
+    const h = location.hostname || '';
+    const isLocal = h === 'localhost' || h === '127.0.0.1' ||
+      /^192\.168\./.test(h) || /^10\./.test(h) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(h);
+    if (isLocal) {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      return `${proto}://${h}:2567`;
+    }
+  } catch (_) {}
+  return 'wss://app.overpixel.online/transfps-cs';
+}
+const TRANSFPS_CS_URL = _resolveCsUrl();
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
