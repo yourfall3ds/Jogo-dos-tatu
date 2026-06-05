@@ -462,6 +462,13 @@ export class ArenaRoom extends Room {
         clearTimeout(pending);
         this._pendingLeaves.delete(playerId);
       }
+      // TAKEOVER: esta sessão NOVA passa a ser a dona do assento. Se houver um
+      // allowReconnection ANTIGO (da queda anterior) pendente, quando ele
+      // expirar o onLeave vai checar este sid e NÃO vai deletar o player que
+      // acabou de voltar (senão o reloadado sumia pros outros 15s depois).
+      this._sidByPlayer = this._sidByPlayer || new Map();
+      this._sidByPlayer.set(playerId, client.sessionId);
+      client.userData = { playerId, joinedAt: Date.now() };
       return; // não cria novo PlayerState
     }
 
@@ -498,6 +505,8 @@ export class ArenaRoom extends Room {
     this.state.players.set(playerId, p);
     if (p.is_host) this.state.host_id = playerId;
     client.userData = { playerId, joinedAt: Date.now() };
+    this._sidByPlayer = this._sidByPlayer || new Map();
+    this._sidByPlayer.set(playerId, client.sessionId);   // dono atual do assento
     console.log(`[ArenaRoom] +${p.nickname} ${p.is_host ? '[HOST]' : ''} (${this.state.players.size} players)`);
     // Hidrata profile (xp/level/coins persistidos)
     this._hydrateFromProfile(p).catch(() => {});
@@ -550,6 +559,17 @@ export class ArenaRoom extends Room {
       } catch (e) {
         console.log(`[ArenaRoom] ❌ ${player.nickname} não voltou em 15s — finalizando`);
       }
+    }
+
+    // TAKEOVER GUARD: se uma sessão MAIS NOVA já assumiu este player (reload/
+    // reconexão entrou com sessionId diferente), NÃO finalize — senão este
+    // onLeave (da sessão velha, vindo do grace de 15s) deletaria o player que
+    // acabou de voltar, deixando-o invisível pros outros ("fantasma").
+    this._sidByPlayer = this._sidByPlayer || new Map();
+    const owner = this._sidByPlayer.get(pid);
+    if (owner && owner !== client.sessionId) {
+      console.log(`[ArenaRoom] ⏭️  ${player.nickname} já foi reassumido por sessão nova — ignorando saída velha`);
+      return;
     }
 
     console.log(`[ArenaRoom] -${player.nickname}`);
@@ -621,6 +641,7 @@ export class ArenaRoom extends Room {
     this._kills?.delete(pid);
     this._lastInputAt?.delete(pid);
     this._msgRate?.delete(pid);
+    this._sidByPlayer?.delete(pid);
     // B10: limpa canais de rate-limit (chave `${pid} ${channel}`)
     if (this._msgRateCh) {
       const chPrefix = `${pid} `;

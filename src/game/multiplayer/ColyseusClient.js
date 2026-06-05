@@ -260,6 +260,20 @@ export class ColyseusClient {
   _bindRoom() {
     if (!this.room) return;
     this.sessionId = this.room.sessionId;
+    // ── RELOAD / FECHAR ABA: leave CONSENTIDO na hora ────────────────
+    //  Ctrl+F5 / fechar caía como QUEDA ACIDENTAL → o servidor segurava o
+    //  assento 15s (allowReconnection) e o reload virava FANTASMA (os outros
+    //  viam a sessão velha; o player novo não era visto / sumia 15s depois).
+    //  Mandando leave(consented=true) no pagehide, o assento sai NA HORA e o
+    //  reload entra limpo. (Queda de REDE real não dispara pagehide → mantém o
+    //  grace de 15s pra reconectar.)
+    ColyseusClient._active = this;
+    if (!ColyseusClient._unloadHooked) {
+      ColyseusClient._unloadHooked = true;
+      const bail = () => { try { ColyseusClient._active?.room?.leave(true); } catch (_) {} };
+      window.addEventListener('pagehide', bail);
+      window.addEventListener('beforeunload', bail);
+    }
     // CRÍTICO: o playerId local TEM que ser a mesma chave que mandamos no join
     // (player_id) — é por ela que o server guarda nosso PlayerState. Sem isto,
     // players.get(playerId) = null e o jogo achava que não estávamos na sala.
