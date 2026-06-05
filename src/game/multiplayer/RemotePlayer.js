@@ -402,9 +402,9 @@ export class RemotePlayer {
     const s = this.state;
     // 'pos' = wiring real do ColyseusClient p/ x/y/z (ver listeners). 'x'/'z' mantidos
     // por compat caso o wiring passe a emitir nomes de campo crus.
-    if (field === "pos" || field === "x" || field === "z" || field === "anim_state") {
-      try { this._maybePlayFootstep(s || this.state); } catch (_) {}
-    }
+    // NOTA: passos do remoto NÃO são mais disparados por-evento aqui (causava
+    // sobreposição/"chuva de passo"). Agora é um LOOP espacial start/stop por
+    // movimento real, gerido em _updateFootLoop() (chamado por frame no update).
     switch (field) {
       case 'pos':
       case 'ry':
@@ -531,6 +531,47 @@ export class RemotePlayer {
     this._curLocoState = rawState;
     this._curAnimState = rawState;
     this._animCtrl.play(clip, { loop: m.loop !== false, speed: m.speed ?? 1.0, fade: m.fade ?? 0.16 });
+  }
+
+  /** LOOP de passos do remoto: liga quando ele ANDA de fato (velocidade real),
+   *  desliga quando para. Cada remoto tem a SUA instância espacial (anexada ao
+   *  corpo → HRTF/distância corretos). Substitui o disparo por-passo que sobre-
+   *  punha e "chovia". Cull por distância pra não somar 400 passos longe. */
+  _updateFootLoop() {
+    const sm = window._soundManager;
+    if (!sm?.createSpatialLoop) return;
+    let near = true;
+    try {
+      const me = window._player?.mesh?.position;
+      if (me) {
+        const dx = this._current.x - me.x, dz = this._current.z - me.z;
+        near = (dx * dx + dz * dz) < 26 * 26;
+      }
+    } catch (_) {}
+    const moving = !this.state?.dead && (this._instSpeed || 0) > 0.9 && near;
+
+    if (moving) {
+      // cria a instância sob demanda (1x por remoto)
+      if (!this._footLoop && !this._footLoopLoading) {
+        this._footLoopLoading = true;
+        sm.createSpatialLoop('run_concrete', 26).then((snd) => {
+          this._footLoopLoading = false;
+          if (this._disposed || this._disposing || !snd) { try { snd?.dispose?.(); } catch (_) {} return; }
+          try { snd.spatial?.attach?.(this.root); } catch (_) {}
+          this._footLoop = snd;
+        });
+      }
+      if (this._footLoop && !this._footPlaying) {
+        try { this._footLoop.volume = 0.3; this._footLoop.play(); this._footPlaying = true; } catch (_) {}
+      }
+      if (this._footLoop && this._footPlaying) {
+        const rate = (this._instSpeed > 6) ? 1.1 : 0.85;
+        try { if (this._footLoop.playbackRate !== undefined) this._footLoop.playbackRate = rate; } catch (_) {}
+      }
+    } else if (this._footLoop && this._footPlaying) {
+      try { this._footLoop.stop(); } catch (_) {}
+      this._footPlaying = false;
+    }
   }
 
   /** Ajusta o speedRatio do clipe de locomoção atual conforme a velocidade real
@@ -1243,6 +1284,7 @@ export class RemotePlayer {
     }
     this._prevWX = this._current.x; this._prevWZ = this._current.z;
     this._applyLocoSpeed();
+    this._updateFootLoop();
     // FIX orientacao: player.glb (Meshy) exporta de COSTAS (rosto para -Z).
     // O player LOCAL compensa com FACING_OFFSET = Math.PI (PlayerAnimator.js:82,391).
     // Aqui o ry vem cru do server, entao replicamos o MESMO +Math.PI; sem isso
@@ -1301,6 +1343,10 @@ export class RemotePlayer {
   dispose() {
     if (this._disposing || this._disposed) return;
     this._disposing = true;
+    // para + libera o loop de passos dedicado deste remoto
+    try { this._footLoop?.stop?.(); } catch (_) {}
+    try { this._footLoop?.dispose?.(); } catch (_) {}
+    this._footLoop = null; this._footPlaying = false;
     // Esconde nameplate imediato pra nao ficar HTML stub flutuando
     if (this._nameEl) {
       this._nameEl.style.transition = 'opacity 0.3s';

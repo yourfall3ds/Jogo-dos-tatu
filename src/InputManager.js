@@ -141,12 +141,26 @@ export class InputManager {
       // precisa conseguir POSICIONAR o asset que tem na mão. Sem isso, entrar
       // em modo construção pela hotbar "funciona" mas nunca conclui o placement.
       const _placing = window._buildMode?._state === 'placing';
-      if (!this.gameActive && !_placing) return;
       if (e.target?.id === 'focus-btn') return;
-      // Re-adquire lock se perdido. mousedown = gesto FRESCO e confiável →
-      // fromGesture=true ignora o cooldown e pede o lock direto. É exatamente
-      // aqui que um _pendingLock armado (ESC/respawn) é consumido.
-      if (!document.pointerLockElement) this._requestLock(true);
+      // ── RE-FOCO POR CLIQUE NO JOGO ──────────────────────────────────
+      //  Clicar no CANVAS re-adquire o pointer lock na hora (mousedown = gesto
+      //  FRESCO e confiável → fromGesture=true ignora o cooldown). CRÍTICO: isto
+      //  roda ANTES do early-return de gameActive — senão, depois de um alt-tab
+      //  que solta o lock (gameActive=false), clicar na tela não focava NADA
+      //  (o bug mais chato). Agora o 1º clique no jogo SEMPRE foca.
+      //  EXCEÇÕES (nunca foca em menu, só em play):
+      //   - menu de pause (ESC) aberto → clica "Retomar", não re-trava sozinho;
+      //   - Biblioteca de Assets / modo construção abertos → precisa do cursor;
+      //   - clique fora do canvas (botão/UI) → deixa a UI tratar.
+      const _menuOpen =
+        document.getElementById('pause-overlay')?.classList.contains('visible') ||
+        window._assetGroupsUI?._visible ||
+        (window._buildMode && window._buildMode._state !== 'inactive');
+      if (!document.pointerLockElement && e.target === this.canvas && !_menuOpen) {
+        this._requestLock(true);
+      }
+      // Cliques de tiro/ação só contam jogando (ou posicionando peça no build).
+      if (!this.gameActive && !_placing) return;
       // Conta os cliques (não só um boolean) → mashing rápido não perde
       // cliques no mesmo frame; o combo encadeia todos.
       if (e.button === 0) { this._clicked = true;      this._clicks      = (this._clicks      || 0) + 1; this._leftHeld  = true; }

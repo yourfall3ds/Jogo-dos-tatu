@@ -344,6 +344,36 @@ export class SoundManager {
     } catch (e) { /* silencioso */ }
   }
 
+  /** Cria uma INSTÂNCIA DEDICADA (não compartilhada) de som espacial em LOOP.
+   *  Cada RemotePlayer usa a sua pros próprios passos — assim dá pra start/stop
+   *  por player sem um sobrescrever o do outro (o _getSpatialSound cacheia 1 só
+   *  por id → vários remotos tocando o mesmo davam "chuva de passo" sobreposta). */
+  async createSpatialLoop(id, maxDistance = 30) {
+    try {
+      const eng = await getAudioEngine();
+      if (!eng) return null;
+      let src = null;
+      const blob = await this._dbGet(id);
+      if (blob) src = URL.createObjectURL(blob);
+      else {
+        const path = this._paths[id];
+        if (!path) return null;
+        src = /^(blob:|data:)/.test(path) ? path : encodeURI(path);
+      }
+      this._loopUid = (this._loopUid || 0) + 1;
+      const snd = await BABYLON.CreateSoundAsync(`sploop_${id}_${this._loopUid}`, src, {
+        spatialEnabled: true,
+        spatialPanningModel: 'HRTF',
+        spatialDistanceModel: 'linear',
+        spatialReferenceDistance: 1.5,
+        spatialMaxDistance: maxDistance,
+        spatialRolloffFactor: 1,
+        autoplay: false, loop: true,
+      });
+      return snd;
+    } catch (_) { return null; }
+  }
+
   async _getSpatialSound(id, maxDistance = 45) {
     this._spatial = this._spatial || {};
     if (this._spatial[id]) return this._spatial[id];
