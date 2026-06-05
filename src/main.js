@@ -1780,19 +1780,9 @@ async function init() {
       .filter(m => /^ground|procedural/i.test(m.name) && m.name !== "openworld_ground")
       .forEach(m => { try { m.setEnabled(false); } catch (e) {} });
 
-    // CHÃO no boot = plano liso branco (RÁPIDO). O TERRENO esculpível (pesado:
-    // milhares de vértices) é criado DEFERIDO — uns segundos APÓS entrar — pra não
-    // travar a fase de "preparando shaders"/conexão. Quando ele nasce, some o liso.
-    if (!window._terrain && !window._terrainDeferred) {
-      window._terrainDeferred = true;
-      setTimeout(() => {
-        try {
-          const terrain = _ensureTerrain(scene);
-          if (terrain?.mesh) { try { scene.getMeshByName("openworld_ground")?.setEnabled(false); } catch (_) {} }
-        } catch (_) {}
-      }, 5000);
-    }
-
+    // CHÃO = plano liso branco. O TERRENO esculpível é OPT-IN (botão 🏔 Terreno):
+    // não nasce sozinho pra não conflitar/piscar com o chão de mapas que já têm
+    // geometria própria (arena). Criado só quando o jogador clica.
     let g = scene.getMeshByName("openworld_ground");
     if (g) { g.setEnabled(true); return g; }
     // 4x maior: 200 -> 800. subdivisions:2 (ainda plano, pouco z-fight).
@@ -1883,6 +1873,27 @@ async function init() {
     window._interactables = interactables;
     interactables.loadForWorld();   // carrega os interativos salvos (retry até o build restaurar)
   } catch (e) { console.warn('[Interactable] init falhou:', e?.message); }
+  // ── 🏔 Terreno é OPT-IN: botão bootstrap que cria o terreno esculpível só
+  //    quando o jogador clica (evita z-fighting com o chão de mapas que já têm
+  //    geometria). Ao clicar: cria o TerrainSystem + UIs reais, some o bootstrap
+  //    e abre o editor. Cliques seguintes usam o botão real (#terrain-toggle).
+  try {
+    if (!document.getElementById('terrain-toggle') && !document.getElementById('terrain-boot')) {
+      const tb = document.createElement('button');
+      tb.id = 'terrain-boot';
+      tb.textContent = '🏔 Terreno';
+      tb.style.cssText = 'position:fixed;top:96px;left:12px;z-index:90;background:rgba(20,30,22,0.85);color:#bfe9c9;border:1px solid #4a7d5a;border-radius:8px;padding:6px 11px;font:700 12px monospace;cursor:pointer;';
+      tb.onclick = () => {
+        try {
+          const terrain = _ensureTerrain(scene);
+          if (terrain?.mesh) { try { scene.getMeshByName('openworld_ground')?.setEnabled(false); } catch (_) {} }
+          tb.remove();
+          setTimeout(() => { try { window._terrainUI?.toggle?.(); } catch (_) {} }, 60);
+        } catch (err) { console.warn('[Terrain] criar falhou:', err?.message); }
+      };
+      document.body.appendChild(tb);
+    }
+  } catch (_) {}
   // Limpar terreno colocado (objetos/quadros/máquinas/colisores órfãos) por código
   window.clearTerrain = () => buildMode.clearAllTerrain();
   const meshyPanel = new MeshyPanel(scene, buildMode);
