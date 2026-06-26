@@ -139,6 +139,10 @@ const MOB_KINDS = [
 
 let _mobUid = 0;
 let _dropUid = 0;
+// Spawn seguro do MUNDO SELVAGEM = centro do gerador de biomas (clareira de
+//  ruínas, baseH≈0). Cai ~3m e pousa no chão local do cliente. DEVE bater com
+//  o BiomeWorld do cliente (spawnPoint em 0,0).
+const WILD_SPAWN = { x: 0, y: 4, z: 0 };
 let _propUid = 0;
 let _fxUid = 0;
 
@@ -237,6 +241,9 @@ export class ArenaRoom extends Room {
     this.onMessage('spawn_mob', (client, payload) => this._onSpawnMob(client, payload));
     this.onMessage('clear_mobs', (client) => this._onClearMobs(client));
     this.onMessage('respawn', (client) => this._onRespawn(client));
+    // ── Mundo de aventura: entrar/sair do mundo selvagem (mesma sala) ──
+    this.onMessage('enter_wild', (client) => this._onEnterWild(client));
+    this.onMessage('enter_arena', (client) => this._onEnterArena(client));
     this.onMessage('chat', (client, payload) => this._onChat(client, payload));
     this.onMessage('pickup_drop', (client, payload) => this._onPickupDrop(client, payload));
     this.onMessage('cast_skill', (client, payload) => this._onCastSkill(client, payload));
@@ -1963,6 +1970,37 @@ export class ArenaRoom extends Room {
       p.x = sp.x; p.y = sp.y; p.z = sp.z;
     }
     this.broadcast('respawn', { player_id: p.id });
+  }
+
+  // ── MUNDO DE AVENTURA: entrar no mundo selvagem (mesma sala) ──────
+  //  A arena (skydive/PvP) e a wild são DUAS ZONAS da mesma sala. Aqui o
+  //  servidor é autoritativo: seta player.zone='wild' e teleporta pro spawn
+  //  seguro do mundo (clareira central, coords do gerador de biomas). Todos
+  //  na sala veem o player mudar de zona. Mobs da wild spawnam nessa zona.
+  _onEnterWild(client) {
+    const p = this.state.players.get(client.userData?.playerId);
+    if (!p) return;
+    p.zone = 'wild';
+    // spawn seguro = centro do mundo de biomas (clareira de ruínas), no ar
+    //  3m pra cair e pousar (chão local pronto no cliente). y alto evita o
+    //  anti-fly-hack rejeitar; o cliente assenta.
+    p.x = WILD_SPAWN.x; p.z = WILD_SPAWN.z; p.y = WILD_SPAWN.y;
+    p.vy = 0; p.dead = false; p.hp = p.maxHp;
+    p.anim_state = 'idle';
+    this.broadcast('zone_change', { player_id: p.id, zone: 'wild', x: p.x, y: p.y, z: p.z });
+    console.log(`[wild] ${p.nickname} entrou no mundo selvagem`);
+  }
+
+  // ── Voltar pra arena (treino/PvP) ────────────────────────────────
+  _onEnterArena(client) {
+    const p = this.state.players.get(client.userData?.playerId);
+    if (!p) return;
+    p.zone = 'arena';
+    const sp = this._isOpenWorld ? this._pickSpawnPointOpenWorld() : this._pickSpawnPoint();
+    p.x = sp.x; p.z = sp.z; p.y = sp.y ?? 2.5;
+    p.vy = 0; p.dead = false; p.hp = p.maxHp;
+    this.broadcast('zone_change', { player_id: p.id, zone: 'arena', x: p.x, y: p.y, z: p.z });
+    console.log(`[wild] ${p.nickname} voltou pra arena`);
   }
 
   _onChat(client, payload) {
