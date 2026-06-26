@@ -551,6 +551,17 @@ export class RpgHUD {
       this[`_wasHot${i}`] = down;
     }
 
+    // PERF: a barra antiga (#rpg-hud) é ESCONDIDA pelo HUD novo. Mantemos o
+    //  input (hotbar/painel) acima, mas pulamos TODA a escrita visual de DOM
+    //  abaixo se a barra está oculta — antes fazia ~10 getElementById + style
+    //  writes TODO frame à toa. (Cacheia o resultado por 1s.)
+    const now = (typeof performance !== 'undefined') ? performance.now() : 0;
+    if (now - (this._visChkAt || 0) > 1000) {
+      this._visChkAt = now;
+      this._hudHidden = (this._bar && getComputedStyle(this._bar).display === 'none');
+    }
+    if (this._hudHidden) return;
+
     // ── MP bar ──────────────────────────────────────────────────────
     const mpEl = document.getElementById('rpg-mp');
     const mpText = document.getElementById('rpg-mp-text');
