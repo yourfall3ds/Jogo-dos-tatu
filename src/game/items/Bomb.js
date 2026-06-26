@@ -142,6 +142,22 @@ export function throwBomb({ player } = {}) {
   return true;
 }
 
+// ── Luz de explosão POOLED (UMA por cena, reaproveitada) ──────────
+//  CRIAR/DESTRUIR um PointLight por explosão recompila TODOS os shaders no
+//  WebGPU (catastrófico: shadow desync "shadowTexture2 not found" + "Destroyed
+//  texture used in submit" → tela quebra). A luz é criada 1x e só tem a
+//  intensidade animada (0 = apagada). Nunca é descartada → light-count estável.
+function _getExplosionLight(scene) {
+  let l = scene._explLightPool;
+  if (l && !l.isDisposed?.()) return l;
+  l = new BABYLON.PointLight('explLightPool', BABYLON.Vector3.Zero(), scene);
+  l.diffuse  = new BABYLON.Color3(1, 0.6, 0.2);
+  l.specular = new BABYLON.Color3(0, 0, 0);
+  l.intensity = 0;
+  scene._explLightPool = l;
+  return l;
+}
+
 /** Explosão: feedback visual/sonoro + dano em área. */
 function explode(scene, player, center) {
   // ── Som ──────────────────────────────────────────────────────────
@@ -159,11 +175,10 @@ function explode(scene, player, center) {
 
   let light = null;
   try {
-    light = new BABYLON.PointLight('explLight', center.clone(), scene);
-    light.diffuse   = new BABYLON.Color3(1, 0.6, 0.2);
-    light.specular  = new BABYLON.Color3(0, 0, 0);
-    light.intensity = 16;
+    light = _getExplosionLight(scene);   // POOLED — não cria/destrói (anti-recompile WebGPU)
+    light.position.copyFrom(center);
     light.range     = BLAST_RADIUS * 2.5;
+    light.intensity = 16;
   } catch (_) {}
 
   const DUR = 0.45;
@@ -179,7 +194,7 @@ function explode(scene, player, center) {
       scene.onBeforeRenderObservable.remove(o);
       try { fx.dispose(); } catch (_) {}
       try { fmat.dispose(); } catch (_) {}
-      try { light?.dispose(); } catch (_) {}
+      if (light) light.intensity = 0;   // NÃO descarta (pooled) — só apaga
     }
   });
 
