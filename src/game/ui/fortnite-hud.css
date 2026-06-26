@@ -77,19 +77,23 @@ body.ui-cursor.game-active { cursor: auto; }
    ficam. Tudo abaixo some da tela de jogo (não deleta os elementos —
    só esconde; alguns vão pro menu de pausa).
    ════════════════════════════════════════════════════════════════════ */
-body.in-game #engine-badge,        /* 🚀 WebGPU / WebGL2 */
-body.in-game #server-status,       /* servidor ✓ (bolinha verde) */
-body.in-game #pvp-indicator,       /* PVP OFF */
-body.in-game #combat-director-hud, /* Horda OFF [H] iniciar */
-body.in-game #ping-display,        /* 00 ms */
-body.in-game #hud,                 /* CHÃO | WJ: NONE | 3ª Pessoa */
-body.in-game #wj-indicator,        /* indicador wall-jump */
-body.in-game #ammo-hud,            /* munição antiga */
-body.in-game #hp-hud,              /* ❤️ 100 (barra antiga embaixo) */
-body.in-game #terrain-toggle,      /* botão Terreno */
-body.in-game #interactive-toggle,  /* botão Interativos */
-body.in-game #music-mute-btn,      /* mudo */
-body.in-game #rpg-hud {            /* barra empilhada XP/MP/stamina antiga */
+/* Keyed em .fn-hud-active (adicionada UMA vez e nunca removida) — NÃO em
+   .in-game, que é togglada no pause e fazia o clutter reaparecer. */
+body.fn-hud-active #engine-badge,        /* 🚀 WebGPU / WebGL2 */
+body.fn-hud-active #server-status,       /* servidor ✓ (bolinha verde) */
+body.fn-hud-active #pvp-indicator,       /* PVP OFF */
+body.fn-hud-active #combat-director-hud, /* Horda OFF [H] iniciar */
+body.fn-hud-active #ping-display,        /* 00 ms */
+body.fn-hud-active #hud,                 /* CHÃO | WJ: NONE | 3ª Pessoa */
+body.fn-hud-active #wj-indicator,        /* indicador wall-jump */
+body.fn-hud-active #ammo-hud,            /* munição antiga */
+body.fn-hud-active #hp-hud,              /* ❤️ 100 (barra antiga embaixo) */
+body.fn-hud-active #terrain-toggle,      /* botão Terreno */
+body.fn-hud-active #interactive-toggle,  /* botão Interativos */
+body.fn-hud-active #music-mute-btn,      /* mudo */
+body.fn-hud-active #match-banner,        /* WAVE 1 · 0:00 · 0 kills (banner topo) */
+body.fn-hud-active #xp-hud,              /* LV 1 / XP / OV (barra topo-direito) */
+body.fn-hud-active #rpg-hud {            /* barra empilhada XP/MP/stamina antiga */
   display: none !important;
 }
 /* Se algum desses estiver DENTRO do menu de pausa, re-exibe (mais específico). */

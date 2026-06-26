@@ -2153,6 +2153,9 @@ async function init() {
   // ── HUD estilo BR: vida+escudo (inf-esq) + kills/vivos/onda (topo-dir) ──
   const fnHUD = new FortniteHUD();
   window._fnHUD = fnHUD;
+  // Marca o body: o CSS esconde TODO o clutter antigo a partir daqui (classe
+  //  permanente — nunca removida, ao contrário de .in-game que é togglada).
+  try { document.body.classList.add('fn-hud-active'); } catch (_) {}
   // Esconde a barra empilhada antiga (XP/MP/stamina) — não deleta, só some.
   try { const _old = document.getElementById('rpg-hud'); if (_old) _old.style.display = 'none'; } catch (_) {}
   window._gameStats = stats;

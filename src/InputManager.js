@@ -265,13 +265,17 @@ export class InputManager {
         // lock (cadáver some, DOM muda) e isso pausava o jogo sozinho. No MP o
         // player nunca "pausa de verdade" — só re-pede o lock e segue. O resto
         // (ESC) trata o pause visual explicitamente.
-        const mpAlive = !!window._cs?.connected;
         const dead = !!window._gamePlayer?._dead;
-        if (mpAlive || dead) {
-          // mantém gameActive; tenta recuperar o lock no próximo gesto
+        // MORTE: não pausa (tela de morte cuida). Só nesse caso re-tenta lock.
+        if (dead) {
           this._pendingLock = true;
           return;
         }
+        // REGRA DO LUCAS: cursor saiu do jogo → PAUSADO → mostra o menu.
+        // Vale TAMBÉM no MP (antes o MP dava return aqui e o menu nunca
+        // aparecia no 1º ESC — só o mouse soltava). Agora SEMPRE notifica a
+        // UI (onDeactivated) pra abrir o menu de pausa. No MP o personagem
+        // segue vulnerável no servidor; o onDeactivated trata isso.
         this._internalDeactivate();
       }
       // Se !pointerLockElement && !_gameFullyStarted: boot/transição.
