@@ -606,45 +606,25 @@ export class Player {
     //  _startDeath e zerados a cada nova morte.
     if (this._dead) {
       // RESPAWN 100% AUTOMÁTICO — sem botão, sem tecla.
-      //  MP: o servidor auto-respawna no tick (~5s, dead→false); o DeathTimer
-      //      (HUD) mostra a contagem e pede sendRespawn ao zerar; o render loop
-      //      detecta dead→false e renasce local. Aqui não fazemos nada.
-      //  SP/offline: não há server → respawn local automático ao zerar o timer.
-      if (!window._cs?.connected && !this._respawnSent && performance.now() >= (this._respawnAt || 0)) {
-        this._respawnSent = true;
-        this.respawn();
+      const nowT = performance.now();
+      const mp = !!window._cs?.connected;
+      const ready = nowT >= (this._respawnAt || 0);
+      if (this._deathType === 'fall') {
+        // CAIU DO MAPA (y<-50): morte é LOCAL — o server REJEITA y<-50 e acha
+        // que você está vivo, então NUNCA auto-respawna. Aqui o respawn é local
+        // (skydive de volta ao mapa) + avisa o server (sendRespawn recoloca no
+        // céu pros outros). Sem isto você despencava infinito (-1000+). Retry-safe.
+        if (!this._respawnSent && ready) {
+          this._respawnSent = true;
+          if (mp) { try { window._cs.sendRespawn(); } catch (_) {} }
+          this.respawn();
+        }
+      } else if (!mp) {
+        // Morte normal em SP/offline → respawn local automático ao zerar o timer.
+        if (!this._respawnSent && ready) { this._respawnSent = true; this.respawn(); }
       }
-    }
-
-    // ── [FACING DEBUG] TEMP: offset clicável + leitura yaw/rotY. Captura os
-    //  valores no 1º frame do skydive (= respawn) pra caçar o "câmera na cara".
-    {
-      if (this._facingOff == null) {
-        try { this._facingOff = parseFloat(localStorage.getItem('facingOff')) || 0; } catch (_) { this._facingOff = 0; }
-      }
-      const _yawD = Math.round(this.yaw);
-      const _rotD = Math.round(BABYLON.Tools.ToDegrees(this.animator?.root?.rotation.y || 0));
-      const _diff = ((_rotD - _yawD) % 360 + 540) % 360 - 180;   // rotY−yaw normalizado
-      if (this._isFalling && !this._dbgWasFall) {                 // borda de subida do skydive
-        this._dbgWasFall = true;
-        this._dbgResp = `yaw:${_yawD} rotY:${_rotD} diff:${_diff}`;
-      }
-      if (!this._isFalling) this._dbgWasFall = false;
-      let _fe = document.getElementById('facing-off');
-      if (!_fe) {
-        _fe = document.createElement('div');
-        _fe.id = 'facing-off';
-        _fe.style.cssText = 'position:fixed;top:130px;left:12px;z-index:99999;background:#013;color:#0ff;font:bold 14px monospace;padding:8px 12px;border:2px solid #0ff;cursor:pointer;pointer-events:auto;user-select:none;white-space:pre;';
-        _fe.onclick = () => {
-          this._facingOff = (((this._facingOff || 0) + Math.PI / 2) % (Math.PI * 2));
-          try { localStorage.setItem('facingOff', String(this._facingOff)); } catch (_) {}
-        };
-        document.body.appendChild(_fe);
-      }
-      _fe.textContent =
-        'FACING off: ' + Math.round(BABYLON.Tools.ToDegrees(this._facingOff || 0)) + '° (CLIQUE)\n' +
-        'AGORA   yaw:' + _yawD + ' rotY:' + _rotD + ' diff:' + _diff + '\n' +
-        'RESPAWN ' + (this._dbgResp || '(renasce p/ capturar)');
+      // Morte normal em MP → o server auto-respawna no tick (~5s, dead→false), o
+      // DeathTimer mostra a contagem e o render loop renasce local. Nada aqui.
     }
 
     // ── 2. Grounded ──────────────────────────────────────────────────
@@ -1833,8 +1813,9 @@ export class Player {
     // update): mantém o pointer-lock + gameActive, sem cursor e sem botão.
     try { this.input.gameActive = true; } catch (_) {}
 
-    // Arma o respawn por SPACE ou automático em 3s (zerado a cada nova morte).
-    this._respawnAt = performance.now() + 3000;
+    // Arma o respawn AUTOMÁTICO (zerado a cada nova morte). Queda no vazio recupera
+    // mais rápido (1.2s — não há nada pra ver despencando); morte normal em 3s.
+    this._respawnAt = performance.now() + (type === 'fall' ? 1200 : 3000);
     this._respawnSent = false;
 
     // Esconde o botão clicável (respawn agora é por tecla/auto) e atualiza o texto.
