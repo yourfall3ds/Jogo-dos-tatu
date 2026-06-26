@@ -221,6 +221,64 @@ def start_config_server() -> subprocess.Popen | None:
 
 
 # =====================================================================
+#  Electron — janela de jogo desktop (pointer lock real, sem cursor de
+#  browser, sem atalhos de aba). Usa o launcher pronto em tools/electron-dev.
+# =====================================================================
+
+ELECTRON_DIR = ROOT / "tools" / "electron-dev"
+
+
+def _electron_bin() -> str | None:
+    """Acha o binário do Electron (local ao electron-dev)."""
+    base = ELECTRON_DIR / "node_modules" / ".bin"
+    cand = base / ("electron.cmd" if sys.platform == "win32" else "electron")
+    if cand.is_file():
+        return str(cand)
+    # fallback: electron.cmd direto
+    alt = base / "electron"
+    return str(alt) if alt.exists() else None
+
+
+def start_electron(url: str) -> subprocess.Popen | None:
+    """Lança a janela do jogo (Electron) apontando pro servidor local.
+    Retorna o Popen — quando ESSA janela fecha, o script derruba tudo."""
+    main_js = ELECTRON_DIR / "main.js"
+    if not main_js.is_file():
+        log(f"!! {main_js} não existe — Electron pulado (caindo pro navegador).")
+        return None
+    bin_ = _electron_bin()
+    if not bin_:
+        log("!! Electron não instalado em tools/electron-dev/node_modules.")
+        log("   Rode:  cd tools/electron-dev && npm install")
+        return None
+    env = dict(os.environ)
+    env["TRANSFPS_URL"] = url           # o main.js do Electron lê isto
+    # CRÍTICO: terminais embutidos (Trae/VSCode, que SÃO Electron) injetam
+    #  ELECTRON_RUN_AS_NODE=1 e afins no ambiente. Isso faz o nosso electron.exe
+    #  rodar como NODE PURO (app=undefined → "Cannot read properties of
+    #  undefined (reading 'whenReady')"). Limpamos pra ele virar app de verdade.
+    for k in ("ELECTRON_RUN_AS_NODE", "ELECTRON_FORCE_IS_PACKAGED",
+              "VSCODE_RUN_IN_ELECTRON", "ICUBE_IS_ELECTRON", "ICUBE_ELECTRON_PATH",
+              "ELECTRON_NO_ATTACH_CONSOLE"):
+        env.pop(k, None)
+    log(f"abrindo o JOGO no Electron (desktop) → {url}")
+    proc = subprocess.Popen(
+        [bin_, "."], cwd=str(ELECTRON_DIR), env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace",
+        creationflags=CREATE_NEW_PROCESS_GROUP,
+    )
+
+    def pump():
+        for line in proc.stdout:
+            sys.stdout.write("  [game] " + line)
+            sys.stdout.flush()
+
+    threading.Thread(target=pump, daemon=True).start()
+    return proc
+
+
+# =====================================================================
 #  Shutdown limpo
 # =====================================================================
 
@@ -248,7 +306,10 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=GAME_PORT_DEFAULT, help="porta do jogo (default 5500)")
     ap.add_argument("--no-tunnel", action="store_true", help="não abre o túnel SSH pra VPS")
     ap.add_argument("--no-config", action="store_true", help="não sobe o config-server node")
-    ap.add_argument("--no-browser", action="store_true", help="não abre o navegador")
+    ap.add_argument("--browser", action="store_true",
+                    help="abre no NAVEGADOR em vez do Electron (modo antigo)")
+    ap.add_argument("--no-window", action="store_true",
+                    help="não abre janela nenhuma (só sobe os servidores)")
     args = ap.parse_args()
 
     os.chdir(ROOT)
@@ -257,7 +318,7 @@ def main() -> int:
     print("  raiz:", ROOT)
     print("=" * 62)
 
-    tunnel = config = None
+    tunnel = config = electron = None
     httpd = None
 
     try:
@@ -282,6 +343,24 @@ def main() -> int:
         httpd = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler)
 
         url = f"http://localhost:{args.port}/"
+
+        # serve numa thread pra poder monitorar os filhos no main
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
+
+        # 4) Abre o JOGO. Padrão = Electron (desktop). --browser = navegador.
+        electron = None
+        if args.no_window:
+            log("--no-window: só os servidores no ar (abra você o cliente).")
+        elif args.browser:
+            log("--browser: abrindo no navegador (modo antigo).")
+            threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+        else:
+            electron = start_electron(url)
+            if electron is None:
+                log("caindo pro navegador (Electron indisponível).")
+                threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+
         print()
         log("TUDO VIVO:")
         log(f"  jogo    : {url}")
@@ -289,24 +368,25 @@ def main() -> int:
             log(f"  colyseus: ws://localhost:{CS_LOCAL_PORT}  (túnel -> VPS de produção)")
         if config is not None:
             log(f"  config  : http://127.0.0.1:{CONFIG_PORT}/")
+        if electron is not None:
+            log("  janela do jogo (Electron) aberta — FECHAR a janela encerra tudo.")
         log("  Ctrl+C p/ parar tudo.")
         print()
 
-        if not args.no_browser:
-            threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-
-        # serve numa thread pra poder monitorar os filhos no main
-        t = threading.Thread(target=httpd.serve_forever, daemon=True)
-        t.start()
-
         while True:
+            # Se a JANELA do jogo (Electron) fechou, encerra tudo — é um jogo
+            # desktop: fechar o jogo = sair. (no modo browser, electron é None)
+            if electron is not None and electron.poll() is not None:
+                print()
+                log("janela do jogo fechada — encerrando tudo.")
+                return 0
             if tunnel is not None and tunnel.poll() is not None:
                 log("!! túnel SSH caiu — multiplayer offline. (jogo continua de pé)")
                 tunnel = None
             if config is not None and config.poll() is not None:
                 log("!! config-server caiu. (jogo continua de pé)")
                 config = None
-            time.sleep(1.0)
+            time.sleep(0.5)
 
     except KeyboardInterrupt:
         print()
@@ -315,6 +395,8 @@ def main() -> int:
     finally:
         if httpd is not None:
             httpd.shutdown()
+        try: stop_process("janela do jogo", electron)
+        except Exception: pass
         stop_process("config-server", config)
         stop_process("tunnel", tunnel)
 
