@@ -61,7 +61,6 @@ import { BulletTracer }        from './game/effects/BulletTracer.js';
 import { HitMarker }           from './game/effects/HitMarker.js';
 import { WaterSystem }         from './game/scene/WaterSystem.js';
 import { SkillMapExtras }      from './game/scene/SkillMapExtras.js';
-import { BiomeWorld }          from './game/scene/BiomeWorld.js';
 import { SettingsUI }          from './game/ui/SettingsUI.js';
 import { MusicSystem }         from './game/audio/MusicSystem.js';
 import { MusicMuteButton }     from './game/ui/MusicMuteButton.js';
@@ -722,12 +721,6 @@ async function init() {
   // mapa aberto. Desativado — fica só o CHÃO + o que os players constroem.
   // skillExtras.build();   // ← desativado de propósito
   window._skillExtras = skillExtras;
-
-  // ── Mapão por biomas com streaming (estilo Fortnite) ──
-  // Só ativa no OPEN_WORLD (via _ensureOpenWorldGround). Carrega biomas por
-  // proximidade do player — boot rápido, nunca os ~190MB de uma vez.
-  const biomeWorld = new BiomeWorld(scene, { shadowGen, seed: 1337 });
-  window._biomeWorld = biomeWorld;
 
   // ── Music + Mute button (música começa APENAS no JOGAR) ──
   const musicSystem = new MusicSystem();
@@ -1973,12 +1966,6 @@ async function init() {
     // Congela o material apos config: evita recompile/flicker no WebGPU.
     if (g.material && g.material.freeze) g.material.freeze();
     console.log("[OpenWorld] plano vazio criado");
-    // BiomeWorld (mapão de vários mapas empilhados) DESLIGADO a pedido do dono:
-    // o servidor BRASIL agora é UM mapa único — a arena inicial do TransFPS
-    // (rampas/cilindros/torres do SkillMapExtras) + o chão. Os vários mapas
-    // sobrepostos causavam tela preta/artefatos. Pra religar o mapão no futuro:
-    // descomentar a linha abaixo.
-    // try { window._biomeWorld?.enable(); } catch (e) { console.error('[BiomeWorld] enable:', e); }
     return g;
   }
   // Plugamos AMBAS as UIs no mesmo handler — a ServerListUI eh o caminho
@@ -2641,8 +2628,6 @@ async function init() {
       }
       _lastDeadState = isDead;
     }
-    // Mapão por biomas: streaming por proximidade do player (2Hz interno).
-    try { biomeWorld.update(dt, player.mesh?.position); } catch (e) { /* não trava o loop */ }
     // Minimap (modo normal): atualiza a 5Hz. No BATTLE_ROYALE o próprio
     // BattleRoyaleMode cuida do minimap dele → escondemos este pra não duplicar.
     if (_minimap) {
@@ -2685,16 +2670,6 @@ async function init() {
   window._gameLoader = loader;
   window._gameLevel  = level;
 
-  // ── Portal pro MUNDO DE BIOMAS (Onda 1) ──────────────────────────
-  //  Cria o WorldManager e planta o portal num ponto visível do mapa.
-  //  Ao entrar nele: tela de load → gera o mundo → teleporta pro spawn.
-  try {
-    const { WorldManager } = await import('./game/world/WorldManager.js');
-    const worldManager = new WorldManager(scene);
-    window._worldManager = worldManager;
-    // portal a ~12m à frente do centro do mapa (lugar aberto)
-    worldManager.spawnPortal(new BABYLON.Vector3(0, 0, 12));
-  } catch (e) { console.error('[World] portal init:', e); }
 
   // Debug de colliders (tecla L)
   const colliderDebug = new ColliderDebug(scene);

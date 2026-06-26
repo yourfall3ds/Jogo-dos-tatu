@@ -18,6 +18,11 @@ export class Player {
     // ── Câmera ──────────────────────────────────────────────────────
     this.yaw   = 0;     // graus (horizontal)
     this.pitch = 0;     // graus (vertical)
+    // Offset de facing do avatar: o modelo (Meshy) exporta o ROSTO em −Z, então
+    //  rotation.y = yaw deixa o rosto ENCARANDO a câmera. +π (Math.PI) deixa de
+    //  COSTAS pra câmera — o certo (mesma convenção do RemotePlayer/PlayerAnimator).
+    //  Era o fix do amigo (commit 23fcd67) que tinha se perdido. Ajuste fino: J.
+    this._facingOff = Math.PI;
     this.MOUSE_SENS = 0.15;
 
     // ── Dimensões ───────────────────────────────────────────────────
@@ -2020,23 +2025,7 @@ export class Player {
     // limpa o timer de auto-respawn (se renasceu antes da contagem acabar)
     if (this._autoRespawnT) { try { clearInterval(this._autoRespawnT); } catch (_) {} this._autoRespawnT = null; }
 
-    // MUNDO SELVAGEM (wild): renasce no spawn seguro da clareira. No MP avisa o
-    //  SERVIDOR (enter_wild) pra ele reposicionar de forma autoritativa — assim
-    //  os amigos te veem renascer no lugar certo. Caso contrário, spawn normal.
-    const wm = window._worldManager;
-    const sp = wm?._inBiomeWorld ? wm?._builder?.spawnPoint : null;
-    if (sp) {
-      this.mesh.position.copyFrom(sp);
-      this._vx = 0; this._vz = 0; this.velY = 0;
-      this._isFalling = false; this._prevY = sp.y;
-      if (this._cc) {
-        try { this._cc.setPosition(sp.clone()); this._cc.setVelocity(BABYLON.Vector3.Zero()); } catch (_) {}
-      }
-      // online: pede ao servidor pra confirmar a posição na wild
-      try { if (window._cs?.connected) window._cs.sendEnterWild?.(); } catch (_) {}
-    } else {
-      this.spawn();       // skydive: (0,200,0) caindo (mapa normal)
-    }
+    this.spawn();         // skydive: (0,200,0) caindo (mapa da arena)
     this.onRespawn?.();   // reseta inimigos
     // Re-trava o cursor e volta o jogo ao normal (reativa input — regra #4).
     try { this.input.activate?.(); } catch (_) {}
