@@ -7,7 +7,7 @@ import { Player }        from './Player.js';
 import { Level }         from './Level.js';
 import { HUD }           from './HUD.js';
 import { AssetLoader }   from './AssetLoader.js';
-import { SoundManager }  from './SoundManager.js';
+import { SoundManager }  from './game/audio/SoundManager.js';
 
 // Novos Sistemas de Combate e Animação
 import { AnimationLibrary }    from './game/animation/AnimationLibrary.js';
