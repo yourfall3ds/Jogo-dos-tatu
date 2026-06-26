@@ -148,18 +148,22 @@ export class WorldManager {
     ground.parent = root;
     this._tryStaticBody(ground, 'mesh');
 
-    // 2) CÉU (skybox gradiente) + névoa de distância.
+    // 2) CÉU (skybox gradiente). NÃO mexer no scene.fogMode global — ligar fog
+    //    força TODOS os materiais (inclusive o pipeline do FXAA) a recompilar e
+    //    no WebGPU isso INVALIDA o RenderPipeline -> crash em loop ("Invalid
+    //    RenderPipeline ... PostProcessRTT-fxaa"). Skybox isolado, sem fog.
     const sky = BABYLON.MeshBuilder.CreateSphere('wildSky', { diameter: 3600, segments: 16, sideOrientation: BABYLON.Mesh.BACKSIDE }, scene);
     const smat = new BABYLON.StandardMaterial('wildSkyMat', scene);
     smat.backFaceCulling = false;
     smat.disableLighting = true;
     smat.emissiveColor = new BABYLON.Color3(0.30, 0.45, 0.70);
+    smat.fogEnabled = false;          // não participa do fog (e não recompila)
     sky.material = smat;
+    sky.applyFog = false;
+    sky.infiniteDistance = true;      // céu sempre no horizonte (não "anda" com o player)
+    sky.isPickable = false;
     sky._biomeWorldMesh = true;
     sky.parent = root;
-    scene.fogMode = BABYLON.Scene.FOGMODE_EXP2;
-    scene.fogDensity = 0.0009;
-    scene.fogColor = new BABYLON.Color3(0.45, 0.55, 0.70);
 
     // 3) MONTANHAS gigantes em anel nas bordas (fecham o horizonte).
     await this._buildBorderMountains(root);
