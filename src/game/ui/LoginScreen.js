@@ -189,14 +189,36 @@ export class LoginScreen {
   // _doGuest removido: produto pessoal exige credenciais 100% Lucas.
   // Veja feedback_credenciais_pessoais.md.
 
-  /** Entra online sem Google: abre o fluxo de lobby/servidor como visitante. */
+  /** Entra online sem Google: 1º clique abre input pra escolher o apelido,
+   *  2º clique (com nome salvo) entra direto. O nome é persistido no
+   *  localStorage e aparece pros outros players no MP. */
   async _doGuestOnline() {
     const btn = this._el?.querySelector('#ls-offline');
     if (btn?.disabled) return;
+
+    let nick = '';
+    try { nick = localStorage.getItem('transfps_guest_nick') || ''; } catch (_) {}
+
+    // Sem nome salvo → abre o painel inline pedindo o apelido e PARA aqui.
+    //  O usuário digita e clica SALVAR → _saveNick detecta modo visitante,
+    //  persiste e chama _doGuestOnline() de novo (agora com nome).
+    if (!nick.trim()) {
+      this._guestPending = true;
+      this._setStatus('Escolha um apelido pra entrar como visitante:', '#2effb6');
+      const wrap = this._el.querySelector('#ls-nick-edit');
+      const input = this._el.querySelector('#ls-nick-input');
+      if (wrap && input) {
+        wrap.style.display = 'block';
+        input.value = '';
+        input.placeholder = 'seu apelido (ex.: Lucas)';
+        input.focus();
+      }
+      return;
+    }
+
     if (btn) { btn.disabled = true; btn.style.cursor = 'wait'; btn.style.opacity = '0.7'; }
-    this._setStatus('Entrando como visitante online…', '#2effb6');
+    this._setStatus(`Entrando como ${nick}…`, '#2effb6');
     try {
-      this._setStatus('✓ Visitante pronto — abrindo servidores…', '#2effb6');
       this.hide();
       if (this._onOpenLobby) this._onOpenLobby();
       else if (this._onContinue) this._onContinue();
@@ -232,7 +254,17 @@ export class LoginScreen {
     const input = this._el.querySelector('#ls-nick-input');
     const nick = input.value.trim();
     if (nick.length < 2 || nick.length > 24) {
-      this._setStatus('Nickname 2-24 chars', '#ff3b4e');
+      this._setStatus('Apelido 2-24 chars', '#ff3b4e');
+      return;
+    }
+    // MODO VISITANTE: nao tem sessão Supabase, então salva localmente e
+    //  entra direto no jogo. Login com Google é bloqueado em http://IP, por isso
+    //  esse caminho existe (LAN/visitante).
+    if (this._guestPending || !this.auth.isAuthenticated?.()) {
+      this.auth.setGuestNickname?.(nick);
+      this._guestPending = false;
+      this._closeNickEdit();
+      this._doGuestOnline();   // recursão com o nome agora salvo
       return;
     }
     await this.auth.updateNickname(nick);

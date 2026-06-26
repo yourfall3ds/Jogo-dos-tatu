@@ -539,7 +539,21 @@ export class AuthSystem {
     if (meta.preferred_username) return String(meta.preferred_username).trim().slice(0, 24);
     const email = this.user?.email;
     if (email) return String(email).split('@')[0].slice(0, 24);
+    // VISITANTE: usa o nome escolhido (LoginScreen pede e salva no localStorage)
+    // pra aparecer pros outros no MP em vez de "Visitante" genérico repetido.
+    try {
+      const guest = localStorage.getItem('transfps_guest_nick');
+      if (guest) return String(guest).trim().slice(0, 24) || 'Visitante';
+    } catch (_) {}
     return 'Visitante';
+  }
+  /** Define o apelido de visitante (persiste no localStorage). */
+  setGuestNickname(nick) {
+    const clean = String(nick || '').trim().slice(0, 24);
+    if (!clean) return false;
+    try { localStorage.setItem('transfps_guest_nick', clean); } catch (_) {}
+    this._notify?.('nickname-changed');
+    return true;
   }
   /** Retorna user id ou null se nao logado. Chamadas que precisam de id
    *  garantido devem validar antes (isAuthenticated()). */
