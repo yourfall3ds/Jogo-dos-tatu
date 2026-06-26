@@ -18,11 +18,10 @@ export class Player {
     // ── Câmera ──────────────────────────────────────────────────────
     this.yaw   = 0;     // graus (horizontal)
     this.pitch = 0;     // graus (vertical)
-    // Offset de facing do avatar: o modelo (Meshy) exporta o ROSTO em −Z, então
-    //  rotation.y = yaw deixa o rosto ENCARANDO a câmera. +π (Math.PI) deixa de
-    //  COSTAS pra câmera — o certo (mesma convenção do RemotePlayer/PlayerAnimator).
-    //  Era o fix do amigo (commit 23fcd67) que tinha se perdido. Ajuste fino: J.
-    this._facingOff = Math.PI;
+    // Offset de facing do avatar. O commit 828e61f (do sócio, que FUNCIONAVA com
+    //  o personagem olhando pra frente ao spawnar) usava _facingOff = 0. Meu
+    //  Math.PI tinha invertido pra "de frente pra câmera". Restaurado pra 0.
+    this._facingOff = 0;
     this.MOUSE_SENS = 0.15;
 
     // ── Dimensões ───────────────────────────────────────────────────

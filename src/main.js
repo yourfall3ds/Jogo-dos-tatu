@@ -1948,13 +1948,13 @@ async function init() {
     g.checkCollisions = true;
     g.receiveShadows = true;
     const mat = new BABYLON.StandardMaterial("openworld_ground_mat", scene);
-    // Piso BRANCO (retângulo limpo, igual peça de chão). Sem specular pra estabilidade WebGPU.
+    // Piso PRETO (a pedido do dono). Sem specular pra estabilidade WebGPU.
     mat.backFaceCulling = true;
     mat.disableLighting = false;
     mat.specularColor = new BABYLON.Color3(0, 0, 0);
-    mat.diffuseColor = new BABYLON.Color3(0.90, 0.91, 0.93);
-    mat.emissiveColor = new BABYLON.Color3(0.20, 0.21, 0.23);
-    mat.ambientColor = new BABYLON.Color3(0.6, 0.6, 0.62);
+    mat.diffuseColor = new BABYLON.Color3(0.03, 0.03, 0.04);
+    mat.emissiveColor = new BABYLON.Color3(0.01, 0.01, 0.02);
+    mat.ambientColor = new BABYLON.Color3(0.05, 0.05, 0.06);
     // StandardMaterial nao usa IBL, mas garantimos sem reflexao residual.
     if (mat.reflectionTexture) mat.reflectionTexture = null;
     g.material = mat;
