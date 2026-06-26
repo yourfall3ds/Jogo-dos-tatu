@@ -176,9 +176,16 @@ export class PauseMenu {
   // ── Abas ───────────────────────────────────────────────────────
   _itemIcon(id, cls) {
     const def = ItemCatalog[id] || {};
-    return def.thumb
-      ? `<img class="${cls}" src="${def.thumb}" onerror="this.outerHTML='<span class=\\'${cls}\\'>${def.icon || '📦'}</span>'">`
-      : `<span class="${cls}">${def.icon || '📦'}</span>`;
+    const emoji = def.icon || '📦';
+    // MESMA fonte da hotbar (RpgHUD._thumbFor): foto RTT/gerada em asset_thumbnails
+    // (LocalDB), keyed por id/asset/wishlist. NÃO carrega o def.thumb do disco — os
+    // PNGs de arma em assets/ui/thumbs/ são placeholder PRETO (geração RTT falhou),
+    // então cair pro emoji fica melhor. Foto real de asset gerado continua aparecendo.
+    const photo = window._rpgHUD?._thumbFor?.(id, def);
+    if (photo) {
+      return `<img class="${cls}" src="${photo}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'${cls}',textContent:'${emoji}'}))">`;
+    }
+    return `<span class="${cls}">${emoji}</span>`;
   }
 
   _renderInv() {

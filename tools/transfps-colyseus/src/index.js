@@ -15,6 +15,10 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { monitor } from '@colyseus/monitor';
 import express from 'express';
 import http from 'http';
+import https from 'https';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { ArenaRoom } from './rooms/ArenaRoom.js';
 
 const PORT = parseInt(process.env.PORT || '2567', 10);
@@ -101,7 +105,31 @@ app.use('/matchmake', (req, res, next) => {
   next();
 });
 
-const server = http.createServer(app);
+// ── TLS opcional pra LAN (wss://) ────────────────────────────────
+//  PRODUÇÃO: o Nginx termina o TLS e faz proxy pra http://127.0.0.1:2567 → aqui
+//  fica HTTP puro (default, NÃO mexe). LAN por HTTPS: a página https://IP:8443
+//  NÃO pode falar ws:// inseguro (mixed-content bloqueia), então suba com `--tls`
+//  (npm run lan) → o server vira HTTPS e o cliente conecta em wss://IP:2567 com o
+//  MESMO cert self-signed do lan-https (certs/lan-*.pem na raiz do repo).
+const USE_TLS = process.argv.includes('--tls') || process.env.CS_TLS === '1';
+let server;
+if (USE_TLS) {
+  try {
+    const __dir = path.dirname(fileURLToPath(import.meta.url));
+    const certDir = process.env.CS_CERT_DIR || path.resolve(__dir, '../../../certs');
+    server = https.createServer({
+      key:  fs.readFileSync(path.join(certDir, 'lan-key.pem')),
+      cert: fs.readFileSync(path.join(certDir, 'lan-cert.pem')),
+    }, app);
+    console.log('[transfps-colyseus] TLS ON (wss://) — cert: ' + certDir);
+  } catch (e) {
+    console.error('[transfps-colyseus] --tls pediu cert mas falhou:', e.message);
+    console.error('  Gere os certs rodando `npm run lan` na raiz (tools/lan-https.mjs cria certs/).');
+    process.exit(1);
+  }
+} else {
+  server = http.createServer(app);
+}
 
 const gameServer = new Server({
   transport: new WebSocketTransport({

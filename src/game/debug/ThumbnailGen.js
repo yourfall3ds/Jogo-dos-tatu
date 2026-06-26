@@ -73,9 +73,22 @@ export class ThumbnailGen {
 
     let dataURL = null;
     try {
-      rtt.render();
+      // WebGPU: a 1ª render só compila os shaders e sai com a clearColor (sem o
+      // mesh). Renderiza alguns frames esperando rAF pra os shaders ficarem
+      // prontos e o mesh realmente aparecer antes de ler os pixels.
+      for (let i = 0; i < 8; i++) {
+        rtt.render();
+        await new Promise(r => requestAnimationFrame(r));
+      }
       const pixels = await rtt.readPixels();
-      dataURL = this._toDataURL(pixels, this.size);
+      // Guarda anti-preto: se só veio a clearColor de fundo (mesh não
+      // renderizou), descarta → o chamador cai pro emoji em vez de mostrar um
+      // quadrado escuro.
+      if (this._isBlank(pixels)) {
+        console.warn('[ThumbnailGen] render vazio (só fundo) — descartado:', glbUrl);
+      } else {
+        dataURL = this._toDataURL(pixels, this.size);
+      }
     } catch (e) {
       console.warn('[ThumbnailGen] render falhou:', e.message);
     }
@@ -83,6 +96,17 @@ export class ThumbnailGen {
     rtt.dispose();
     meshes.forEach(m => { try { m.dispose(); } catch (_) {} });
     return dataURL;
+  }
+
+  // True se a imagem é só a clearColor de fundo (~15,18,33) = o mesh não
+  // renderizou. Evita salvar/exibir o quadrado escuro do RTT vazio.
+  _isBlank(pixels) {
+    const br = 15, bg = 18, bb = 33, tol = 28;
+    let content = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (Math.abs(pixels[i] - br) > tol || Math.abs(pixels[i + 1] - bg) > tol || Math.abs(pixels[i + 2] - bb) > tol) content++;
+    }
+    return (content / (pixels.length / 4)) < 0.006;   // < 0.6% de conteúdo
   }
 
   _toDataURL(pixels, size) {

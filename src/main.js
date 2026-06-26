@@ -166,10 +166,24 @@ import { InteractableManager } from './game/interactive/InteractableManager.js';
   } catch (_) {}
 })();
 
-// Colyseus: SEMPRE a VPS de produção, inclusive rodando em localhost.
-// Domínio público → Cloudflare/Nginx → VPS (127.0.0.1:2567). Mesmo caminho do
-// jogo publicado. Sem túnel SSH, sem Colyseus local, sem adivinhação de host.
-const TRANSFPS_CS_URL = 'wss://app.overpixel.online/transfps-cs';
+// Colyseus: detecta LAN. Em IP de rede local (192.168 / 10 / 172.16-31) ou
+// localhost/.local → conecta no Colyseus DESTE PC (porta 2567), CASANDO o
+// protocolo da página: página https → wss, http → ws (senão o browser bloqueia
+// mixed-content e dá "erro: undefined" no browser de servidores). Suba o server
+// LAN com TLS: `npm run lan` em tools/transfps-colyseus (usa o cert do lan-https).
+// Em domínio público → VPS de produção (Nginx faz wss → 127.0.0.1:2567).
+const TRANSFPS_CS_URL = (() => {
+  const h = (location.hostname || '').toLowerCase();
+  const isLan = h === 'localhost' || h === '127.0.0.1' || /\.local$/.test(h)
+    || /^192\.168\./.test(h) || /^10\./.test(h)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(h);
+  if (isLan) {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    return `${proto}://${h}:2567`;
+  }
+  return 'wss://app.overpixel.online/transfps-cs';
+})();
+try { console.log('[transfps] Colyseus →', TRANSFPS_CS_URL); } catch (_) {}
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -2238,8 +2252,26 @@ async function init() {
     _showGamePause();
   };
 
+  // ── Inspector do Babylon (Editor de Cena V2) — tecla F4 ──────────
+  //  scene.debugLayer.show() é a API oficial e COMPATÍVEL com o Inspector V2
+  //  (camada de compat — ver docs "Migrating from V1 to V2"). Carrega o bundle
+  //  do inspector da CDN no 1º uso (Babylon aqui é UMD/global). Toggle abre/fecha.
+  window.openInspector = async function () {
+    const sc = gameScene || window._scene;
+    if (!sc?.debugLayer) { console.warn('[inspector] cena ainda não pronta'); return; }
+    try {
+      if (sc.debugLayer.isVisible()) { sc.debugLayer.hide(); return; }
+      await sc.debugLayer.show({ overlay: true, handleResize: false, themeMode: 'dark' });
+      console.log('[inspector] aberto (F4 fecha)');
+    } catch (e) { console.error('[inspector] falhou:', e); }
+  };
+
   // ── F9: abre ENGINE MODE (antes era ESC, agora atalho separado) ──
   window.addEventListener('keydown', e => {
+    if (e.code === 'F4' && !e.repeat && $('start-screen').style.display === 'none') {
+      e.preventDefault();
+      window.openInspector();
+    }
     if (e.code === 'F9' && !e.repeat && $('start-screen').style.display === 'none') {
       e.preventDefault();
       if (!_engineMode) window.enterEngineMode('scene');
@@ -2759,32 +2791,32 @@ async function _generateWeaponThumbnails(scene) {
     weapon_machinegun:    'assets/itens 3d/ExternalAssets/Sketchfab/Weapons/sci_fi_plasma_rifle.glb',
     weapon_sword_paladin: 'assets/weapons/longsword_paladin.glb',
   };
-  let gen = null;
+  // Renderiza o GLB da arma (ThumbnailGen, RTT off-screen) e guarda o dataURL em
+  // LocalDB 'asset_thumbnails' — a MESMA fonte que o RpgHUD._thumbFor lê (hotbar
+  // e inventário do pause). Sem config-server, sem PNG no disco. O ThumbnailGen
+  // tem guarda anti-preto: se a render sair vazia (WebGPU frio), devolve null e
+  // a gente tenta de novo na próxima sessão — nunca grava um quadrado escuro.
+  let store;
+  try { store = await LocalDB.get('asset_thumbnails', {}) || {}; } catch (_) { store = {}; }
+  let gen = null, changed = false;
   for (const [id, glb] of Object.entries(WEAPON_GLB)) {
-    // Já existe commitado? (cuidado: `serve -s` faz fallback SPA → checa o
-    // content-type pra não confundir o index.html 200 com um PNG real.)
-    try {
-      const head = await fetch(`assets/ui/thumbs/${id}.png`, { cache: 'no-store' });
-      const ct = head.headers.get('content-type') || '';
-      if (head.ok && ct.startsWith('image')) continue;   // miniatura já no repo
-    } catch (_) { /* offline → tenta gerar mesmo assim */ }
-    // Não existe → renderiza e salva NO REPO (precisa do config-server em dev).
+    const thumbKey = `assets/ui/thumbs/${id}.png`;       // = ItemCatalog[id].thumb
+    if (store[id] || store[thumbKey]) continue;          // já renderizada
     try {
       if (!gen) {
         const { ThumbnailGen } = await import('./game/debug/ThumbnailGen.js');
         gen = new ThumbnailGen(scene);
       }
       const dataURL = await gen.generate(glb);
-      if (!dataURL) continue;
-      const r = await fetch('http://127.0.0.1:3099/save-thumb', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, dataURL }),
-      });
-      if (r.ok) {
-        console.log('[thumb] gerada e salva no repo: assets/ui/thumbs/' + id + '.png (commite + push)');
-        try { window._rpgHUD?._renderHotbar?.(); } catch (_) {}
-      }
-    } catch (e) { console.warn('[thumb]', id, '— config-server offline? ', e?.message); }
+      if (!dataURL) continue;                            // render vazia → tenta depois
+      store[id] = dataURL; store[thumbKey] = dataURL;    // _thumbFor casa por id E por def.thumb
+      changed = true;
+      console.log('[thumb] arma renderizada → LocalDB:', id);
+    } catch (e) { console.warn('[thumb]', id, e?.message); }
+  }
+  if (changed) {
+    try { await LocalDB.set('asset_thumbnails', store); } catch (_) {}
+    try { await window._rpgHUD?._loadThumbs?.(); } catch (_) {}   // recarrega + re-render hotbar
   }
 }
 
