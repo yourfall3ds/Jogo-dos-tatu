@@ -510,9 +510,13 @@ export class ArenaRoom extends Room {
     console.log(`[ArenaRoom] +${p.nickname} ${p.is_host ? '[HOST]' : ''} (${this.state.players.size} players)`);
     // Hidrata profile (xp/level/coins persistidos)
     this._hydrateFromProfile(p).catch(() => {});
-    // OPEN_WORLD CLEAN: aparece no chao em spawn fixo (sem skydive)
+    // OPEN_WORLD: SKYDIVE — nasce no CÉU caindo (estilo Fortnite). O cliente
+    // faz a queda local de 200m; o server precisa refletir y=200 + 'falling'
+    // pros OUTROS verem a queda. Sem isso punha y no chão (1.5) e o anti-fly-hack
+    // do _onInput REJEITAVA o cliente subindo pra 200 → todos te viam no chão.
     if (this._isOpenWorld) {
-      p.br_state = "ALIVE"; p.altitude = 0; p.anim_state = "idle";
+      p.y = 200; p.vy = -15; p.altitude = 200;
+      p.br_state = "SKYDIVE"; p.anim_state = "falling";
     }
   }
 
@@ -2030,9 +2034,12 @@ export class ArenaRoom extends Room {
       this.state.players.forEach((p) => {
         if (p.dead && p.respawn_at > 0 && now >= p.respawn_at) {
           const sp = this._pickSpawnPointOpenWorld();
-          p.x = sp.x; p.y = sp.y; p.z = sp.z;
+          // RESPAWN no CÉU (skydive), não no chão — os outros veem a queda e o
+          // anti-fly-hack não rejeita (descida é livre; subida é que é barrada).
+          p.x = sp.x; p.y = 200; p.z = sp.z;
           p.hp = p.maxHp; p.dead = false; p.respawn_at = 0;
-          p.br_state = "ALIVE"; p.altitude = 0; p.anim_state = "idle";
+          p.vy = -15; p.altitude = 200;
+          p.br_state = "SKYDIVE"; p.anim_state = "falling";
         }
       });
       if (this.state.mobs.size > 0) this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));

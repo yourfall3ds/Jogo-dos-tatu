@@ -1250,6 +1250,14 @@ export class Player {
         // Tick do crossfade por peso (suaviza transições — tira o "robótico")
         this.animCtrl.update(dt);
 
+        // MORTO: FORÇA o corpo de costas pra câmera todo frame (override do root
+        // motion do clipe 'dead' + do freeze do facing). Trava no yaw da morte —
+        // se a câmera não mexer, vê as costas; sem auto-inverter pro rosto.
+        if (this._dead && this.animator?.root) {
+          if (this.animator.root.rotationQuaternion) this.animator.root.rotationQuaternion = null;
+          this.animator.root.rotation.y = BABYLON.Tools.ToRadians(this._deathYaw ?? this.yaw) + Math.PI;
+        }
+
         // Rotação manual do mesh root (já que o novo controlador não faz isso sozinho)
         const yawRad = BABYLON.Tools.ToRadians(this.yaw);
         // ── REGRA DE FACING ──────────────────────────────────────────
@@ -1723,6 +1731,10 @@ export class Player {
     this._deathType = type;
     this.hp = 0;
     this._kbVx = 0; this._kbVz = 0;
+    // Congela o yaw do MOMENTO da morte → o corpo fica de COSTAS pra câmera
+    // (rotation.y = yaw + π, mesma convenção do respawn). Sem isto a anim de
+    // morte / o freeze deixavam o rosto cru (−Z) virado pra câmera.
+    this._deathYaw = this.yaw;
 
     if (this.stateMachine) this.stateMachine.setState('knockdown');   // bloqueia controle
 
