@@ -163,11 +163,12 @@ export class HUD {
 
     // ── Death screen ─────────────────────────
     if (this._deathEl) {
-      if (info.dead) {
-        this._deathEl.classList.add('visible');
-      } else {
-        this._deathEl.classList.remove('visible');
-      }
+      // Em MP o DeathTimer (overlay com countdown "renascendo em Xs") é a tela
+      // de morte; o #death-screen simples fica só pro SOLO/offline. Evita os
+      // dois overlays empilhados e a mensagem antiga de "aperte ESPAÇO".
+      const mp = !!window._cs?.connected;
+      if (info.dead && !mp) this._deathEl.classList.add('visible');
+      else this._deathEl.classList.remove('visible');
     }
   }
 }

@@ -309,7 +309,7 @@ export class DeathTimer {
 
     // Mostra info do killer quando recebe 'died'
     this.cs.on('died', (m) => {
-      if (m.player_id === this.auth.getUserId()) {
+      if (m.player_id === (this.cs.playerId || this.auth.getUserId())) {
         const killer = this.cs.state?.players?.get(m.killer);
         const killerNick = killer?.nickname || 'algo';
         this._killerEl.textContent = `morto por ${killerNick}`;
@@ -328,7 +328,9 @@ export class DeathTimer {
       if (this._visible) this._hide();
       return;
     }
-    const me = players.get(this.auth.getUserId());
+    // cs.playerId (id estável do join) — auth.getUserId() é null em VISITANTE,
+    // o que deixava a tela de morte/auto-respawn nunca disparar pra ele.
+    const me = players.get(this.cs.playerId || this.auth.getUserId());
     if (!me?.dead) {
       if (this._visible) this._hide();
       return;

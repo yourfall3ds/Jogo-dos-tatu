@@ -605,13 +605,15 @@ export class Player {
     //  sendRespawn (o server orquestra). _respawnAt/_respawnSent são armados no
     //  _startDeath e zerados a cada nova morte.
     if (this._dead) {
-      const _sp = this.input.isDown?.('Space');
-      if (!this._respawnSent && ((_sp && !this._wasDeadSpace) || performance.now() >= (this._respawnAt || 0))) {
+      // RESPAWN 100% AUTOMÁTICO — sem botão, sem tecla.
+      //  MP: o servidor auto-respawna no tick (~5s, dead→false); o DeathTimer
+      //      (HUD) mostra a contagem e pede sendRespawn ao zerar; o render loop
+      //      detecta dead→false e renasce local. Aqui não fazemos nada.
+      //  SP/offline: não há server → respawn local automático ao zerar o timer.
+      if (!window._cs?.connected && !this._respawnSent && performance.now() >= (this._respawnAt || 0)) {
         this._respawnSent = true;
-        if (window._cs?.connected) { try { window._cs.sendRespawn(); } catch (_) {} }
-        else { this.respawn(); }
+        this.respawn();
       }
-      this._wasDeadSpace = _sp;
     }
 
     // ── [FACING DEBUG] TEMP: offset clicável + leitura yaw/rotY. Captura os
@@ -1838,7 +1840,7 @@ export class Player {
     // Esconde o botão clicável (respawn agora é por tecla/auto) e atualiza o texto.
     try {
       const _rb = document.getElementById('respawn-btn'); if (_rb) _rb.style.display = 'none';
-      const _dm = document.getElementById('death-msg');   if (_dm) _dm.textContent = 'Pressione ESPAÇO pra renascer (ou aguarde 3s)';
+      const _dm = document.getElementById('death-msg');   if (_dm) _dm.textContent = 'Renascendo automaticamente…';
     } catch (_) {}
 
     // Fallback global (caso algo ainda chame): renasce.

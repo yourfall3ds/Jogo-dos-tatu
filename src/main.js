@@ -2458,21 +2458,20 @@ async function init() {
         if (player._dead) {
           try {
             player._serverRespawn = true;
-            // TESTE: respawn BÁSICO no CHÃO (sem skydive) pra ISOLAR o facing/câmera.
-            // Antes caía de (sx,200,sz) com _isFalling; agora nasce direto no chão
-            // no ponto que o server mandou. Se a câmera ficar atrás aqui, o bug era
-            // o skydive; se ainda ficar na cara, é o respawn/câmera em si.
+            // SKYDIVE: cai do CÉU na posição (x,z) que o server mandou (y=200),
+            // igual ao onJoin e ao que os OUTROS veem. respawn() já faz a queda;
+            // só alinhamos x/z ao server pra todos caírem no mesmo ponto.
             const sx = me?.x, sz = me?.z;
             player.respawn();
             if (player.mesh && Number.isFinite(sx) && Number.isFinite(sz)) {
-              const GY = 3;
-              player.mesh.position.set(sx, GY, sz);
-              player.velY = 0; player._isFalling = false;
-              player._prevY = GY;
+              const SKY = 200;
+              player.mesh.position.set(sx, SKY, sz);
+              player.velY = -15; player._isFalling = true;
+              player._prevY = SKY;
               if (player._cc) {
                 try {
-                  player._cc.setPosition(new BABYLON.Vector3(sx, GY, sz));
-                  player._cc.setVelocity(BABYLON.Vector3.Zero());
+                  player._cc.setPosition(new BABYLON.Vector3(sx, SKY, sz));
+                  player._cc.setVelocity(new BABYLON.Vector3(0, -15, 0));
                 } catch (_) {}
               }
             }
