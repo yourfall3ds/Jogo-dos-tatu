@@ -43,6 +43,7 @@ import { Inventory }            from './game/items/Inventory.js';
 import { RpgHUD }               from './game/ui/RpgHUD.js';
 import { ScreenFocusManager }   from './game/ui/ScreenFocusManager.js';
 import { PauseMenu }             from './game/ui/PauseMenu.js';
+import { FortniteHUD }           from './game/ui/FortniteHUD.js';
 import { LocalDB }              from './game/data/LocalDB.js';
 import { AssetGroupsUI }        from './game/ui/AssetGroupsUI.js';
 import { initItemCatalog }      from './game/items/ItemCatalog.js';
@@ -2132,6 +2133,12 @@ async function init() {
 
   const rpgHUD = new RpgHUD(player, stats, skills, inventory);
   window._rpgHUD = rpgHUD;
+
+  // ── HUD estilo BR: vida+escudo (inf-esq) + kills/vivos/onda (topo-dir) ──
+  const fnHUD = new FortniteHUD();
+  window._fnHUD = fnHUD;
+  // Esconde a barra empilhada antiga (XP/MP/stamina) — não deleta, só some.
+  try { const _old = document.getElementById('rpg-hud'); if (_old) _old.style.display = 'none'; } catch (_) {}
   window._gameStats = stats;
   window._gameInventory = inventory;
 
@@ -2568,6 +2575,7 @@ async function init() {
       }
     }
     if (_localAura) _localAura.update(dt);
+    try { window._fnHUD?.update(); } catch (_) {}
     pvpToggle.update(input);
     combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
     navMesh.update(dt);
