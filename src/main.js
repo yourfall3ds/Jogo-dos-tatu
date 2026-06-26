@@ -636,8 +636,10 @@ async function init() {
   // (pool_0..pool_3 + _floor/_surface/_vol) espalhados pelo mapa. Não construímos
   // mais; update() vira no-op (pools vazio).
   // waterSystem.build();   // ← desativado de propósito
-  // Varredura: descarta QUALQUER malha/nó com "pool" no nome (cena salva, skill
-  // map, etc). Exposto em window.removePoolObjects() pra rodar de novo a qualquer hora.
+  // Varredura: descarta QUALQUER malha/nó/material/luz com "pool" no nome (cena
+  // salva, skill map, mundo global, persistência, criação tardia...). Exposto em
+  // window.removePoolObjects() e re-executado em vários momentos pra pegar pools
+  // criados DEPOIS do boot (deferidos). 'explLightShared' (luz da bomba) NÃO casa.
   window.removePoolObjects = () => {
     let n = 0;
     const kill = (arr) => {
@@ -645,11 +647,14 @@ async function init() {
         if (o?.name && /pool/i.test(o.name)) { try { o.dispose(); n++; } catch (_) {} }
       }
     };
-    kill(scene.meshes); kill(scene.transformNodes); kill(scene.lights);
+    kill(scene.meshes); kill(scene.transformNodes); kill(scene.lights); kill(scene.materials);
     if (n) console.log('[removePoolObjects] removidos:', n);
     return n;
   };
   try { window.removePoolObjects(); } catch (_) {}
+  // Re-varre depois que SkillMapExtras / mundo global / streaming de bioma
+  // terminam de montar (eles rodam após este ponto). Pega qualquer pool tardio.
+  [1500, 4000, 9000].forEach(ms => setTimeout(() => { try { window.removePoolObjects(); } catch (_) {} }, ms));
 
   const skillExtras = new SkillMapExtras(scene, level);
   skillExtras.build();
