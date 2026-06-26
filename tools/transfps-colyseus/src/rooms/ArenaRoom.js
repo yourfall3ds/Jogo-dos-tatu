@@ -2093,11 +2093,21 @@ export class ArenaRoom extends Room {
           p.br_state = "SKYDIVE"; p.anim_state = "falling";
         }
       });
-      if (this.state.mobs.size > 0) this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
-      if (this.state.drops.size > 0) this.state.drops.forEach((_, id) => this.state.drops.delete(id));
+      // MOBS no mundo aberto: mantém até 4 (respawn 30s) + IA. (antes: deletava todos.)
+      this._openWorldMobTick(dt);
+      // Drops dos mobs do mundo expiram sozinhos (auto-despawn) — NÃO apaga aqui,
+      // senão a moeda/poção que o mob largou sumia na hora. Props/fx/boss seguem off.
       if (this.state.props.size > 0) this.state.props.forEach((_, id) => this.state.props.delete(id));
-      if (this.state.fx.size > 0) this.state.fx.forEach((_, id) => this.state.fx.delete(id));
+      if (this.state.fx.size > 0) {
+        const now = Date.now();
+        this.state.fx.forEach((f, id) => { if (!f.expires_at || now > f.expires_at) this.state.fx.delete(id); });
+      }
       if (this.state.boss) this.state.boss = undefined;
+      // expira drops antigos (2 min) no mundo aberto também
+      if (this.state.drops.size > 0) {
+        const now = Date.now();
+        this.state.drops.forEach((d, id) => { if (d.expires_at && now > d.expires_at) this.state.drops.delete(id); });
+      }
       return; // SKIP director + brTick + boss
     }
     this._matchDirectorTick();
@@ -2125,6 +2135,12 @@ export class ArenaRoom extends Room {
       toDel.forEach((id) => this.state.fx.delete(id));
     }
 
+    this._tickMobAI(dt);
+  }
+
+  /** IA dos mobs: cada um persegue o player vivo mais próximo (≤25u) e ataca no
+   *  alcance. Usado pelo tick de horda E pelo mundo aberto (os 4 mobs fixos). */
+  _tickMobAI(dt) {
     if (this.state.mobs.size === 0) return;
     const players = [];
     this.state.players.forEach((p) => { if (!p.dead) players.push(p); });
@@ -2185,6 +2201,49 @@ export class ArenaRoom extends Room {
       }
       this._cooldowns.set(mob.id, cd);
     });
+  }
+
+  // ── MUNDO ABERTO: mantém até 4 mobs no mapa, respawn 30s ao morrer ──
+  //  Cada "slot" é uma vaga: ou tem um mob vivo, ou conta 30s pra renascer.
+  //  Roda no lugar do "deleta todos os mobs" do tick OPEN_WORLD.
+  _openWorldMobTick(dt) {
+    const CAP = 4;            // no máximo 4 mobs
+    const RESPAWN_MS = 30000; // 30s pra renascer após morrer
+    const now = Date.now();
+    if (!this._owMobSlots) {
+      this._owMobSlots = Array.from({ length: CAP }, () => ({ mobId: null, respawnAt: 0 }));
+    }
+    for (const slot of this._owMobSlots) {
+      const mob = slot.mobId ? this.state.mobs.get(slot.mobId) : null;
+      if (mob && mob.hp > 0) continue;                 // vivo → ok
+      if (slot.mobId) {                                 // morreu/sumiu → agenda 30s (1x)
+        slot.mobId = null;
+        slot.respawnAt = now + RESPAWN_MS;
+      }
+      if (!slot.respawnAt) slot.respawnAt = now;        // 1º spawn (boot) imediato
+      if (now >= slot.respawnAt) {                      // deu o tempo → nasce
+        const id = this._spawnOpenWorldMob();
+        if (id) { slot.mobId = id; slot.respawnAt = 0; }
+      }
+    }
+    this._tickMobAI(dt);   // IA (perseguir/atacar) pros mobs do mundo
+  }
+
+  /** Spawna 1 mob ROOKIE num anel ao redor do centro do mapa. Retorna o id. */
+  _spawnOpenWorldMob() {
+    if (this.state.mobs.size >= 40) return null;
+    const rookies = MOB_KINDS.filter((k) => k.tier === 'rookie');
+    const def = rookies[Math.floor(Math.random() * rookies.length)] || MOB_KINDS[0];
+    const ang = Math.random() * Math.PI * 2;
+    const dist = 14 + Math.random() * 16;   // 14–30u do centro
+    const id = `mob_${++_mobUid}`;
+    const m = new MobState();
+    m.id = id; m.kind = def.kind; m.tier = def.tier;
+    m.x = Math.cos(ang) * dist; m.y = 0; m.z = Math.sin(ang) * dist;
+    m.ry = 0; m.hp = def.hp; m.maxHp = def.hp;
+    m.state = 'idle'; m.target_id = '';
+    this.state.mobs.set(id, m);
+    return id;
   }
 
   _spawnMob(kindReq) {
