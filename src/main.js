@@ -717,7 +717,10 @@ async function init() {
   [1500, 4000, 9000].forEach(ms => setTimeout(() => { try { window.removePoolObjects(); } catch (_) {} }, ms));
 
   const skillExtras = new SkillMapExtras(scene, level);
-  skillExtras.build();
+  // MAPA LISO (pedido do dono): SEM objetos padrão. As torres de wall-jump
+  // (corredor + speed alley, cinza/cyan) eram a última decoração hardcoded do
+  // mapa aberto. Desativado — fica só o CHÃO + o que os players constroem.
+  // skillExtras.build();   // ← desativado de propósito
   window._skillExtras = skillExtras;
 
   // ── Mapão por biomas com streaming (estilo Fortnite) ──

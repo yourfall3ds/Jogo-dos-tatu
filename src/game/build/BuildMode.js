@@ -126,12 +126,14 @@ export class BuildMode {
     if (recs == null) { this._restorePlaced(); return; }   // sem cloud → local
     this._sharedWorld = true;
 
-    if (!recs.length && this.level?.clean) {
-      try {
-        const seeded = await WorldObjects.seedDefaults(CLEAN_ARENA_LAYOUT);
-        if (seeded) recs = await WorldObjects.loadAll() || [];
-      } catch (_) {}
-    }
+    // MAPA LISO (pedido do dono): NÃO semeia mais a arena padrão (CLEAN_ARENA_LAYOUT
+    // = paredes/caixas/cilindro). O mundo começa VAZIO — só chão + o que os players
+    // constroem. Antes, num mundo vazio, essas peças eram inseridas no world_objects
+    // global e viravam os "obj padrão" cinzas.
+    // if (!recs.length && this.level?.clean) {
+    //   const seeded = await WorldObjects.seedDefaults(CLEAN_ARENA_LAYOUT);
+    //   if (seeded) recs = await WorldObjects.loadAll() || [];
+    // }
 
     try {
       for (const rec of (recs || [])) await this._upsertWorldEntry(rec);
