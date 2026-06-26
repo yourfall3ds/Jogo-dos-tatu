@@ -694,6 +694,22 @@ async function init() {
   const pauseMenu = new PauseMenu();
   window._pauseMenu = pauseMenu;
 
+  // ── Adota os botões soltos/sobrepostos do canto pra DENTRO do menu de
+  //    pausa (fim da sobreposição). Deferido pois alguns são criados tarde
+  //    (InteractableManager espera o BuildMode restaurar). Tenta algumas
+  //    vezes e move cada um que já existir; idempotente. ────────────────
+  const _adoptLooseButtons = (tries = 0) => {
+    const ids = ['terrain-toggle', 'interactive-toggle', 'music-mute-btn', 'pause-pvp-btn'];
+    let pending = false;
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el && el.parentElement?.id !== 'fn-pause-tools') pauseMenu.adoptTool(el);
+      else if (!el) pending = true;
+    }
+    if (pending && tries < 8) setTimeout(() => _adoptLooseButtons(tries + 1), 1000);
+  };
+  setTimeout(() => _adoptLooseButtons(), 1500);
+
   // ── AUTH + LOGIN + LOBBY + MULTIPLAYER ─────────────────────────
   // Auth FORA do caminho crítico: o jogo NUNCA espera a rede do Supabase pra
   // bootar. init() roda em paralelo; se falhar/demorar, o jogo segue anônimo e

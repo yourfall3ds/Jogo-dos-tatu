@@ -129,6 +129,7 @@ export class InteractableManager {
   // ── Editor ───────────────────────────────────────────────────────
   _buildEditor() {
     const btn = document.createElement('button');
+    btn.id = 'interactive-toggle';
     btn.textContent = '🔧 Interativos';
     btn.style.cssText = `position:fixed;top:96px;left:230px;z-index:90;background:rgba(20,30,40,0.85);
       color:#bdf;border:1px solid #58a;border-radius:8px;padding:6px 10px;font:700 12px 'Segoe UI',monospace;cursor:pointer;`;
