@@ -2660,6 +2660,17 @@ async function init() {
   window._gameLoader = loader;
   window._gameLevel  = level;
 
+  // ── Portal pro MUNDO DE BIOMAS (Onda 1) ──────────────────────────
+  //  Cria o WorldManager e planta o portal num ponto visível do mapa.
+  //  Ao entrar nele: tela de load → gera o mundo → teleporta pro spawn.
+  try {
+    const { WorldManager } = await import('./game/world/WorldManager.js');
+    const worldManager = new WorldManager(scene);
+    window._worldManager = worldManager;
+    // portal a ~12m à frente do centro do mapa (lugar aberto)
+    worldManager.spawnPortal(new BABYLON.Vector3(0, 0, 12));
+  } catch (e) { console.error('[World] portal init:', e); }
+
   // Debug de colliders (tecla L)
   const colliderDebug = new ColliderDebug(scene);
   window._colliderDebug = colliderDebug;
