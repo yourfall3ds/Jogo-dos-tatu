@@ -70,3 +70,23 @@ body.ui-cursor.game-active { cursor: auto; }
 .fn-slot[data-rar="legendary"] { border-color: var(--fn-rar-legendary); }
 .fn-slot[data-rar="mythic"]    { border-color: var(--fn-rar-mythic); }
 .fn-slot:hover { box-shadow: 0 0 14px currentColor; }
+
+/* ── Botões de editor/dev: escondidos da tela de jogo, só aparecem
+   dentro do menu de pausa. Robusto: vale mesmo pros botões criados tarde
+   (lazy), que a adoção por timer não pegava. ─────────────────────────── */
+body.in-game #terrain-toggle,
+body.in-game #interactive-toggle,
+body.in-game #combat-director-hud {
+  display: none !important;
+}
+/* Mas se estiverem DENTRO do menu de pausa, mostra (a regra acima é por
+   id; esta, mais específica pelo container, vence e re-exibe). */
+#fn-pause-tools > #terrain-toggle,
+#fn-pause-tools > #interactive-toggle,
+#fn-pause-tools > #combat-director-hud {
+  display: inline-flex !important;
+  position: static !important;
+  inset: auto !important;
+  transform: none !important;
+  margin: 0 !important;
+}
