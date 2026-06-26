@@ -13,11 +13,12 @@ import { AssetRegistry } from '../data/AssetRegistry.js';
 
 const PLAYER_BIPED = 'assets/itens 3d/Animations-meshy/Meshy_AI_Faça_um_rato_mistura_biped_Character_output.glb';
 
-// Modelos jogáveis COMPATÍVEIS (rig biped Meshy → todas as anims funcionam).
+// SÓ os 4 GLBs da pasta assets/characters (pedido do dono) — rig biped Meshy.
 const COMPAT_MODELS = [
-  { name: '🐭 Rato (padrão)', url: PLAYER_BIPED },
-  { name: '🐉 AzureFin',      url: 'assets/characters/azurefin.glb' },
-  { name: '🦖 LucasMods',     url: 'assets/characters/lucasmods.glb' },
+  { name: '🐭 Rato',      url: 'assets/characters/player.glb' },
+  { name: '🦖 LucasMods', url: 'assets/characters/lucasmods.glb' },
+  { name: '🟢 Limbão',    url: 'assets/characters/Limbão.glb' },
+  { name: '🟡 Timbó',     url: 'assets/characters/Timbó.glb' },
 ];
 
 export class CharacterSelectUI {
@@ -29,16 +30,8 @@ export class CharacterSelectUI {
   }
 
   _models() {
-    // Modelos compatíveis (rig biped) — jogam normal
-    const list = COMPAT_MODELS.map(m => ({ ...m, compat: 'ok' }));
-    // Digimons do catálogo (experimental — rig do rip)
-    for (const [id, def] of Object.entries(EnemyCatalog)) {
-      const raw = AssetRegistry.path(def.category, def.asset);
-      if (!raw) continue;
-      const tier = { rookie:'🥚', champion:'⭐', ultimate:'🌟', mega:'💫', boss:'👑' }[def.tier] || '👾';
-      list.push({ name: `${tier} ${def.name}`, url: raw, compat: 'exp' });
-    }
-    return list;
+    // SÓ os 4 personagens do dono (digimons/inimigos NÃO entram como jogáveis).
+    return COMPAT_MODELS.map(m => ({ ...m, compat: 'ok' }));
   }
 
   _build() {

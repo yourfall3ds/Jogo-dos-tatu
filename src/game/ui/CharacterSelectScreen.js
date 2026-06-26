@@ -61,95 +61,23 @@ function _pickAnim(groups, hints, regex) {
 //   0       = já nasce de frente.
 //   Math.PI = nasce de costas → vira 180°.
 // Ajustado por inspeção visual: FUBA e RONARIA apareciam de costas.
+// SÓ os 4 GLBs da pasta assets/characters (pedido do dono). Todos usam o mesmo
+// rig biped Meshy do rato → as anims do jogo (MOVESETS) casam in-game via
+// CharacterSwapper. Os hints abaixo são só pro PREVIEW (reusam os nomes do
+// player.glb); se um GLB não tiver anims embutidas, o preview fica estático mas
+// in-game ANIMA normal (anims externas retargetadas).
+const _MESHY_HINTS = {
+  idleHints: ['Idle_5', 'Idle'],
+  attackHints: ['Archery_Shot_1', 'Archery_Shot', 'Shot'],
+  comboHints: ['Archery_Shot_3', 'Run_and_Shoot'],
+  walkHints: ['Walking', 'Walk'],
+  faceYaw: 0, sound: 'ui_select',
+};
 const CHARACTERS = [
-  {
-    id: 'abelha', name: 'ABELHA', emoji: '🐝',
-    url: 'assets/characters/player.glb',
-    desc: 'Rato padrão · equilibrado',
-    // anims EXATAS (player.glb): Idle_5 / Archery_Shot_1 / Archery_Shot_3 / Walking
-    idleHints: ['Idle_5', 'Idle'],
-    attackHints: ['Archery_Shot_1', 'Archery_Shot', 'Shot'],
-    comboHints: ['Archery_Shot_3', 'Run_and_Shoot'],
-    walkHints: ['Walking', 'Walk'],
-    faceYaw: 0,
-    sound: 'ui_select',
-  },
-  {
-    id: 'dandan', name: 'DAN DAN', emoji: '⚔️',
-    url: 'assets/characters/dark_warrior_aaa_ready.glb',
-    desc: 'Guerreiro sombrio · ataque pesado',
-    // anims EXATAS (dark_warrior): Standing Idle Looking Ver. 1 / Attack Horizontal / Attack 360 Low / Boss-Walking
-    idleHints: ['Standing Idle Looking Ver. 1', 'Standing Idle Looking', 'Idle'],
-    attackHints: ['Attack Horizontal', 'Attack'],
-    comboHints: ['Attack 360 Low', '360'],
-    walkHints: ['Boss-Walking', 'Walking', 'Walk'],
-    faceYaw: 0,
-    sound: 'ui_select',
-  },
-  {
-    id: 'candao', name: 'CANDAO', emoji: '🪓',
-    url: 'assets/characters/orc_warrior_ready.glb',
-    desc: 'Orc bruto · força máxima',
-    // anims EXATAS (orc): Armature|Orc_Ideal / Armature|Orc_Punch / Armature|Jumping_Jack / Armature|Orc_Walk
-    idleHints: ['Armature|Orc_Ideal', 'Orc_Ideal', 'Idle'],
-    attackHints: ['Armature|Orc_Punch', 'Orc_Punch', 'Punch'],
-    comboHints: ['Armature|Jumping_Jack', 'Jumping_Jack', 'Armature|Orc_Punch', 'Orc_Punch'],
-    walkHints: ['Armature|Orc_Walk', 'Orc_Walk', 'Walk'],
-    faceYaw: 0,
-    sound: 'ui_select',
-  },
-  {
-    id: 'ronaria', name: 'RONARIA', emoji: '🏹',
-    url: 'assets/characters/cleric_priestess48_ready.glb',
-    desc: 'Caçadora · à distância',
-    // anims EXATAS (cleric): Idle.001 (EM PÉ, não Crouch) / Fire / Standing Purify / Walk.002
-    idleHints: ['Idle.001', 'Idle'],
-    attackHints: ['Fire'],
-    comboHints: ['Standing Purify', 'Purify'],
-    walkHints: ['Walk.002', 'Walk'],
-    faceYaw: Math.PI,   // apareceu de costas
-    sound: 'ui_select',
-  },
-  {
-    id: 'fuba', name: 'FUBA', emoji: '🔮',
-    url: 'assets/characters/mage_oldwizard_ready.glb',
-    desc: 'Mago · poder arcano',
-    // anims EXATAS (mage): idle / attack / death / run / walk (só UM ataque)
-    idleHints: ['idle'],
-    attackHints: ['attack'],
-    comboHints: ['attack'],
-    walkHints: ['walk'],
-    faceYaw: Math.PI,   // apareceu de costas
-    sound: 'ui_select',
-  },
-  {
-    id: 'spray', name: 'SPRAY-BNOOKKER', emoji: '🦎',
-    url: 'assets/characters/lizard_monster_ready.glb',
-    desc: 'Monstro lagarto · brutal',
-    // anims EXATAS (lizard): SEM idle/death → Walking como pose neutra. Right_Hand_Sword_Slash / Punch_Combo_5
-    idleHints: ['Walking', 'Walk'],
-    attackHints: ['Right_Hand_Sword_Slash', 'Slash'],
-    comboHints: ['Punch_Combo_5', 'Combo', 'Punch'],
-    walkHints: ['Walking', 'Walk', 'Running'],
-    faceYaw: 0,
-    sound: 'spray_bnookker',
-  },
-  {
-    id: 'lucasmods', name: 'LUCASMODS', emoji: '🦖',
-    url: 'assets/characters/lucasmods.glb',
-    desc: 'Mod do Lucas · rig Meshy (todas as anims)',
-    // MESMO rig biped Meshy do rato → as anims do jogo (MOVESETS) casam in-game
-    // via CharacterSwapper. Os hints abaixo são só pro PREVIEW desta tela e
-    // reusam os nomes do player.glb (mesmo rig). Se o GLB não tiver anims
-    // embutidas, o preview fica numa pose estática — mas in-game ANIMA normal,
-    // pois usa as anims externas retargetadas.
-    idleHints: ['Idle_5', 'Idle'],
-    attackHints: ['Archery_Shot_1', 'Archery_Shot', 'Shot'],
-    comboHints: ['Archery_Shot_3', 'Run_and_Shoot'],
-    walkHints: ['Walking', 'Walk'],
-    faceYaw: 0,
-    sound: 'ui_select',
-  },
+  { id: 'player',    name: 'RATO',      emoji: '🐭', url: 'assets/characters/player.glb',    desc: 'Rato padrão · equilibrado', ..._MESHY_HINTS },
+  { id: 'lucasmods', name: 'LUCASMODS', emoji: '🦖', url: 'assets/characters/lucasmods.glb', desc: 'Mod do Lucas · humano',       ..._MESHY_HINTS },
+  { id: 'limbao',    name: 'LIMBÃO',    emoji: '🟢', url: 'assets/characters/Limbão.glb',    desc: 'Personagem custom',           ..._MESHY_HINTS },
+  { id: 'timbo',     name: 'TIMBÓ',     emoji: '🟡', url: 'assets/characters/Timbó.glb',     desc: 'Personagem custom',           ..._MESHY_HINTS },
 ];
 
 // ─────────────────────────────────────────────────────────────────
@@ -789,7 +717,9 @@ export class CharacterSelectScreen {
     this._previewAnims = null;
 
     try {
-      const result = await BABYLON.SceneLoader.ImportMeshAsync('', '', c.url, this._previewScene);
+      // Encoda acentos/espaços (Limbão.glb, Timbó.glb) — sem isto o loader falha.
+      const _u = c.url.split('/').map(s => encodeURIComponent(s)).join('/');
+      const result = await BABYLON.SceneLoader.ImportMeshAsync('', '', _u, this._previewScene);
       if (token !== this._loadToken) {
         // outro select disparou no meio — descarta este
         try { result.meshes?.[0]?.dispose(false, true); } catch (_) {}
