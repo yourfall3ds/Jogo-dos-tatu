@@ -1936,6 +1936,7 @@ async function init() {
   }
 
   // OPEN_WORLD CLEAN: plano vazio 200x200 com material liso + colisao
+  window._ensureOpenWorldGround = (s) => _ensureOpenWorldGround(s || scene);
   function _ensureOpenWorldGround(scene) {
     // Prefere SEMPRE o chão autoritativo do Level quando ele já existir.
     // O overlay gigante antigo fazia o mapa parecer infinito, mas a área
