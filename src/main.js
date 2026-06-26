@@ -2871,16 +2871,27 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
         );
         try { window.transfpsMark?.('anims-core PRONTAS (jogo jogável)'); } catch (_) {}
 
-        // Background: o resto das anims carrega sem travar a entrada no jogo.
-        Promise.all(
-          restAnims.map(a =>
-            p.animLib.loadExternalAnimations(a.path, a.name, root)
-              .catch(e => console.error(`[anim] Falha bg [${a.name}] (${a.path}):`, e))
-          )
-        ).then(() => {
+        // Background: o resto das anims em LOTES pequenos (anti-freeze).
+        //  Antes era Promise.all de ~72 GLBs de uma vez → o parse (síncrono na
+        //  main thread) empilhava e travava frames de segundos ("FRAME TRAVOU").
+        //  Agora 4 por vez, com 1 frame de respiro entre lotes → o jogo não
+        //  engasga; as anims aparecem suaves, sem prejudicar o gameplay.
+        (async () => {
+          const BATCH = 4;
+          const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
+          for (let i = 0; i < restAnims.length; i += BATCH) {
+            const lote = restAnims.slice(i, i + BATCH);
+            await Promise.all(
+              lote.map(a =>
+                p.animLib.loadExternalAnimations(a.path, a.name, root)
+                  .catch(e => console.error(`[anim] Falha bg [${a.name}] (${a.path}):`, e))
+              )
+            );
+            await nextFrame();   // dá um respiro pro render antes do próximo lote
+          }
           try { window.transfpsMark?.('anims-resto (' + restAnims.length + ') prontas'); } catch (_) {}
           try { p.animLib.list?.(); } catch (_) {}
-        });
+        })();
 
 
         // ── Pós-processamento (sem Blender) ────────────────────────
