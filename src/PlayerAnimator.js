@@ -81,6 +81,17 @@ const ONE_SHOT = new Set(['jump', 'wall_jump', 'roll']);
 // Math.PI = modelo exportado de costas (rosto para −Z)
 const FACING_OFFSET = Math.PI;
 
+// ── Ajuste de montagem da ARMA por AVATAR ─────────────────────────
+//  A mão de cada rig (rato Meshy vs humano lucasmods) tem orientação/posição
+//  local diferente → a arma tunada pro rato fica torta no humano. Aqui dá pra
+//  corrigir por avatar (chave = nome do glb sem extensão). pos = unidades locais
+//  do osso, rot = GRAUS (euler XYZ), scale = multiplicador. Ajustável AO VIVO com
+//  window.wmTune(px,py,pz, rxDeg,ryDeg,rzDeg, scale) — persiste por avatar no
+//  localStorage (wm_<chave>), que tem prioridade sobre o default abaixo.
+const WEAPON_MOUNTS = {
+  // lucasmods: { pos:[0,0,0], rot:[0,0,0], scale:1 },  // calibre com wmTune()
+};
+
 // ── Velocidades de rotação do corpo (rad/s) ───────────────────────
 const ROT_MOVE = 14;   // girando ao mover — rápido para encarar direção
 const ROT_IDLE = 8;    // girando em idle  — suave mas responsivo ao girar câmera
@@ -181,6 +192,31 @@ export class PlayerAnimator {
     return socket;
   }
 
+  /** Aplica o ajuste de montagem da arma do avatar atual (window._avatarKey).
+   *  Override do usuário (wmTune → localStorage) tem prioridade sobre o default. */
+  _applyAvatarMount(socket) {
+    try {
+      const key = (window._avatarKey || '').toLowerCase();
+      if (!key) return;
+      let m = null;
+      try { const raw = localStorage.getItem('wm_' + key); if (raw) m = JSON.parse(raw); } catch (_) {}
+      if (!m) m = WEAPON_MOUNTS[key] || null;
+      if (!m) return;
+      if (Array.isArray(m.pos)) {
+        socket.position.x += (m.pos[0] || 0);
+        socket.position.y += (m.pos[1] || 0);
+        socket.position.z += (m.pos[2] || 0);
+      }
+      if (Array.isArray(m.rot)) {
+        socket.rotation.set(
+          BABYLON.Tools.ToRadians(m.rot[0] || 0),
+          BABYLON.Tools.ToRadians(m.rot[1] || 0),
+          BABYLON.Tools.ToRadians(m.rot[2] || 0));
+      }
+      if (typeof m.scale === 'number' && m.scale > 0) socket.scaling.scaleInPlace(m.scale);
+    } catch (_) {}
+  }
+
   attachWeapon(weaponMesh, boneName = 'RightHand') {
     if (!weaponMesh || !this.root) return;
 
@@ -197,6 +233,10 @@ export class PlayerAnimator {
     // que o socket fique em escala mundial 1 e a arma renderize no
     // tamanho real definido por applyToMesh (tpsScale).
     const bone = socket.parent;
+    // Socket é REUSADO (mesmo nome entre re-attaches) — reseta pos/rot antes de
+    // aplicar o mount por-avatar, senão o ajuste acumularia a cada re-attach.
+    socket.position.set(0, 0, 0);
+    socket.rotation.set(0, 0, 0);
     if (bone) {
       bone.computeWorldMatrix(true);
       const bs = bone.absoluteScaling || BABYLON.Vector3.One();
@@ -207,6 +247,9 @@ export class PlayerAnimator {
       );
       socket.scaling.copyFrom(inv);
     }
+
+    // Ajuste POR-AVATAR (mão humana vs rato) — pos/rot extra + scale no socket.
+    this._applyAvatarMount(socket);
 
     weaponMesh.parent = socket;
 

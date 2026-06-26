@@ -46,6 +46,13 @@ export class CharacterSwapper {
     if (this._busy) return { ok: false, warning: 'troca em andamento' };
     this._busy = true;
     const p = this.player;
+    // Marca o avatar atual → o PlayerAnimator aplica o ajuste de montagem da arma
+    // certo pra esse rig (a mão humana do lucasmods difere da do rato). Setado
+    // ANTES do setMouseCharacter, que já re-anexa as armas.
+    try {
+      p._avatarUrl = url;
+      window._avatarKey = (url.split('/').pop() || '').replace(/\.glb$/i, '').toLowerCase();
+    } catch (_) {}
     try {
       // Encoda espaços/acentos pro loader
       const enc = url.split('/').map(s => encodeURIComponent(s)).join('/');

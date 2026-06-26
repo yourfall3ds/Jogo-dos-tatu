@@ -1901,6 +1901,33 @@ async function init() {
     if (r.warning) console.warn('[setPlayerModel]', r.warning);
     return r;
   };
+  // ── TUNER da montagem da ARMA por avatar (mão humana do lucasmods etc) ──
+  //  Com a arma equipada, no CONSOLE (F12):
+  //    wmTune(px,py,pz, rxGraus,ryGraus,rzGraus, escala)  → ajusta+salva+reaplica
+  //    wmGet()    → mostra o ajuste atual do avatar
+  //    wmReset()  → volta ao padrão do avatar atual
+  //  Ex.: wmTune(0,0,0, 0,90,0, 1)  gira a arma 90° no eixo Y.
+  //  Salva por avatar (window._avatarKey) no localStorage; me passa os números
+  //  finais que eu deixo como default fixo no código.
+  window.wmTune = (px = 0, py = 0, pz = 0, rx = 0, ry = 0, rz = 0, scale = 1) => {
+    const key = (window._avatarKey || 'default');
+    const m = { pos: [px, py, pz], rot: [rx, ry, rz], scale };
+    try { localStorage.setItem('wm_' + key, JSON.stringify(m)); } catch (_) {}
+    try { window._player?.attachCurrentWeaponToAnimator?.(); window._player?._updateWeaponVisibility?.(); } catch (_) {}
+    console.log('[wmTune]', key, m); return m;
+  };
+  window.wmGet = () => {
+    const key = (window._avatarKey || 'default'); let m = null;
+    try { m = JSON.parse(localStorage.getItem('wm_' + key)); } catch (_) {}
+    console.log('[wmGet]', key, m); return m;
+  };
+  window.wmReset = () => {
+    const key = (window._avatarKey || 'default');
+    try { localStorage.removeItem('wm_' + key); } catch (_) {}
+    try { window._player?.attachCurrentWeaponToAnimator?.(); window._player?._updateWeaponVisibility?.(); } catch (_) {}
+    console.log('[wmReset]', key);
+  };
+
   // Seletor de personagem (tecla P)
   const charSelectUI = new CharacterSelectUI(charSwapper);
   window._charSelectUI = charSelectUI;
