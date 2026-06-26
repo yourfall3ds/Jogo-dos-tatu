@@ -25,6 +25,7 @@
 // ─────────────────────────────────────────────────────────────────
 import { LocalDB }       from '../data/LocalDB.js';
 import { WorldObjects }  from '../data/WorldObjects.js';
+import { CLEAN_ARENA_LAYOUT } from '../data/DefaultWorldLayout.js';
 import { Breakable }     from './Breakable.js';
 import { AssetRegistry } from '../data/AssetRegistry.js';
 import { AssetGroups }   from '../data/AssetGroups.js';
@@ -120,18 +121,21 @@ export class BuildMode {
    * restore local (offline).
    */
   async _initSharedWorld() {
-    let ok = false;
-    try { ok = await WorldObjects.available(); } catch (_) { ok = false; }
-    if (!ok) { this._restorePlaced(); return; }   // offline/deslogado → local
+    let recs = null;
+    try { recs = await WorldObjects.loadAll(); } catch (_) { recs = null; }
+    if (recs == null) { this._restorePlaced(); return; }   // sem cloud → local
     this._sharedWorld = true;
 
+    if (!recs.length && this.level?.clean) {
+      try {
+        const seeded = await WorldObjects.seedDefaults(CLEAN_ARENA_LAYOUT);
+        if (seeded) recs = await WorldObjects.loadAll() || [];
+      } catch (_) {}
+    }
+
     try {
-      const recs = await WorldObjects.loadAll();
-      for (const rec of recs) {
-        const entry = await this._renderRecordToScene(rec);
-        if (entry && rec._worldId) this._worldEntries.set(rec._worldId, entry);
-      }
-      console.log(`[BuildMode] 🌍 mundo compartilhado: ${recs.length} objeto(s)`);
+      for (const rec of (recs || [])) await this._upsertWorldEntry(rec);
+      console.log(`[BuildMode] 🌍 mundo compartilhado: ${(recs || []).length} objeto(s)`);
     } catch (e) { console.warn('[BuildMode] load mundo falhou:', e?.message || e); }
 
     // Realtime: insert/delete/update dos OUTROS players (e echo dos meus).
@@ -143,11 +147,16 @@ export class BuildMode {
         // renderizar de novo (duplicado), só reconcilia o id no entry local.
         const mine = this._placed.find(e => e && !e.worldId && this._sameWorldRecord(e.record, rec));
         if (mine) { mine.worldId = rec._worldId; this._worldEntries.set(rec._worldId, mine); return; }
-        const entry = await this._renderRecordToScene(rec);
-        if (entry) this._worldEntries.set(rec._worldId, entry);
+        await this._upsertWorldEntry(rec);
       },
       onDelete: (worldId) => this._removeWorldEntry(worldId),
-      onUpdate: (rec, row) => { if (row?.broken) this._removeWorldEntry(rec._worldId); },
+      onUpdate: async (rec, row) => {
+        // #region debug-point C:realtime-onupdate
+        fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"C",location:"BuildMode.js:realtime-onUpdate",msg:"[DEBUG] cliente recebeu realtime UPDATE",data:{worldId:rec?._worldId || null,broken:!!row?.broken,p:[rec?.p?.[0] ?? null,rec?.p?.[1] ?? null,rec?.p?.[2] ?? null]},ts:Date.now()})}).catch(()=>{});
+        // #endregion
+        if (row?.broken) { this._removeWorldEntry(rec._worldId); return; }
+        await this._upsertWorldEntry(rec);
+      },
     });
   }
 
@@ -197,7 +206,83 @@ export class BuildMode {
     const i = this._placed.indexOf(entry);
     if (i >= 0) this._placed.splice(i, 1);
     this._worldEntries.delete(worldId);
-    window._navMesh?.markDirty?.();
+    if (window._navMesh?.markDynamicDirty) window._navMesh.markDynamicDirty();
+    else window._navMesh?.markDirty?.();
+  }
+
+  async _upsertWorldEntry(rec) {
+    if (!rec?._worldId) return null;
+    const existing = this._worldEntries.get(rec._worldId);
+    if (existing) this._removeWorldEntry(rec._worldId);
+    const entry = await this._renderRecordToScene(rec);
+    if (entry) this._worldEntries.set(rec._worldId, entry);
+    return entry;
+  }
+
+  _syncEntryRecordFromRoot(entry) {
+    const root = entry?.root;
+    const rec = entry?.record;
+    if (!root || !rec) return null;
+    rec.p = [root.position.x, root.position.y, root.position.z];
+    rec.ry = root.rotation?.y || 0;
+    if (rec.kind === 'piece') {
+      rec.sc = root.scaling?.x ?? 1;
+      rec.s = [root.scaling.x, root.scaling.y, root.scaling.z];
+    } else if (rec.kind === 'frame') {
+      rec.sc = root.scaling?.x ?? 1;
+    } else if (rec.kind !== 'machine' && rec.id !== 'assetMachine') {
+      rec.sc = root.scaling?.x ?? 1;
+      rec.s = [root.scaling.x, root.scaling.y, root.scaling.z];
+    }
+    return rec;
+  }
+
+  async syncPlacedTransform(mesh) {
+    const found = this.findPlacedByMesh(mesh);
+    if (!found?.entry) return false;
+    const entry = found.entry;
+    // #region debug-point A:buildmode-sync
+    fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"BuildMode.js:syncPlacedTransform",msg:"[DEBUG] buildmode iniciou syncPlacedTransform",data:{worldId:entry.worldId || null,kind:entry.record?.kind || null,pieceId:entry.record?.pieceId || null},ts:Date.now()})}).catch(()=>{});
+    // #endregion
+    if (entry.record?.kind === 'piece' && entry.root?._pieceBodies) {
+      const { disposePieceBodies, makePieceBodies } = await import('./BuildPieces.js');
+      disposePieceBodies(entry.root);
+      entry.root.computeWorldMatrix(true);
+      entry.root.getChildMeshes(false).forEach(m => m.computeWorldMatrix(true));
+      makePieceBodies(entry.root, this.scene);
+    }
+    this._syncEntryRecordFromRoot(entry);
+    if (window._navMesh?.markDynamicDirty) window._navMesh.markDynamicDirty();
+    else window._navMesh?.markDirty?.();
+    if (entry.worldId) return await WorldObjects.updateTransform(entry.worldId, entry.record);
+    if (!this._sharedWorld) { this._save(); return true; }
+    return false;
+  }
+
+  async removePlacedByMesh(mesh) {
+    const found = this.findPlacedByMesh(mesh);
+    if (!found?.entry) return false;
+    const entry = found.entry;
+    // #region debug-point A:buildmode-remove
+    fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"BuildMode.js:removePlacedByMesh",msg:"[DEBUG] buildmode iniciou removePlacedByMesh",data:{worldId:entry.worldId || null,kind:entry.record?.kind || null,pieceId:entry.record?.pieceId || null},ts:Date.now()})}).catch(()=>{});
+    // #endregion
+    if (entry.worldId) {
+      const ok = await WorldObjects.remove(entry.worldId);
+      if (!ok) return false;
+      this._worldEntries?.delete(entry.worldId);
+    }
+    try { entry.breakable?.dispose?.(); } catch (_) {}
+    try { entry.machine?.dispose?.(); } catch (_) {}
+    try { this._disposeColliderArtifacts(entry.root); } catch (_) {}
+    try { entry.root?.dispose?.(); } catch (_) {}
+    const i = this._placed.indexOf(entry);
+    if (i >= 0) this._placed.splice(i, 1);
+    if (!entry.worldId && !this._sharedWorld) {
+      this._save();
+    }
+    if (window._navMesh?.markDynamicDirty) window._navMesh.markDynamicDirty();
+    else window._navMesh?.markDirty?.();
+    return true;
   }
 
   /** Persiste um objeto recém-colocado no mundo compartilhado (Supabase). */
@@ -270,7 +355,8 @@ export class BuildMode {
     root.rotationQuaternion = null;
     root.position.set(rec.p[0], rec.p[1], rec.p[2]);
     root.rotation.y = rec.ry || 0;
-    root.scaling.setAll(rec.sc ?? 1);
+    if (Array.isArray(rec.s) && rec.s.length === 3) root.scaling.set(rec.s[0], rec.s[1], rec.s[2]);
+    else root.scaling.setAll(rec.sc ?? 1);
     const gProps = rec.groupProps || {};
     this._applyCollisionProps(root, res.meshes, gProps);
     if (gProps.castShadows !== false) this.level?.shadowGen?.addShadowCaster?.(root, true);
@@ -356,7 +442,8 @@ export class BuildMode {
     const i = this._placed.indexOf(entry);
     if (i >= 0) this._placed.splice(i, 1);
     if (!this._sharedWorld) this._save();
-    window._navMesh?.markDirty?.();
+    if (window._navMesh?.markDynamicDirty) window._navMesh.markDynamicDirty();
+    else window._navMesh?.markDirty?.();
   }
 
   /**
@@ -1257,6 +1344,7 @@ export class BuildMode {
     const uid  = `placed_${item.pieceId}_${this._placed.length}_${Date.now().toString(36)}`;
     const root = buildPiece(item.pieceId, this.scene, uid);
     if (!root) return null;
+    const placeTraceId = 'place-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     root.position.copyFrom(pos);
     root.rotation.y = rotY;
     if (scl3) root.scaling.set(scl3[0], scl3[1], scl3[2]);     // parede esticada (A→B)
@@ -1293,11 +1381,16 @@ export class BuildMode {
   async _save() {
     // No mundo compartilhado a verdade é o Supabase (world_objects); não grava
     // o bucket local 'placed' pra não duplicar no reload. Navmesh segue marcada.
-    if (this._sharedWorld) { window._navMesh?.markDirty?.(); return; }
+    if (this._sharedWorld) {
+      if (window._navMesh?.markDynamicDirty) window._navMesh.markDynamicDirty();
+      else window._navMesh?.markDirty?.();
+      return;
+    }
     // Quadros têm seu próprio bucket (placed_frames); filtra aqui
     try { await LocalDB.save('placed', this._placed.filter(p => p.record?.kind !== 'frame').map(p => p.record)); } catch (_) {}
     // Mundo mudou (coloquei/movi/removi algo) → regera a navmesh (debounce).
-    window._navMesh?.markDirty?.();
+    if (window._navMesh?.markDynamicDirty) window._navMesh.markDynamicDirty();
+    else window._navMesh?.markDirty?.();
   }
 
   /**
@@ -1380,7 +1473,8 @@ export class BuildMode {
     try { await LocalDB.save('placed_frames', []); }   catch (_) {}
     try { await LocalDB.save('machines_placed', []); } catch (_) {}
 
-    window._navMesh?.markDirty?.();
+    if (window._navMesh?.markDynamicDirty) window._navMesh.markDynamicDirty();
+    else window._navMesh?.markDirty?.();
     console.log(`[BuildMode] 🧹 terreno limpo — ${counts.placed} objeto(s), ${counts.machines} máquina(s), ${counts.bodies} corpo(s)/colisor(es) órfão(s)`);
     this._renderCatalog?.();
     return counts;

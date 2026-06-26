@@ -17,7 +17,7 @@ import { validateSkillCast, getSkill } from './SkillTable.js';
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://myylkpoisqijfnptlnyk.supabase.co';
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || ''; // HS256 secret (preferencial)
 const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const JWT_REQUIRED = process.env.JWT_REQUIRED !== '0';
+const JWT_REQUIRED = process.env.JWT_REQUIRED === '1';
 
 /**
  * Persiste stats do player em transfps.profiles ao sair / fim de match.

@@ -580,7 +580,7 @@ export class CombatSystem {
           // "launch" = só o CHUTE forte que lança longe (não soco, não crit normal).
           //  É o que dispara o som espacial do cara voando.
           const launch = isKick && critLevel >= 1;
-          enemy.takeDamage(hitDef.damage, moveDir, kbEff, launch);
+          enemy.takeDamage(hitDef.damage, moveDir, kbEff, launch, getLocalCombatTarget(this.playerMesh));
           // Som de IMPACTO (só uma vez por golpe, mesmo acertando vários)
           if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
           const impactPos = activeHitbox.getAbsolutePosition().clone();
@@ -730,4 +730,24 @@ export class CombatSystem {
     this.comboSystem.reset();
     this.stateMachine.setState("unarmed");
   }
+}
+
+function getLocalCombatTarget(playerMesh) {
+  const player = playerMesh?._playerRef || window._gamePlayer || null;
+  const position = player?.animator?.root?.absolutePosition
+    ?? player?.mesh?.position
+    ?? playerMesh?.absolutePosition
+    ?? playerMesh?.position
+    ?? null;
+  if (!position) return null;
+  return {
+    id: 'local-player',
+    kind: 'local',
+    position,
+    actor: player,
+    canBeHit: true,
+    receiveDamage: (dmg, attackType, fromPos, kbForce = 0) => {
+      player?.takeDamage?.(dmg, attackType, fromPos, kbForce);
+    },
+  };
 }

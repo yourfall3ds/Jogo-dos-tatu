@@ -70,7 +70,15 @@ export class EnemyManager {
     const pos = position || this._randomSpawnNearPlayer();
     const enemy = new AnimatedEnemy(this.scene, this.shadowGen, inst, pos, { ...def, id });
 
-    enemy.onAttack = (dmg, type, fromPos, kb = 0) => this.player?.takeDamage?.(dmg, type, fromPos, kb);
+    enemy.onAttack = (dmg, type, fromPos, kb = 0, target = null) => {
+      if (typeof target?.receiveDamage === 'function') {
+        target.receiveDamage(dmg, type, fromPos, kb);
+        return;
+      }
+      if (!target || target.kind === 'local') {
+        this.player?.takeDamage?.(dmg, type, fromPos, kb);
+      }
+    };
     enemy.onPlaySound = (sid) => this.player?.sounds?.playNow?.(sid);
     enemy.onPlaySpatial = (sid, node) => this.player?.sounds?.playSpatial?.(sid, node);
     enemy.onDeath = (e) => this.player?.onEnemyKilled?.(e);

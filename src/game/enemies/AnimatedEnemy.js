@@ -51,6 +51,12 @@ export class AnimatedEnemy {
     this.AGGRO_RANGE = s.aggroRange ?? 14;
     this.LEASH_RANGE = s.leashRange ?? (this.AGGRO_RANGE + 10);
     this._aggro = false;
+    this._targetClock = 0;
+    this._targetId = null;
+    this._targetLockT = 0;
+    this._targetThreat = new Map();
+    this._targetMemorySeconds = 4.2;
+    this._targetSwitchMargin = 4.5;
 
     this.alive = true;
     this._state = State.IDLE;
@@ -64,6 +70,7 @@ export class AnimatedEnemy {
     this._kbX = 0; this._kbZ = 0;
     this._groundY = position.y;
     this._spawnPos = position.clone();
+    this._crowdState = null;
     this.HOVER_H = this.behavior === 'flyer' ? 2.0 + Math.random() * 0.8 : 0;
 
     // ── Hitbox de golpe REAL (espacial, à frente — não centro-a-centro) ──
@@ -84,6 +91,8 @@ export class AnimatedEnemy {
     this._buildHealthBar();
     this._buildShadow();
     this._play(this.rIdle, true);
+    this._navDebugLine = null;
+    this._targetDebugLine = null;
   }
 
   _build(inst, position) {
@@ -195,11 +204,103 @@ export class AnimatedEnemy {
     this._shadow = s;
   }
 
-  takeDamage(amount, fromDir = null, kbMult = 1.0, launch = false) {
+  _disposeNavDebug() {
+    try { this._navDebugLine?.dispose?.(); } catch (_) {}
+    try { this._targetDebugLine?.dispose?.(); } catch (_) {}
+    for (const marker of this._navDebugMarkers || []) {
+      try { marker?.dispose?.(); } catch (_) {}
+    }
+    this._navDebugLine = null;
+    this._targetDebugLine = null;
+    this._navDebugPointCount = 0;
+    this._navDebugMarkers = [];
+  }
+
+  _upsertNavDebugMarker(index, color) {
+    this._navDebugMarkers = this._navDebugMarkers || [];
+    let marker = this._navDebugMarkers[index];
+    if (!marker || marker.isDisposed?.()) {
+      marker = BABYLON.MeshBuilder.CreateSphere(`enemyNavDbgMarker_${this.id}_${index}`, {
+        diameter: index === 2 ? 0.14 : 0.18,
+        segments: 8,
+      }, this.scene);
+      const mat = new BABYLON.StandardMaterial(`enemyNavDbgMarkerMat_${this.id}_${index}`, this.scene);
+      mat.emissiveColor = color;
+      mat.disableLighting = true;
+      marker.material = mat;
+      marker.isPickable = false;
+      marker.alwaysSelectAsActiveMesh = true;
+      this._navDebugMarkers[index] = marker;
+    }
+    return marker;
+  }
+
+  _updateNavDebug(pos, steerPos, targetPos, pathPoints = null, debugData = null) {
+    if (!window._navMesh?.debugEnabled) {
+      this._disposeNavDebug();
+      return;
+    }
+    const start = pos.add(new BABYLON.Vector3(0, 0.18, 0));
+    const up = new BABYLON.Vector3(0, 0.18, 0);
+    const routePoints = Array.isArray(pathPoints) && pathPoints.length
+      ? [start, ...pathPoints.map((point) => point.add ? point.add(up) : new BABYLON.Vector3(point.x, point.y + 0.18, point.z))]
+      : (steerPos ? [start, steerPos.add(up)] : null);
+    if (routePoints?.length) {
+      if (this._navDebugLine && this._navDebugPointCount !== routePoints.length) {
+        try { this._navDebugLine.dispose(); } catch (_) {}
+        this._navDebugLine = null;
+      }
+      this._navDebugLine = BABYLON.MeshBuilder.CreateLines(`enemyNavDbg_${this.id}`, {
+        points: routePoints,
+        updatable: true,
+        instance: this._navDebugLine || undefined,
+      }, this.scene);
+      this._navDebugPointCount = routePoints.length;
+      this._navDebugLine.color = new BABYLON.Color3(0.15, 1, 1);
+      this._navDebugLine.isPickable = false;
+      this._navDebugLine.alwaysSelectAsActiveMesh = true;
+    } else if (this._navDebugLine) {
+      this._navDebugLine.setEnabled(false);
+    }
+    if (targetPos) {
+      const points = [start, targetPos.add(new BABYLON.Vector3(0, 0.3, 0))];
+      this._targetDebugLine = BABYLON.MeshBuilder.CreateLines(`enemyTargetDbg_${this.id}`, {
+        points,
+        updatable: true,
+        instance: this._targetDebugLine || undefined,
+      }, this.scene);
+      this._targetDebugLine.color = new BABYLON.Color3(1, 0.2, 0.35);
+      this._targetDebugLine.isPickable = false;
+      this._targetDebugLine.alwaysSelectAsActiveMesh = true;
+    } else if (this._targetDebugLine) {
+      this._targetDebugLine.setEnabled(false);
+    }
+    if (this._navDebugLine) this._navDebugLine.setEnabled(!!routePoints?.length);
+    if (this._targetDebugLine) this._targetDebugLine.setEnabled(!!targetPos);
+
+    const startMarker = this._upsertNavDebugMarker(0, new BABYLON.Color3(0.2, 0.75, 1));
+    const endMarker = this._upsertNavDebugMarker(1, new BABYLON.Color3(0.25, 1, 0.35));
+    const hitMarker = this._upsertNavDebugMarker(2, new BABYLON.Color3(1, 0.9, 0.15));
+    if (debugData?.start) {
+      startMarker.position.copyFrom(debugData.start.add(new BABYLON.Vector3(0, 0.08, 0)));
+      startMarker.setEnabled(true);
+    } else startMarker.setEnabled(false);
+    if (debugData?.end) {
+      endMarker.position.copyFrom(debugData.end.add(new BABYLON.Vector3(0, 0.08, 0)));
+      endMarker.setEnabled(true);
+    } else endMarker.setEnabled(false);
+    if (debugData?.ray?.hitPoint) {
+      hitMarker.position.copyFrom(debugData.ray.hitPoint.add(new BABYLON.Vector3(0, 0.08, 0)));
+      hitMarker.setEnabled(true);
+    } else hitMarker.setEnabled(false);
+  }
+
+  takeDamage(amount, fromDir = null, kbMult = 1.0, launch = false, sourceTarget = null) {
     if (!this.alive) return;
     this.hp = Math.max(0, this.hp - amount);
     this._flashT = 0.16;
     this._aggro = true;            // levou dano → acorda e persegue
+    this._registerThreat(sourceTarget, Math.max(1, amount + kbMult * 2));
     this.onPlaySound?.('enemy_hit');
 
     const crit = kbMult >= 4.5;   // alinhado ao CRIT_KB do CombatSystem
@@ -218,6 +319,7 @@ export class AnimatedEnemy {
     if (launch) this.onPlaySpatial?.('flyby', this.root);
 
     if (this.hp <= 0) {
+      window._navMesh?.unregisterCrowdAgent?.(this);
       this.alive = false;
       this._state = State.DYING;
       this._deathT = this.DEATH_DUR;
@@ -234,8 +336,210 @@ export class AnimatedEnemy {
     }
   }
 
-  update(dt, playerPos, cameraPos) {
+  _normalizeTarget(targetLike) {
+    if (!targetLike) {
+      return this._getFallbackTarget();
+    }
+    if (targetLike instanceof BABYLON.Vector3) {
+      return {
+        id: 'local-player',
+        kind: 'local',
+        position: targetLike,
+        canBeHit: true,
+      };
+    }
+    if (!targetLike.position) return this._getFallbackTarget();
+    return {
+      ...targetLike,
+      id: targetLike.id || `${targetLike.kind || 'target'}-anonymous`,
+      kind: targetLike.kind || 'unknown',
+      position: targetLike.position,
+      canBeHit: targetLike.canBeHit ?? (targetLike.kind !== 'memory' && targetLike.kind !== 'none'),
+    };
+  }
+
+  _getFallbackTarget() {
+    return {
+      id: 'fallback-spawn',
+      kind: 'none',
+      position: this._spawnPos || this.root?.position || BABYLON.Vector3.Zero(),
+      canBeHit: false,
+    };
+  }
+
+  _getTargetCandidates(targetLike) {
+    const raw = Array.isArray(targetLike)
+      ? targetLike
+      : Array.isArray(targetLike?.candidates)
+        ? targetLike.candidates
+        : (targetLike ? [targetLike] : []);
+    const out = [];
+    for (const entry of raw) {
+      const target = this._normalizeTarget(entry);
+      if (target.kind === 'none') continue;
+      out.push(target);
+    }
+    return out;
+  }
+
+  _registerThreat(targetLike, amount = 0) {
+    const target = this._normalizeTarget(targetLike);
+    if (!target.id || target.kind === 'none' || target.kind === 'memory') return;
+    const now = this._targetClock || 0;
+    const threatGain = Math.max(0.75, amount * 0.35);
+    const rec = this._targetThreat.get(target.id) || {
+      id: target.id,
+      threat: 0,
+      lastSeenAt: now,
+      lastDamageAt: -Infinity,
+      lastUpdateAt: now,
+      lastKnownPosition: null,
+      kind: target.kind,
+      canBeHit: target.canBeHit !== false,
+    };
+    rec.kind = target.kind;
+    rec.canBeHit = target.canBeHit !== false;
+    rec.lastSeenAt = now;
+    rec.lastDamageAt = now;
+    rec.lastUpdateAt = now;
+    rec.lastKnownPosition = target.position?.clone?.() || target.position;
+    rec.threat = Math.min(48, (rec.threat || 0) + threatGain);
+    this._targetThreat.set(target.id, rec);
+    this._targetId = target.id;
+    this._targetLockT = Math.max(this._targetLockT, 0.9);
+  }
+
+  _decayThreatState(candidates) {
+    const now = this._targetClock || 0;
+    const seenIds = new Set();
+    for (const candidate of candidates) {
+      seenIds.add(candidate.id);
+      const rec = this._targetThreat.get(candidate.id) || {
+        id: candidate.id,
+        threat: 0,
+        lastSeenAt: now,
+        lastDamageAt: -Infinity,
+        lastUpdateAt: now,
+        lastKnownPosition: null,
+        kind: candidate.kind,
+        canBeHit: candidate.canBeHit !== false,
+      };
+      rec.kind = candidate.kind;
+      rec.canBeHit = candidate.canBeHit !== false;
+      rec.lastSeenAt = now;
+      rec.lastKnownPosition = candidate.position?.clone?.() || candidate.position;
+      this._targetThreat.set(candidate.id, rec);
+    }
+
+    for (const [id, rec] of this._targetThreat.entries()) {
+      const elapsed = Math.max(0, now - (rec.lastUpdateAt ?? now));
+      if (elapsed > 0) {
+        rec.threat = Math.max(0, (rec.threat || 0) - elapsed * 1.15);
+        rec.lastUpdateAt = now;
+      }
+      const seenAgo = now - (rec.lastSeenAt ?? now);
+      const stale = seenAgo > (this._targetMemorySeconds + 1.5);
+      if (!seenIds.has(id) && rec.threat <= 0.05 && stale && this._targetId !== id) {
+        this._targetThreat.delete(id);
+      }
+    }
+  }
+
+  _scoreTargetCandidate(candidate, pos) {
+    const rec = this._targetThreat.get(candidate.id);
+    const dx = candidate.position.x - pos.x;
+    const dy = (candidate.position.y || 0) - (pos.y || 0);
+    const dz = candidate.position.z - pos.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    let score = Math.max(0, 24 - dist);
+    score += (rec?.threat || 0) * 1.9;
+    if (candidate.id === this._targetId) score += 3.0;
+    if (rec && (this._targetClock - rec.lastDamageAt) <= 2.2) score += 4.5;
+    if (candidate.kind === 'local') score += 0.4;
+    return score;
+  }
+
+  _createMemoryTarget(rec) {
+    if (!rec?.lastKnownPosition) return this._getFallbackTarget();
+    return {
+      id: rec.id,
+      kind: 'memory',
+      memoryOf: rec.kind,
+      position: rec.lastKnownPosition.clone?.() || rec.lastKnownPosition,
+      canBeHit: false,
+    };
+  }
+
+  _hasThreatInterest() {
+    const now = this._targetClock || 0;
+    for (const rec of this._targetThreat.values()) {
+      const recentDamage = (now - (rec.lastDamageAt ?? -Infinity)) <= this._targetMemorySeconds;
+      if ((rec.threat || 0) > 0.2 || recentDamage) return true;
+    }
+    return false;
+  }
+
+  _resolveCombatTarget(targetLike, pos) {
+    const candidates = this._getTargetCandidates(targetLike);
+    this._decayThreatState(candidates);
+
+    if (!candidates.length) {
+      const currentRecord = this._targetId ? this._targetThreat.get(this._targetId) : null;
+      const freshCurrent = currentRecord
+        && (this._targetClock - (currentRecord.lastSeenAt ?? -Infinity)) <= this._targetMemorySeconds;
+      if (freshCurrent) return this._createMemoryTarget(currentRecord);
+
+      let fallbackRecord = null;
+      for (const rec of this._targetThreat.values()) {
+        const fresh = (this._targetClock - (rec.lastSeenAt ?? -Infinity)) <= this._targetMemorySeconds;
+        if (!fresh || !rec.lastKnownPosition) continue;
+        if (!fallbackRecord || (rec.threat || 0) > (fallbackRecord.threat || 0)) fallbackRecord = rec;
+      }
+      if (fallbackRecord) {
+        this._targetId = fallbackRecord.id;
+        return this._createMemoryTarget(fallbackRecord);
+      }
+      if (this._targetLockT <= 0) this._targetId = null;
+      return this._getFallbackTarget();
+    }
+
+    const currentCandidate = this._targetId
+      ? candidates.find((candidate) => candidate.id === this._targetId) || null
+      : null;
+    const currentScore = currentCandidate ? this._scoreTargetCandidate(currentCandidate, pos) : -Infinity;
+
+    let best = null;
+    let bestScore = -Infinity;
+    for (const candidate of candidates) {
+      const score = this._scoreTargetCandidate(candidate, pos);
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+
+    let chosen = best || currentCandidate || this._getFallbackTarget();
+    if (currentCandidate && best && best.id !== currentCandidate.id) {
+      const margin = this._targetLockT > 0
+        ? this._targetSwitchMargin
+        : this._targetSwitchMargin * 0.55;
+      if ((bestScore - currentScore) < margin) chosen = currentCandidate;
+    }
+
+    if (chosen?.id && chosen.kind !== 'none') {
+      if (chosen.id !== this._targetId) {
+        this._targetId = chosen.id;
+        this._targetLockT = 0.85;
+      } else {
+        this._targetId = chosen.id;
+      }
+    }
+    return chosen || this._getFallbackTarget();
+  }
+
+  update(dt, targetLike, cameraPos) {
     if (!this.root || this._state === State.DEAD) return false;
+    this._targetClock += dt;
     if (!this._rolesConfirmed) {
       this._rolesConfirmed = true;
       this._resolveRoles();
@@ -244,6 +548,7 @@ export class AnimatedEnemy {
     const pos = this.root.position;
     if (this._flashT > 0) this._flashT -= dt;
     if (this._attackT > 0) this._attackT -= dt;
+    if (this._targetLockT > 0) this._targetLockT -= dt;
 
     if (this._state === State.DYING) {
       this._deathT -= dt;
@@ -266,13 +571,26 @@ export class AnimatedEnemy {
       this._kbX *= drag; this._kbZ *= drag;
     }
 
-    const dx = playerPos.x - pos.x, dz = playerPos.z - pos.z;
+    const target = this._resolveCombatTarget(targetLike, pos);
+    const targetPos = target.position || this._spawnPos || pos;
+    const dx = targetPos.x - pos.x, dz = targetPos.z - pos.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
     const nx = dist > 0.01 ? dx / dist : 0, nz = dist > 0.01 ? dz / dist : 0;
+    const hasThreatInterest = this._hasThreatInterest();
     const rotOff = this.def.rotOffset ?? 0;
-    // Encara o MOVIMENTO (waypoint) ao perseguir; encara o PLAYER ao atacar/parado.
-    const faceX = (this._state === State.IDLE && this._faceX != null) ? this._faceX : dx;
-    const faceZ = (this._state === State.IDLE && this._faceZ != null) ? this._faceZ : dz;
+    // Encara o movimento quando esta patrulhando/perseguindo. Se estiver em
+    // idle sem aggro, preserva a orientacao atual em vez de "sentir" o player.
+    let faceX = dx, faceZ = dz;
+    if (this._state === State.IDLE) {
+      if (this._faceX != null && this._faceZ != null) {
+        faceX = this._faceX;
+        faceZ = this._faceZ;
+      } else {
+        const idleYaw = this.root.rotation.y - rotOff;
+        faceX = Math.sin(idleYaw);
+        faceZ = Math.cos(idleYaw);
+      }
+    }
     let da = (Math.atan2(faceX, faceZ) + rotOff) - this.root.rotation.y;
     while (da > Math.PI) da -= Math.PI * 2;
     while (da < -Math.PI) da += Math.PI * 2;
@@ -326,9 +644,9 @@ export class AnimatedEnemy {
         pos.x += this._vx * dt; pos.z += this._vz * dt;
         this._vx *= 0.85; this._vz *= 0.85;
         // Hitbox REAL: esfera do golpe à frente vs cápsula do player
-        if (!this._hitDone && this._meleeHitsPlayer(pos, playerPos, nx, nz)) {
+        if (!this._hitDone && target.canBeHit !== false && this._meleeHitsPlayer(pos, targetPos, nx, nz)) {
           this._hitDone = true;
-          this.onAttack?.(this.DAMAGE, this.behavior === 'brute' ? 'slam' : 'melee', pos.clone(), this.KB);
+          this.onAttack?.(this.DAMAGE, this.behavior === 'brute' ? 'slam' : 'melee', pos.clone(), this.KB, target);
         }
         if (this._stateT <= 0) { this._state = State.RECOVER; this._stateT = 0.3; }
         break;
@@ -341,12 +659,14 @@ export class AnimatedEnemy {
         //  Entra em aggro ao chegar perto (AGGRO_RANGE); só desiste se o
         //  player se afastar além do LEASH. Sem aggro → fica parado (idle).
         if (!this._aggro) {
-          if (dist <= this.AGGRO_RANGE) this._aggro = true;
-        } else if (dist > this.LEASH_RANGE) {
-          this._aggro = false; this._wp = null;
+          if (dist <= this.AGGRO_RANGE || hasThreatInterest) this._aggro = true;
+        } else if (dist > this.LEASH_RANGE && !hasThreatInterest) {
+          this._aggro = false; this._wp = null; this._targetId = null;
         }
 
         if (!this._aggro) {
+          this._holdCrowdPosition(dt);
+          this._updateNavDebug(pos, null, null);
           // ── PATRULHA (wander): vagueia devagar perto do spawn ──────────
           //  Em vez de ficar congelado, escolhe um destino aleatório no raio
           //  de patrulha e caminha até lá, pausando às vezes. Dá vida à cena.
@@ -359,41 +679,121 @@ export class AnimatedEnemy {
           // NavMesh, segue o próximo waypoint do caminho → contorna paredes/
           // objetos em vez de atravessar. Reusa o waypoint por ~0.3s (barato).
           let mx = nx, mz = nz;
+          let debugSteer = null;
+          let debugPath = null;
+          let debugData = null;
           const nav = window._navMesh;
           if (nav?.ready) {
+            mx = 0;
+            mz = 0;
             this._navT = (this._navT || 0) - dt;
-            if (this._navT <= 0 || !this._wp) {
-              this._wp = nav.nextStep(pos, playerPos);
-              this._navT = 0.3;
+            if (this._navT <= 0 || !this._crowdState) {
+              this._crowdState = nav.updateCrowdAgent(this, targetPos, {
+                parameters: this._getCrowdAgentParams(),
+                minRetargetMs: 120,
+                snapDistance: 1.4,
+              });
+              this._navT = 0.18;
+            } else {
+              this._crowdState = nav.getCrowdAgentState?.(this) || this._crowdState;
             }
-            if (this._wp) {
-              const wdx = this._wp.x - pos.x, wdz = this._wp.z - pos.z;
+            if (nav.debugEnabled) {
+              this._navDebugEvalT = (this._navDebugEvalT || 0) - dt;
+              if (this._navDebugEvalT <= 0) {
+                debugData = nav.getDebugPathData?.(pos, targetPos) || null;
+                this._lastNavDebugData = debugData;
+                this._navDebugEvalT = 0.18;
+              } else {
+                debugData = this._lastNavDebugData || null;
+              }
+            }
+            const steer = this._getCrowdSteerPoint(pos);
+            debugPath = Array.isArray(this._crowdState?.path) ? this._crowdState.path : (debugData?.path || null);
+            if (steer) {
+              this._wp = null;
+              debugSteer = steer.clone?.() || steer;
+              const wdx = steer.x - pos.x, wdz = steer.z - pos.z;
               const wd = Math.sqrt(wdx * wdx + wdz * wdz);
               if (wd > 0.05) { mx = wdx / wd; mz = wdz / wd; }
+            } else {
+              this._wp = nav.nextStep(pos, targetPos);
+              if (this._wp) {
+                debugSteer = this._wp.clone?.() || this._wp;
+                debugPath = debugData?.path?.length ? debugData.path : [this._wp];
+                const wdx = this._wp.x - pos.x, wdz = this._wp.z - pos.z;
+                const wd = Math.sqrt(wdx * wdx + wdz * wdz);
+                if (wd > 0.05) { mx = wdx / wd; mz = wdz / wd; }
+              } else {
+                this._crowdState = null;
+                this._navT = Math.min(this._navT || 0, 0.05);
+              }
+            }
+          } else {
+            // Fallback de emergencia: sem nav valida, nunca aceite steering
+            // que aponte para longe do player ou para um waypoint velho.
+            this._crowdState = null;
+            this._wp = null;
+            const dot = (mx * nx) + (mz * nz);
+            if (dot < 0.35) {
+              mx = nx;
+              mz = nz;
             }
           }
           // COLISÃO: não atravessa parede. O raycast é CARO (testa a cena
           //  toda), então só checa a cada ~0.15s — e guarda o resultado. A
           //  navmesh já faz o contorno; isto é a rede de segurança.
           const step = this.MOVE_SPEED * dt;
-          this._blockT = (this._blockT || 0) - dt;
-          if (this._blockT <= 0) {
-            this._blocked = this._blockedAhead(pos, mx, mz, step);
-            this._blockT = 0.15;
-            if (this._blocked) { this._wp = null; this._navT = 0; }  // recalcula caminho
+          const hasNavSteer = Math.abs(mx) > 0.001 || Math.abs(mz) > 0.001;
+          if (nav?.ready && !hasNavSteer) {
+            this._blocked = true;
+          } else {
+          this._blocked = this._blockedAhead(pos, mx, mz, step);
           }
+          // #region debug-point enemy-block-check
+          fetch('http://127.0.0.1:7778/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            sessionId: 'wall-dynamic-nav',
+            runId: 'pre-fix',
+            hypothesisId: 'H3-H4',
+            location: 'AnimatedEnemy.js:block-check',
+            msg: '[DEBUG] enemy block check',
+            data: {
+              enemy: this.root?.name || this.constructor?.name || 'enemy',
+              blocked: this._blocked === true,
+              hasNavSteer,
+              hasWaypoint: !!(this._crowdState?.nextCorner || this._wp),
+              waypoint: this._wp ? { x: +this._wp.x.toFixed(2), y: +this._wp.y.toFixed(2), z: +this._wp.z.toFixed(2) } : null,
+              pos: { x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2) },
+              move: { x: +mx.toFixed(2), z: +mz.toFixed(2) },
+              crowdVelocity: this._crowdState?.velocity ? {
+                x: +this._crowdState.velocity.x.toFixed(2),
+                z: +this._crowdState.velocity.z.toFixed(2),
+              } : null,
+            },
+            ts: Date.now(),
+          }) }).catch(() => {});
+          // #endregion
+          if (this._blocked) {
+            this._wp = null;
+            this._crowdState = null;
+            this._navT = 0;
+          }  // recalcula caminho
           if (!this._blocked) {
             pos.x += mx * step;
             pos.z += mz * step;
           }
+          this._updateNavDebug(pos, debugSteer, targetPos, debugPath, debugData);
           this._faceX = mx; this._faceZ = mz;
           this._play(this.rMove, true);
         } else if (this._attackT <= 0) {
+          this._holdCrowdPosition(dt, true);
+          this._updateNavDebug(pos, null, targetPos);
           // Windup mais longo = telegraph: dá tempo do player reagir/desviar
           this._state = State.WINDUP; this._stateT = 0.45;
           this._play(this._pickAttack(), false);
           this.onPlaySound?.('enemy_attack');
         } else {
+          this._holdCrowdPosition(dt);
+          this._updateNavDebug(pos, null, targetPos);
           this._play(this.rIdle, true);
         }
         break;
@@ -441,7 +841,26 @@ export class AnimatedEnemy {
         const ddx = c.x - pos.x, ddz = c.z - pos.z;
         if (ddx * ddx + ddz * ddz < 25) near.push(m);   // < 5u
       }
-      if (!near.length) return false;
+      if (!near.length) {
+        // #region debug-point wall-pass-through-no-near-obstacle
+        fetch('http://127.0.0.1:7778/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          sessionId: 'wall-pass-through',
+          runId: 'pre-fix',
+          hypothesisId: 'H1-H3',
+          location: 'AnimatedEnemy.js:_blockedAhead:no-near',
+          msg: '[DEBUG] blockedAhead found no near obstacle',
+          data: {
+            enemy: this.root?.name || this.constructor?.name || 'enemy',
+            obstacleCount: obstacles.length,
+            pos: { x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2) },
+            dir: { x: +dx.toFixed(2), z: +dz.toFixed(2) },
+            len: +len.toFixed(2),
+          },
+          ts: Date.now(),
+        }) }).catch(() => {});
+        // #endregion
+        return false;
+      }
       for (const hy of [0.9, 0.35]) {
         const origin = new BABYLON.Vector3(pos.x, this._groundY + hy, pos.z);
         const ray = new BABYLON.Ray(origin, dir, len);
@@ -450,7 +869,25 @@ export class AnimatedEnemy {
           if (pick?.hit && pick.distance < len) return true;
         }
       }
-      return false;
+      // #region debug-point wall-pass-through-ray-miss
+      fetch('http://127.0.0.1:7778/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        sessionId: 'wall-pass-through',
+        runId: 'pre-fix',
+        hypothesisId: 'H2-H3-H5',
+        location: 'AnimatedEnemy.js:_blockedAhead:ray-miss',
+        msg: '[DEBUG] blockedAhead ray missed nearby obstacles',
+        data: {
+          enemy: this.root?.name || this.constructor?.name || 'enemy',
+          nearCount: near.length,
+          obstacleCount: obstacles.length,
+          pos: { x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2) },
+          dir: { x: +dx.toFixed(2), z: +dz.toFixed(2) },
+          len: +len.toFixed(2),
+          nearNames: near.slice(0, 8).map((m) => m?.name || null),
+        },
+        ts: Date.now(),
+      }) }).catch(() => {});
+      // #endregion
     }
     // Fallback: pick na cena com filtro (raro — navmesh não pronta)
     for (const hy of [0.9, 0.35]) {
@@ -581,6 +1018,52 @@ export class AnimatedEnemy {
     return this.rAttacks[(Math.random() * this.rAttacks.length) | 0];
   }
 
+  _getCrowdAgentParams() {
+    const height = Math.max(1.2, (this.def.targetHeight || 1.6) * 0.92);
+    const radius = Math.max(0.3, Math.min(0.7, (this.def.targetHeight || 1.6) * 0.18));
+    return {
+      radius,
+      height,
+      maxAcceleration: Math.max(6, this.MOVE_SPEED * 5),
+      maxSpeed: Math.max(1.2, this.MOVE_SPEED),
+      collisionQueryRange: Math.max(2.5, radius * 7),
+      pathOptimizationRange: Math.max(6, radius * 18),
+      separationWeight: 1.1,
+      reachRadius: Math.max(0.35, radius * 1.25),
+    };
+  }
+
+  _getCrowdSteerPoint(pos) {
+    const state = this._crowdState;
+    if (!state) return null;
+    const corner = state.nextCorner;
+    if (corner) {
+      const ddx = corner.x - pos.x;
+      const ddz = corner.z - pos.z;
+      if (ddx * ddx + ddz * ddz > 0.06) return corner;
+    }
+    const velocity = state.velocity;
+    if (velocity && (velocity.x * velocity.x + velocity.z * velocity.z) > 0.01) {
+      return new BABYLON.Vector3(pos.x + velocity.x, pos.y, pos.z + velocity.z);
+    }
+    return state.position || null;
+  }
+
+  _holdCrowdPosition(dt, force = false) {
+    const nav = window._navMesh;
+    if (!nav?.ready) return;
+    this._crowdHoldT = (this._crowdHoldT || 0) - dt;
+    if (!force && this._crowdHoldT > 0) return;
+    this._crowdHoldT = force ? 0.05 : 0.25;
+    this._crowdState = nav.updateCrowdAgent(this, this.root.position, {
+      force,
+      forceSync: true,
+      snapDistance: 0.45,
+      parameters: this._getCrowdAgentParams(),
+      minRetargetMs: 60,
+    }) || this._crowdState;
+  }
+
   // ── Hitbox de golpe: esfera à frente vs cápsula vertical do player ──
   //  O golpe nasce à FRENTE do inimigo (não no centro), na altura do
   //  meio do corpo. Só acerta se a esfera encostar na cápsula do player
@@ -683,6 +1166,8 @@ export class AnimatedEnemy {
   }
 
   _cleanup() {
+    window._navMesh?.unregisterCrowdAgent?.(this);
+    this._disposeNavDebug();
     for (const a of this.anims) { try { a.dispose(); } catch (_) {} }
     [this._hpBg, this._hpFg, this._hpLabel, this._shadow].forEach(m => { try { m?.dispose(); } catch (_) {} });
     try { this._ragAgg?.dispose?.(); } catch (_) {}
@@ -693,6 +1178,8 @@ export class AnimatedEnemy {
 
   reset() {
     if (!this.root) return;
+    window._navMesh?.unregisterCrowdAgent?.(this);
+    this._disposeNavDebug();
     this.root.position.copyFrom(this._spawnPos);
     this.root.position.y = this._groundY + this.HOVER_H + this._footOffset;
     this.root.rotationQuaternion = null;
@@ -701,6 +1188,12 @@ export class AnimatedEnemy {
     this.hp = this.maxHp; this.alive = true;
     this._state = State.IDLE; this._attackT = 1.0;
     this._flashT = 0; this._deathT = 0; this._kbX = this._kbZ = 0;
+    this._crowdState = null;
+    this._aggro = false;
+    this._targetClock = 0;
+    this._targetId = null;
+    this._targetLockT = 0;
+    this._targetThreat.clear();
     for (const m of this._childMeshes) { m.visibility = 1; }
     this._showBar(true);
     this._play(this.rIdle, true);

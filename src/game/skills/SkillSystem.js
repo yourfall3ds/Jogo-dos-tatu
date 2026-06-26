@@ -37,6 +37,24 @@ export const SKILL_DEFS = {
   },
 };
 
+function getLocalCombatTarget(player) {
+  const actor = player || window._gamePlayer || null;
+  const position = actor?.animator?.root?.absolutePosition
+    ?? actor?.mesh?.position
+    ?? null;
+  if (!position) return null;
+  return {
+    id: 'local-player',
+    kind: 'local',
+    position,
+    actor,
+    canBeHit: true,
+    receiveDamage: (dmg, attackType, fromPos, kbForce = 0) => {
+      actor?.takeDamage?.(dmg, attackType, fromPos, kbForce);
+    },
+  };
+}
+
 export class SkillSystem {
   constructor(player, scene, stats) {
     this.player = player;
@@ -146,7 +164,7 @@ export class SkillSystem {
       const d = BABYLON.Vector3.Distance(e.root.position, center);
       if (d <= radius) {
         const kdir = dir || e.root.position.subtract(center).normalize();
-        e.takeDamage(damage, kdir, 1.4);
+        e.takeDamage(damage, kdir, 1.4, false, getLocalCombatTarget(this.player));
       }
     }
   }

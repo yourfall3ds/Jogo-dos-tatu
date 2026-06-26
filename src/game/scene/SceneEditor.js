@@ -17,6 +17,7 @@
 //    • Export JSON  — arquivo permanente para versionamento
 // ─────────────────────────────────────────────────────────────────
 import { DEBUG } from '../../utils/debug.js';
+import { WorldObjects } from '../data/WorldObjects.js';
 
 // ════════════════════════════════════════════════════════════════
 //  GhostCamera — câmera de voo livre (Unreal-style)
@@ -203,6 +204,7 @@ export class SceneEditor {
     this._visible    = false;
     this._saved      = {};
     this._deleted    = [];   // nomes de objetos removidos (persistido)
+    this._undoDeleted = [];
     this._tKeys      = {};   // teclas de transform (Q/R) ativas
     this._hlLayer    = null;
     this._hlMeshes   = [];   // lista dos meshes realmente adicionados ao HighlightLayer
@@ -255,6 +257,103 @@ export class SceneEditor {
     this._refreshTemplateSelect();
   }
 
+  _getPersistenceKey(mesh) {
+    if (!mesh) return null;
+    const root = this._resolveRoot(mesh);
+    return root?._scenePersistKey
+      || root?._gameObject?.persistenceKey
+      || mesh?._gameObject?.persistenceKey
+      || root?.metadata?.persistenceKey
+      || mesh?.metadata?.persistenceKey
+      || root?.name
+      || mesh?.name
+      || null;
+  }
+
+  _normalizeDeletionEntry(entry) {
+    if (!entry) return null;
+    if (typeof entry === 'string') {
+      return { key: entry, label: entry };
+    }
+    const key = entry.key || entry.persistenceKey || entry.name;
+    if (!key) return null;
+    return {
+      key,
+      label: entry.label || entry.name || key,
+    };
+  }
+
+  _findNodeByDeletionEntry(entry) {
+    const normalized = this._normalizeDeletionEntry(entry);
+    if (!normalized) return null;
+    const nodes = [
+      ...this.scene.transformNodes,
+      ...this.scene.meshes,
+    ];
+    return nodes.find(node => {
+      if (!node || node.isDisposed?.()) return false;
+      const key = this._getPersistenceKey(node);
+      return key === normalized.key || node.name === normalized.key;
+    }) || null;
+  }
+
+  _rememberDeleted(key, name) {
+    if (!key) return;
+    const exists = this._deleted.some(entry => this._normalizeDeletionEntry(entry)?.key === key);
+    if (!exists) this._deleted.push({ key, name });
+    LocalDB.save(SceneEditor.DELETED_KEY, this._deleted);
+  }
+
+  _forgetDeleted(key) {
+    if (!key) return;
+    this._deleted = this._deleted.filter(entry => this._normalizeDeletionEntry(entry)?.key !== key);
+    LocalDB.save(SceneEditor.DELETED_KEY, this._deleted);
+  }
+
+  _createUndoSnapshot(target, key, name) {
+    if (!target?.clone) return null;
+    try {
+      const cloneName = `__undo__${name}_${Date.now()}`;
+      const clone = target.clone(cloneName, target.parent || null, false);
+      if (!clone) return null;
+      clone.setEnabled(false);
+      clone._scenePersistKey = key;
+      return {
+        key,
+        name,
+        node: clone,
+        hadCollisions: !!target.checkCollisions,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  _undoDelete() {
+    const snap = this._undoDeleted.pop();
+    if (!snap?.node || snap.node.isDisposed?.()) {
+      this._toast('Nada para desfazer.', '#2a1a00');
+      return;
+    }
+    this._forgetDeleted(snap.key);
+    try {
+      snap.node.name = snap.name;
+      snap.node.setEnabled(true);
+      snap.node.checkCollisions = snap.hadCollisions;
+      snap.node.getChildMeshes?.(false)?.forEach(m => {
+        m.checkCollisions = snap.hadCollisions || m.checkCollisions;
+        m.isPickable = true;
+      });
+      if (snap.hadCollisions) {
+        try { optimizeCollider(snap.node, this.scene); } catch (_) {}
+      }
+      this._selectMesh(snap.node);
+      this._toast(`↩ '${snap.name}' restaurado`, '#0a1a2a');
+    } catch (_) {
+      this._toast('Nao consegui desfazer esse delete.', '#3a0a00');
+    }
+  }
+
   _refreshTemplateSelect() {
     const sel = this._rightPanel?.querySelector('#sed-sel-template');
     if (!sel) return;
@@ -292,7 +391,17 @@ export class SceneEditor {
     LocalDB.save(SceneEditor.STORAGE_KEY, this._saved);
   }
 
-  applyAllSaved() {
+  async applyAllSaved() {
+    let sharedWorldActive = window._buildMode?._sharedWorld === true;
+    if (!sharedWorldActive) {
+      try { sharedWorldActive = (await WorldObjects.loadAll()) != null; } catch (_) {}
+    }
+    if (sharedWorldActive) {
+      if ((this._deleted?.length || 0) || Object.keys(this._saved || {}).length) {
+        console.log('[SceneEditor] mundo compartilhado ativo; ignorando overrides locais legados.');
+      }
+      return;
+    }
     this._applyDeletions();   // remove o que foi deletado no editor
     let n = 0, g = 0;
     for (const [name, t] of Object.entries(this._saved)) {
@@ -466,10 +575,11 @@ export class SceneEditor {
     // Limpa highlight anterior — garante que nunca acumula
     this._clearHighlight();
 
-    this._sel = mesh;
-    this._gm.attachToMesh(mesh ?? null);
+    const target = this._resolveRoot(mesh) || mesh;
+    this._sel = target;
+    this._gm.attachToMesh(target ?? null);
 
-    if (mesh) {
+    if (target) {
       // Cria layer só na primeira vez
       if (!this._hlLayer) {
         this._hlLayer = new BABYLON.HighlightLayer('sed_hl', this.scene);
@@ -480,14 +590,14 @@ export class SceneEditor {
       }
 
       // Adiciona todos os Meshes reais do objeto selecionado
-      for (const m of this._collectMeshes(mesh)) {
+      for (const m of this._collectMeshes(target)) {
         try {
           this._hlLayer.addMesh(m, BABYLON.Color3.Green());
           this._hlMeshes.push(m);
         } catch(_) {}
       }
 
-      this._syncAllSections(mesh);
+      this._syncAllSections(target);
     } else {
       this._clearInputs();
       this._clearPhysicsSection?.();
@@ -496,7 +606,7 @@ export class SceneEditor {
     }
 
     const n = this._rightPanel?.querySelector('#sed-sel-name');
-    if (n) n.textContent = mesh ? mesh.name : '— clique na cena —';
+    if (n) n.textContent = target ? target.name : '— clique na cena —';
 
     this._refreshHierarchy();
   }
@@ -533,6 +643,11 @@ export class SceneEditor {
       if (!this._visible) return;
       const tag = (e.target?.tagName || '').toUpperCase();
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
+        e.preventDefault();
+        this._undoDelete();
+        return;
+      }
       this._tKeys[e.code] = true;
       if ((e.code === 'Delete' || e.code === 'Backspace') && this._sel) {
         e.preventDefault();
@@ -570,10 +685,12 @@ export class SceneEditor {
   }
 
   // ── Deleta o objeto selecionado (e persiste a remoção) ───────────────
-  _deleteSelected() {
+  async _deleteSelected() {
     const mesh = this._sel;
     if (!mesh) return;
-    const name = mesh.name;
+    const target = this._resolveRoot(mesh);
+    const name = target?.name || mesh.name;
+    const persistenceKey = this._getPersistenceKey(target || mesh) || name;
     this._clearHighlight();
     this._gm?.attachToMesh(null);
 
@@ -593,13 +710,42 @@ export class SceneEditor {
       return;
     }
 
-    try { mesh._gameObject?.dispose?.(); } catch (_) {}
-    try { mesh.dispose(false, true); } catch (_) {}     // dispõe filhos tb
+    const placed = window._buildMode?.findPlacedByMesh?.(target || mesh);
+    // #region debug-point A:editor-delete-branch
+    fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"SceneEditor.js:delete-branch",msg:"[DEBUG] editor avaliou branch de delete",data:{selected:mesh?.name || null,target:target?.name || null,isGlobal:!!placed?.entry,worldId:placed?.entry?.worldId || null},ts:Date.now()})}).catch(()=>{});
+    // #endregion
+    if (placed?.entry) {
+      // #region debug-point A:editor-delete-global
+      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"SceneEditor.js:delete-global",msg:"[DEBUG] editor detectou item global para delete",data:{worldId:placed.entry.worldId || null,name:name || null},ts:Date.now()})}).catch(()=>{});
+      // #endregion
+      const removedFromWorld = await window._buildMode?.removePlacedByMesh?.(target || mesh);
+      if (!removedFromWorld) {
+        this._toast?.('Nao foi possivel remover esse item do mapa global agora', '#5a2a2a');
+        return;
+      }
+      this._sel = null;
+      this._gm?.attachToMesh(null);
+      const nEl = this._rightPanel?.querySelector('#sed-sel-name');
+      if (nEl) nEl.textContent = '— clique na cena —';
+      this._refreshHierarchy();
+      this._toast?.(`🗑️ '${name}' removido do mapa global`, '#5a2a2a');
+      return;
+    }
+
+    const undoSnap = this._createUndoSnapshot(target || mesh, persistenceKey, name);
+    if (undoSnap) {
+      this._undoDeleted.push(undoSnap);
+      if (this._undoDeleted.length > 20) {
+        const old = this._undoDeleted.shift();
+        try { old?.node?.dispose?.(false, true); } catch (_) {}
+      }
+    }
+    try { target?._gameObject?.dispose?.(); } catch (_) {}
+    try { (target || mesh).dispose(false, true); } catch (_) {}     // dispõe filhos tb
     if (name) {
-      if (!this._deleted.includes(name)) this._deleted.push(name);
+      this._rememberDeleted(persistenceKey, name);
       delete this._saved[name];
       this._writeStorage();
-      LocalDB.save(SceneEditor.DELETED_KEY, this._deleted);
     }
     this._sel = null;
     const n = this._rightPanel?.querySelector('#sed-sel-name');
@@ -637,15 +783,17 @@ export class SceneEditor {
   _applyDeletions() {
     if (!this._deleted?.length) return;
     let n = 0;
-    for (const name of this._deleted) {
-      const m = this.scene.getMeshByName(name) ?? this.scene.getNodeByName(name);
+    for (const entry of this._deleted) {
+      const normalized = this._normalizeDeletionEntry(entry);
+      const m = this._findNodeByDeletionEntry(normalized);
       if (m) { try { m._gameObject?.dispose?.(); m.dispose(false, true); n++; } catch (_) {} }
     }
     if (n) console.log(`[SceneEditor] 🗑️ ${n} objeto(s) removido(s) (persistido).`);
   }
 
   _saveTransform(mesh) {
-    const p = mesh.position, r = mesh.rotation, s = mesh.scaling;
+    const target = this._resolveRoot(mesh) || mesh;
+    const p = target.position, r = target.rotation, s = target.scaling;
     const config = {
       p: [p.x, p.y, p.z],
       r: [r.x, r.y, r.z],
@@ -657,7 +805,7 @@ export class SceneEditor {
     if (tplId) config.template = tplId;
 
     // Adiciona flags de gameplay se existirem no GameObject vinculado
-    const go = mesh._gameObject;
+    const go = target._gameObject || mesh._gameObject;
     if (go) {
       config.breakable = go.isBreakable;
       config.physics   = go.hasPhysics;
@@ -677,10 +825,26 @@ export class SceneEditor {
       config.itemId    = q('sed-txt-itemid')?.value             || '';
     }
 
-    this._saved[mesh.name] = config;
+    const placed = window._buildMode?.findPlacedByMesh?.(target);
+    // #region debug-point A:editor-save-branch
+    fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"SceneEditor.js:save-branch",msg:"[DEBUG] editor avaliou branch de save",data:{selected:mesh?.name || null,target:target?.name || null,isGlobal:!!placed?.entry,worldId:placed?.entry?.worldId || null,p:[target?.position?.x ?? null,target?.position?.y ?? null,target?.position?.z ?? null]},ts:Date.now()})}).catch(()=>{});
+    // #endregion
+    if (placed?.entry) {
+      // #region debug-point A:editor-save-global
+      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"SceneEditor.js:save-global",msg:"[DEBUG] editor detectou item global para sync",data:{worldId:placed.entry.worldId || null,name:target?.name || mesh?.name || null,p:[target?.position?.x ?? null,target?.position?.y ?? null,target?.position?.z ?? null],s:[target?.scaling?.x ?? null,target?.scaling?.y ?? null,target?.scaling?.z ?? null]},ts:Date.now()})}).catch(()=>{});
+      // #endregion
+      this._refreshHierarchy();
+      this._refreshCollider(target);   // colisor acompanha o novo move/scale
+      Promise.resolve(window._buildMode.syncPlacedTransform(target)).catch((e) => {
+        console.warn('[SceneEditor] syncPlacedTransform falhou:', e?.message || e);
+      });
+      return;
+    }
+
+    this._saved[target.name] = config;
     this._writeStorage();
     this._refreshHierarchy();
-    this._refreshCollider(mesh);   // colisor acompanha o novo move/scale
+    this._refreshCollider(target);   // colisor acompanha o novo move/scale
   }
 
   /**

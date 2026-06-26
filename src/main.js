@@ -34,6 +34,7 @@ import { DropSystem }           from './game/items/DropSystem.js';
 import { HitStop }              from './game/combat/HitStop.js';
 import { CatalogUI }            from './game/ui/CatalogUI.js';
 import { BuildMode }            from './game/build/BuildMode.js';
+import { WorldObjects }         from './game/data/WorldObjects.js';
 import { MeshyPanel }           from './game/meshy/MeshyPanel.js';
 import { AssetMachine }         from './game/items/AssetMachine.js';
 import { PlayerStats }          from './game/stats/PlayerStats.js';
@@ -139,11 +140,18 @@ import { TerrainEditorUI }     from './game/terrain/TerrainEditorUI.js';
 import { TextureMachineUI }    from './game/terrain/TextureMachine.js';
 import { InteractableManager } from './game/interactive/InteractableManager.js';
 
-// Em localhost → Colyseus LOCAL (ws://localhost:2567) pra dev/teste; em produção
-// → o servidor da VPS via nginx. Detecta automático (produção fica intacta).
-const TRANSFPS_CS_URL = (typeof location !== 'undefined' &&
-  (location.hostname === 'localhost' || location.hostname === '127.0.0.1'))
-  ? `ws://${location.hostname}:2567`
+// Colyseus LOCAL (ws://<host>:2567) quando a página é servida em localhost OU
+// num IP de LAN (jogar em rede com o amigo) — assim o amigo abre http://SEU_IP:5500
+// e o cliente conecta no Colyseus do MESMO host. Em produção (domínio) → VPS/nginx.
+// Detecta automático: localhost/127.* ou IP privado (192.168.*, 10.*, 172.16-31.*).
+const _h = (typeof location !== 'undefined' && location.hostname) || '';
+const _isLanHost =
+  _h === 'localhost' || _h === '127.0.0.1' || _h.endsWith('.local') ||
+  /^192\.168\.\d{1,3}\.\d{1,3}$/.test(_h) ||
+  /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(_h) ||
+  /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(_h);
+const TRANSFPS_CS_URL = _isLanHost
+  ? `ws://${_h}:2567`
   : 'wss://app.overpixel.online/transfps-cs';
 
 // ── UI helpers ───────────────────────────────────────────────────
@@ -177,6 +185,7 @@ window.exitEngineMode = function () {
   window._sceneEditor?.hide();
   _engineRef?.resize();
   setFocusUI(false);
+  _updateGameFocusHint();
 };
 
 /** Alterna entre as abas do engine mode ('weapons' | 'scene') */
@@ -208,6 +217,66 @@ function setFocusUI(active) {
     btn.textContent = '▶ Voltar ao Jogo';
     ov.classList.add('visible');
   }
+}
+
+function _ensureFocusHint() {
+  let el = document.getElementById('game-focus-hint');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'game-focus-hint';
+  el.style.cssText = [
+    'position:fixed',
+    'left:50%',
+    'bottom:96px',
+    'transform:translateX(-50%)',
+    'z-index:9002',
+    'padding:6px 12px',
+    'border-radius:999px',
+    'font:600 12px Segoe UI,monospace',
+    'background:rgba(5,10,20,.78)',
+    'color:#bfe7ff',
+    'border:1px solid rgba(80,180,255,.28)',
+    'pointer-events:none',
+    'display:none',
+    'white-space:nowrap',
+  ].join(';');
+  document.body.appendChild(el);
+  return el;
+}
+
+function _updateGameFocusHint() {
+  const el = _ensureFocusHint();
+  const inp = window._gameInput;
+  const inGame = document.body.classList.contains('in-game');
+  const paused = $('pause-overlay')?.classList.contains('visible');
+  if (!inp || !inGame || paused || _engineMode) {
+    el.style.display = 'none';
+    return;
+  }
+  const mode = inp.getFocusMode?.() || 'none';
+  if (mode === 'drag-look') {
+    el.textContent = 'Trae: clique e arraste para olhar';
+    el.style.display = 'block';
+    return;
+  }
+  if (mode === 'pending' || mode === 'none') {
+    el.textContent = 'Clique no jogo para focar';
+    el.style.display = 'block';
+    return;
+  }
+  el.style.display = 'none';
+}
+
+function _engageGameFocus(fromGesture = false) {
+  window._gameInput?.activate(fromGesture);
+  setFocusUI(true);
+  _updateGameFocusHint();
+}
+
+function _releaseGameFocus() {
+  window._gameInput?.deactivate();
+  setFocusUI(false);
+  _updateGameFocusHint();
 }
 
 let _loadReachedFull = false;   // sticky: uma vez 100%, JOGAR fica liberado
@@ -1428,8 +1497,9 @@ async function init() {
   loginScreen.onOpenLobby(() => {
     serverListUI.show();
   });
-  // Botão "JOGAR OFFLINE": pula login/MP e cai direto no mundo de teste.
-  loginScreen.onOffline(() => { _enterGameOffline(); });
+  // Compat legado: qualquer callback antiga de "offline" agora cai no fluxo
+  // online de servidores, para o projeto nunca mais abrir em modo local puro.
+  loginScreen.onOffline(() => { serverListUI.show(); });
 
   // onEnterGame agora dispara quando a ServerListUI confirma join na sala.
   // Mesma logica de carregar mapa + ativar input que a LobbyUI tinha.
@@ -1513,49 +1583,20 @@ async function init() {
     //  posicionada por player.update no primeiro frame ativo.
     document.body.classList.add('in-game');
     _showClickToPlayOverlay(() => {
-      try { window._gameInput?.activate(); } catch (e) { console.error('[Input] activate:', e); }
-      try { setFocusUI(true); } catch (e) { console.error('[UI] setFocusUI:', e); }
+      try { _engageGameFocus(true); } catch (e) { console.error('[Input] activate:', e); }
       try { window._musicSystem?.start(); } catch (e) { console.error('[Music] start:', e); }
     });
     // start-screen escondida DEPOIS do overlay opaco ja estar no DOM cobrindo.
     $('start-screen').style.display = 'none';
   };
 
-  // ── MODO OFFLINE/TESTE ────────────────────────────────────────────
-  //  Pula login Google e multiplayer: cai direto no mundo aberto local.
-  //  Serve pra testar o VR (Quest) e a IA (tecla H spawna inimigos).
+  // ── LEGADO: entrada offline desativada ───────────────────────────
+  //  O projeto agora entra sempre online. Qualquer chamada antiga cai no
+  //  fluxo de servidores/Colyseus, inclusive visitante sem Google.
   const _enterGameOffline = async () => {
-    try { window._openLoadGate?.('modo offline'); } catch (e) { console.error('[Offline] openLoadGate:', e); }
-    try { await _awaitEssentials('modo offline'); } catch (e) { console.error('[Offline] essenciais:', e); }
-
-    const loading = window._loadingOverlay;
-    try {
-      loading?.show('MODO OFFLINE', 'preparando área de teste', true);
-      loading?.setProgress(30, 'criando plano');
-      _ensureOpenWorldGround(scene);
-      loading?.setProgress(70, 'preparando shaders');
-      // A cena já está renderizando (render loop do boot). executeWhenReady pode
-      // nunca disparar no WebGPU (render targets) — corremos com timeout pra não travar.
-      await Promise.race([
-        new Promise(r => scene.executeWhenReady(r)),
-        new Promise(r => setTimeout(r, 1500)),
-      ]);
-      loading?.setProgress(100, 'pronto');
-      await new Promise(r => setTimeout(r, 100));
-    } catch (e) {
-      console.error('[Offline] preparar mundo falhou:', e);
-    } finally {
-      loading?.hide();
-    }
-
-    $('start-screen').style.display = 'none';
-    document.body.classList.add('in-game');
-    _showClickToPlayOverlay(() => {
-      try { window._gameInput?.activate(); } catch (e) { console.error('[Input] activate:', e); }
-      try { setFocusUI(true); } catch (e) { console.error('[UI] setFocusUI:', e); }
-      try { window._musicSystem?.start(); } catch (e) { console.error('[Music] start:', e); }
-      console.log('[Offline] no mundo. Tecla H = spawnar inimigos (IA). 🥽 ENTRAR EM VR no Quest.');
-    });
+    try { $('start-screen').style.display = 'none'; } catch (_) {}
+    try { window._loginScreen?.hide?.(); } catch (_) {}
+    try { window._serverListUI?.show?.(); } catch (_) {}
   };
   window._enterGameOffline = _enterGameOffline;
 
@@ -1566,8 +1607,12 @@ async function init() {
   //  o fundo do menu (partículas). Idempotente: seguro chamar já em jogo.
   const _ensureWorldForVR = () => {
     try {
-      // Sem login? entra offline (user/profile falsos) pra não travar.
-      if (!window._auth?.user) { try { window._auth?.signInOffline?.(); } catch (_) {} }
+      // Sem sessão ativa, força o fluxo online em vez de fabricar um mundo local.
+      if (!window._auth?.user) {
+        try { window._serverListUI?.show?.(); } catch (_) {}
+        try { window._loginScreen?.show?.(); } catch (_) {}
+        return;
+      }
       // Esconde overlays de menu (não aparecem no headset, mas limpam o estado).
       ['start-screen', 'login-screen'].forEach(id => { const e = $(id); if (e) e.style.display = 'none'; });
       try { window._serverListUI?.hide?.(); } catch (_) {}
@@ -1576,7 +1621,7 @@ async function init() {
       // Cria o chão do mundo aberto (sync) se ainda não existe.
       _ensureOpenWorldGround(scene);
       // Ativa a lógica de jogo SEM pointer-lock (impossível no HMD).
-      try { if (window._gameInput) { window._gameInput.gameActive = true; document.body.classList.add('game-active'); } } catch (_) {}
+      try { if (window._gameInput) { window._gameInput.gameActive = true; document.body.classList.add('game-active'); _updateGameFocusHint(); } } catch (_) {}
       // Garante posição válida sobre o chão.
       try { window._gamePlayer?.spawn?.(); } catch (_) {}
       try { window._musicSystem?.start?.(); } catch (_) {}
@@ -1773,21 +1818,20 @@ async function init() {
 
   // OPEN_WORLD CLEAN: plano vazio 200x200 com material liso + colisao
   function _ensureOpenWorldGround(scene) {
-    // FIX flicker preto/branco: o Level (clean:true) cria um mesh 'ground'
-    // PBR claro coplanar em Y=0 que faz z-fighting com o nosso plano escuro.
-    // Esconde QUALQUER chao procedural do Level antes de criar/retornar o nosso.
-    scene.meshes
-      .filter(m => /^ground|procedural/i.test(m.name) && m.name !== "openworld_ground")
-      .forEach(m => { try { m.setEnabled(false); } catch (e) {} });
+    // Prefere SEMPRE o chão autoritativo do Level quando ele já existir.
+    // O overlay gigante antigo fazia o mapa parecer infinito, mas a área
+    // realmente pisável/nav não batia com o visual.
+    const levelGround = scene.getMeshByName("ground");
+    if (levelGround) {
+      try { levelGround.setEnabled(true); } catch (_) {}
+      return levelGround;
+    }
 
-    // CHÃO = plano liso branco. O TERRENO esculpível é OPT-IN (botão 🏔 Terreno):
-    // não nasce sozinho pra não conflitar/piscar com o chão de mapas que já têm
-    // geometria própria (arena). Criado só quando o jogador clica.
+    // Fallback somente quando a cena realmente não tiver um chão próprio.
     let g = scene.getMeshByName("openworld_ground");
     if (g) { g.setEnabled(true); return g; }
-    // 4x maior: 200 -> 800. subdivisions:2 (ainda plano, pouco z-fight).
-    g = BABYLON.MeshBuilder.CreateGround("openworld_ground", { width: 800, height: 800, subdivisions: 2 }, scene);
-    g.position.y = 0;
+    g = BABYLON.MeshBuilder.CreateBox("openworld_ground", { width: 160, height: 0.5, depth: 160 }, scene);
+    g.position.y = -0.25;
     g.checkCollisions = true;
     g.receiveShadows = true;
     const mat = new BABYLON.StandardMaterial("openworld_ground_mat", scene);
@@ -1801,6 +1845,8 @@ async function init() {
     // StandardMaterial nao usa IBL, mas garantimos sem reflexao residual.
     if (mat.reflectionTexture) mat.reflectionTexture = null;
     g.material = mat;
+    g._isGround = true;
+    g._navSurface = true;
     // Grid sutil opcional: so se a lib de materials estiver carregada no bundle.
     // GRID REMOVIDO: chão é BRANCO LISO (material sólido acima) até a Máquina de
     // Texturas existir. Sem linhas de grade (o usuário achou que não combinava).
@@ -1850,7 +1896,9 @@ async function init() {
   //  prontos). markDirty() do BuildMode regenera quando o mundo muda.
   const navMesh = new NavMeshManager(scene);
   window._navMesh = navMesh;
-  setTimeout(() => navMesh.init(), 4000);
+  window._toggleNavDebug = (enabled = true) => window._navMesh?.setDebugEnabled?.(enabled !== false);
+  setTimeout(() => navMesh.init(), 1200);
+  setTimeout(() => navMesh.setDebugEnabled(true), 1800);
 
   // ── Hit-stop: freeze-frame de impacto nos golpes fortes ───────────
   const hitStop = new HitStop(scene, engine, player.camera);
@@ -2035,6 +2083,7 @@ async function init() {
     // aberto via ESC) é puramente VISUAL por cima — não para a lógica.
     if (window._cs?.connected) {
       window._gameInput && (window._gameInput.gameActive = true);
+      _updateGameFocusHint();
       return;
     }
     // ── SOLO/OFFLINE: pausa de verdade (overlay + congela input local) ─
@@ -2067,8 +2116,7 @@ async function init() {
         // ESC em engine mode = volta pro jogo
         e.preventDefault();
         window.exitEngineMode();
-        window._gameInput?.activate();
-        setFocusUI(true);
+        _engageGameFocus(true);
         return;
       }
       // ── MULTIPLAYER: ESC abre o menu de pause VISUAL, mas o personagem
@@ -2092,6 +2140,7 @@ async function init() {
           try { document.body.classList.remove('in-game'); } catch (_) {}
           // mostra o cursor pra clicar nos botões do menu
           try { if (canvas) canvas.style.cursor = 'default'; } catch (_) {}
+          _updateGameFocusHint();
         }
         return;
       }
@@ -2112,8 +2161,7 @@ async function init() {
       const locked = document.pointerLockElement === canvas;
       if (!locked) {
         e.preventDefault();
-        window._gameInput?.deactivate();   // limpa gameActive + esconde cursor do jogo
-        setFocusUI(false);
+        _releaseGameFocus();   // limpa gameActive + esconde cursor do jogo
         _showGamePause();
       }
     }
@@ -2124,6 +2172,7 @@ async function init() {
     const ov = $('pause-overlay');
     if (!ov) return;
     ov.classList.add('visible');
+    _updateGameFocusHint();
     // NÃO injeta mais a 2ª caixa de pause (duplicava por cima do overlay
     //  original do index.html, que já tem todas as opções). Em vez disso,
     //  o "Voltar ao Menu" foi enxertado no overlay original (window._leaveToMenu).
@@ -2137,8 +2186,8 @@ async function init() {
     ov.classList.remove('visible');
     try { document.body.classList.add('in-game'); } catch (_) {}
     try { if (canvas) canvas.style.cursor = 'none'; } catch (_) {}
-    window._gameInput?.activate(true);
-    setFocusUI(true);
+    _engageGameFocus(true);
+    _updateGameFocusHint();
   }
   // Exposto pro botão "Voltar ao Jogo" (window.toggleFocus) usar o caminho
   // correto de resume — antes ele chamava inp.toggle() cego e, no multiplayer
@@ -2498,7 +2547,7 @@ async function init() {
   setTimeout(() => { _generateWeaponThumbnails(scene).catch(() => {}); }, 4000);
 
   // ── Login screen aparece após boot ──
-  //  Esconde a start-screen padrão e mostra LoginScreen.
+  //  Esconde a start-screen padrão e mostra a entrada online.
   //  Se já logado e tem ?room=UUID na URL, vai direto pra sala.
   setTimeout(async () => {
     const ss = $('start-screen');
@@ -2519,6 +2568,12 @@ async function init() {
 async function _restoreMachines(scene) {
   if (LocalDB.isProd()) {
     console.info('[machines] prod detectado — AssetMachine desabilitada (feature dev-only)');
+    return;
+  }
+  let sharedWorldActive = false;
+  try { sharedWorldActive = (await WorldObjects.loadAll()) != null; } catch (_) {}
+  if (sharedWorldActive) {
+    console.info('[machines] mundo compartilhado ativo — ignorando machines_placed local');
     return;
   }
   const meshyPanel = window._meshyPanel;
@@ -2769,7 +2824,7 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     await _restoreMachines(scene);
     setLoadingUI(100);
     // Aplica transforms salvos do SceneEditor sobre os GLBs recém carregados
-    window._sceneEditor?.applyAllSaved();
+    await window._sceneEditor?.applyAllSaved();
 
     // Sombras: garante que TODA superfície (chão, paredes, plataformas) receba
     //  a sombra do sol — corrige luzes FX consumindo slots e maxLights baixo.
@@ -2803,8 +2858,7 @@ window.startGame = async function () {
   document.body.classList.add('in-game');
   // Sai do engine mode caso esteja ativo
   if (_engineMode) window.exitEngineMode();
-  window._gameInput?.activate();
-  setFocusUI(true);
+  _engageGameFocus(true);
   // ── INICIA A MÚSICA agora (clique do usuário libera autoplay) ──
   window._musicSystem?.start();
 };
@@ -2813,7 +2867,7 @@ window.toggleFocus = function () {
   // Se estamos no engine mode, "Voltar ao Jogo" = sair do engine mode
   if (_engineMode) {
     window.exitEngineMode();
-    window._gameInput?.activate();
+    _engageGameFocus(true);
     return;
   }
   // PRIORIDADE MÁXIMA: se o menu de pause está ABERTO, "Voltar ao Jogo" SEMPRE
@@ -2837,14 +2891,13 @@ window.toggleFocus = function () {
   }
   const inp = window._gameInput;
   if (!inp) return;
-  inp.toggle();
-  setFocusUI(inp.gameActive);
+  if (inp.gameActive) _releaseGameFocus();
+  else _engageGameFocus(true);
 };
 
 window.openAnimator = async function() {
     if (!animatorMode) return;
-    window._gameInput?.deactivate();
-    setFocusUI(false);
+    _releaseGameFocus();
     $('pause-overlay').classList.remove('visible');
     await animatorMode.enter();
 };
@@ -2854,12 +2907,12 @@ window.closeAnimator = function() {
     animatorMode.exit();
     setFocusUI(false);
     $('pause-overlay').classList.add('visible');
+    _updateGameFocusHint();
 };
 
 window.openMonsterDebug = async function(monsterKey = 'monsterPlant') {
     if (!monsterDebugMode) return;
-    window._gameInput?.deactivate();
-    setFocusUI(false);
+    _releaseGameFocus();
     $('pause-overlay').classList.remove('visible');
     await monsterDebugMode.enter(monsterKey);
     // O render loop principal já checa monsterDebugMode.active
@@ -2871,6 +2924,7 @@ window.closeMonsterDebug = function() {
     setFocusUI(false);
     $('pause-overlay').classList.add('visible');
     _engineRef?.resize();
+    _updateGameFocusHint();
 };
 
 // Event listener para o botão do animador

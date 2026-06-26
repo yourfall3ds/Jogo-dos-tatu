@@ -10,15 +10,45 @@
 //  formato usado em _restorePlaced), pra reaproveitar o render existente.
 // ─────────────────────────────────────────────────────────────────
 import { getSupabase } from '../auth/SupabaseClient.js';
+import { LocalDB } from './LocalDB.js';
 
 const WORLD_ID = 'global';
+const WORLD_CACHE_KEY = `world_objects_cache_${WORLD_ID}`;
+
+async function _supa() {
+  try { return await getSupabase(); } catch (_) { return null; }
+}
 
 async function _uid() {
   try {
-    const supa = await getSupabase();
+    const supa = await _supa();
+    if (!supa) return null;
     const { data } = await supa.auth.getSession();
     return data?.session?.user?.id || null;
   } catch (_) { return null; }
+}
+
+function _cacheRead() {
+  const list = LocalDB.getSync(WORLD_CACHE_KEY, null);
+  return Array.isArray(list) ? list : null;
+}
+
+function _cacheWrite(records) {
+  LocalDB.setSync(WORLD_CACHE_KEY, Array.isArray(records) ? records : []);
+}
+
+function _cacheUpsert(rec) {
+  if (!rec?._worldId) return;
+  const list = _cacheRead() || [];
+  const next = list.filter(item => item?._worldId !== rec._worldId);
+  next.push(rec);
+  _cacheWrite(next);
+}
+
+function _cacheRemove(worldId) {
+  if (!worldId) return;
+  const list = _cacheRead() || [];
+  _cacheWrite(list.filter(item => item?._worldId !== worldId));
 }
 
 // ── Mapeamento linha(DB) ↔ registro(BuildMode) ──────────────────────
@@ -49,11 +79,11 @@ export function recordToRow(rec) {
       sx: sc, sy: sc, sz: sc, props: { prompt: rec.prompt || '' },
     };
   }
-  const sc = rec.sc ?? 1;
+  const s = Array.isArray(rec.s) ? rec.s : [rec.sc ?? 1, rec.sc ?? 1, rec.sc ?? 1];
   return {
     world_id: WORLD_ID, kind: 'glb', asset_id: rec.id || null, url: rec.url || null,
     px: rec.p[0], py: rec.p[1], pz: rec.p[2], ry: rec.ry || 0,
-    sx: sc, sy: sc, sz: sc, props: { ...(rec.groupProps || {}), breakable: rec.breakable !== false },
+    sx: s[0], sy: s[1], sz: s[2], props: { ...(rec.groupProps || {}), breakable: rec.breakable !== false },
   };
 }
 
@@ -85,39 +115,73 @@ export function rowToRecord(row) {
   }
   return {
     id: row.asset_id, name: 'w_' + row.id, url: row.url,
-    p: [row.px, row.py, row.pz], ry: row.ry || 0, sc: row.sx ?? 1,
+    p: [row.px, row.py, row.pz], ry: row.ry || 0, sc: row.sx ?? 1, s: [row.sx ?? 1, row.sy ?? 1, row.sz ?? 1],
     groupProps: row.props || {}, breakable: row.props?.breakable !== false, _worldId: row.id,
   };
 }
 
 export const WorldObjects = {
-  /** Há sessão logada? (sem login, mundo compartilhado fica indisponível). */
-  async available() { return !!(await _uid()); },
+  /** Cliente Supabase disponível? Leitura do mundo pode funcionar mesmo sem login. */
+  async available() { return !!(await _supa()); },
+  async canEdit() { return !!(await _supa()); },
 
   /** Carrega TODOS os objetos não-quebrados do mundo global. */
   async loadAll() {
     try {
-      const supa = await getSupabase();
+      const supa = await _supa();
+      if (!supa) return null;
       const { data, error } = await supa.schema('transfps')
         .from('world_objects').select('*').eq('world_id', WORLD_ID).eq('broken', false);
       if (error) throw error;
-      return (data || []).map(rowToRecord);
+      const records = (data || []).map(rowToRecord);
+      _cacheWrite(records);
+      return records;
     } catch (e) {
       console.warn('[WorldObjects] loadAll falhou:', e?.message || e);
-      return [];
+      const cached = _cacheRead();
+      return Array.isArray(cached) ? cached : null;
+    }
+  },
+
+  /** Semeia o layout inicial do mundo somente se ele estiver vazio. */
+  async seedDefaults(records = []) {
+    const ownerId = await _uid();
+    if (!Array.isArray(records) || !records.length) return false;
+    try {
+      const supa = await _supa();
+      if (!supa) return false;
+      const { count, error: countError } = await supa.schema('transfps')
+        .from('world_objects')
+        .select('id', { count: 'exact', head: true })
+        .eq('world_id', WORLD_ID)
+        .eq('broken', false);
+      if (countError) throw countError;
+      if ((count || 0) > 0) return false;
+      const rows = records.map((rec) => {
+        const row = recordToRow(rec);
+        if (ownerId) row.owner_id = ownerId;
+        return row;
+      });
+      const { error } = await supa.schema('transfps').from('world_objects').insert(rows);
+      if (error) throw error;
+      return true;
+    } catch (e) {
+      console.warn('[WorldObjects] seedDefaults falhou:', e?.message || e);
+      return false;
     }
   },
 
   /** Insere um objeto colocado. Retorna o uuid (id no mundo) ou null. */
   async place(rec) {
     const id = await _uid();
-    if (!id) return null;
     try {
       const supa = await getSupabase();
-      const row = { ...recordToRow(rec), owner_id: id };
+      const row = { ...recordToRow(rec) };
+      if (id) row.owner_id = id;
       const { data, error } = await supa.schema('transfps')
         .from('world_objects').insert(row).select('id').single();
       if (error) throw error;
+      if (data?.id) _cacheUpsert({ ...rec, _worldId: data.id });
       return data?.id || null;
     } catch (e) {
       console.warn('[WorldObjects] place falhou:', e?.message || e);
@@ -129,13 +193,63 @@ export const WorldObjects = {
   async remove(worldId) {
     if (!worldId) return false;
     try {
+      // #region debug-point B:worldobjects-remove-start
+      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:remove-start",msg:"[DEBUG] world_objects DELETE iniciado",data:{worldId},ts:Date.now()})}).catch(()=>{});
+      // #endregion
       const supa = await getSupabase();
       const { error } = await supa.schema('transfps')
         .from('world_objects').delete().eq('id', worldId);
       if (error) throw error;
+      _cacheRemove(worldId);
+      // #region debug-point B:worldobjects-remove-ok
+      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:remove-ok",msg:"[DEBUG] world_objects DELETE concluido",data:{worldId},ts:Date.now()})}).catch(()=>{});
+      // #endregion
       return true;
     } catch (e) {
+      // #region debug-point B:worldobjects-remove-fail
+      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:remove-fail",msg:"[DEBUG] world_objects DELETE falhou",data:{worldId,message:e?.message || String(e)},ts:Date.now()})}).catch(()=>{});
+      // #endregion
       console.warn('[WorldObjects] remove falhou:', e?.message || e);
+      return false;
+    }
+  },
+
+  /** Atualiza transform do objeto no mundo compartilhado. */
+  async updateTransform(worldId, rec) {
+    if (!worldId || !rec) return false;
+    try {
+      // #region debug-point B:worldobjects-update-start
+      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:update-start",msg:"[DEBUG] world_objects UPDATE iniciado",data:{worldId,p:[rec?.p?.[0] ?? null,rec?.p?.[1] ?? null,rec?.p?.[2] ?? null],s:Array.isArray(rec?.s)?rec.s:null},ts:Date.now()})}).catch(()=>{});
+      // #endregion
+      const supa = await _supa();
+      if (!supa) return false;
+      const row = recordToRow(rec);
+      const payload = {
+        px: row.px,
+        py: row.py,
+        pz: row.pz,
+        ry: row.ry,
+        sx: row.sx,
+        sy: row.sy,
+        sz: row.sz,
+        props: row.props,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supa.schema('transfps')
+        .from('world_objects')
+        .update(payload)
+        .eq('id', worldId);
+      if (error) throw error;
+      _cacheUpsert({ ...rec, _worldId: worldId });
+      // #region debug-point B:worldobjects-update-ok
+      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:update-ok",msg:"[DEBUG] world_objects UPDATE concluido",data:{worldId,p:[rec?.p?.[0] ?? null,rec?.p?.[1] ?? null,rec?.p?.[2] ?? null]},ts:Date.now()})}).catch(()=>{});
+      // #endregion
+      return true;
+    } catch (e) {
+      // #region debug-point B:worldobjects-update-fail
+      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:update-fail",msg:"[DEBUG] world_objects UPDATE falhou",data:{worldId,message:e?.message || String(e)},ts:Date.now()})}).catch(()=>{});
+      // #endregion
+      console.warn('[WorldObjects] updateTransform falhou:', e?.message || e);
       return false;
     }
   },
@@ -157,7 +271,9 @@ export const WorldObjects = {
         .eq('id', worldId).eq('broken', false)
         .select('id');
       if (error) throw error;
-      return Array.isArray(data) && data.length > 0;
+      const ok = Array.isArray(data) && data.length > 0;
+      if (ok) _cacheRemove(worldId);
+      return ok;
     } catch (e) {
       console.warn('[WorldObjects] markBroken falhou:', e?.message || e);
       return false;
@@ -171,7 +287,8 @@ export const WorldObjects = {
    */
   async subscribe({ onInsert, onUpdate, onDelete } = {}) {
     try {
-      const supa = await getSupabase();
+      const supa = await _supa();
+      if (!supa) return () => {};
       // CRÍTICO: o Realtime avalia a RLS com o JWT do usuário no SOCKET. Sem
       // setAuth, o canal assina como anon → a RLS de world_objects não deixa
       // passar nada → os outros players só viam as construções no F5 (loadAll
@@ -184,14 +301,38 @@ export const WorldObjects = {
       const ch = supa.channel('transfps_world_objects')
         .on('postgres_changes',
           { event: 'INSERT', schema: 'transfps', table: 'world_objects' },
-          (p) => { try { onInsert?.(rowToRecord(p.new)); } catch (_) {} })
+          (p) => {
+            try {
+              const rec = rowToRecord(p.new);
+              _cacheUpsert(rec);
+              onInsert?.(rec);
+            } catch (_) {}
+          })
         .on('postgres_changes',
           { event: 'UPDATE', schema: 'transfps', table: 'world_objects' },
-          (p) => { try { onUpdate?.(rowToRecord(p.new), p.new); } catch (_) {} })
+          (p) => {
+            try {
+              const rec = rowToRecord(p.new);
+              if (p.new?.broken) _cacheRemove(rec._worldId);
+              else _cacheUpsert(rec);
+              onUpdate?.(rec, p.new);
+            } catch (_) {}
+          })
         .on('postgres_changes',
           { event: 'DELETE', schema: 'transfps', table: 'world_objects' },
-          (p) => { try { onDelete?.(p.old?.id); } catch (_) {} })
+          (p) => {
+            try {
+              // #region debug-point C:realtime-delete
+              fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"C",location:"WorldObjects.js:realtime-delete",msg:"[DEBUG] cliente recebeu realtime DELETE",data:{worldId:p.old?.id || null},ts:Date.now()})}).catch(()=>{});
+              // #endregion
+              _cacheRemove(p.old?.id);
+              onDelete?.(p.old?.id);
+            } catch (_) {}
+          })
         .subscribe((status, err) => {
+          // #region debug-point C:realtime-status
+          fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"C",location:"WorldObjects.js:realtime-status",msg:"[DEBUG] status do canal realtime",data:{status,message:err?.message || null},ts:Date.now()})}).catch(()=>{});
+          // #endregion
           if (status === 'SUBSCRIBED')      console.log('[WorldObjects] 🌍 realtime ATIVO (construções ao vivo)');
           else if (status === 'CHANNEL_ERROR') console.warn('[WorldObjects] realtime CHANNEL_ERROR:', err?.message || err || '(sem msg)');
           else if (status === 'TIMED_OUT')  console.warn('[WorldObjects] realtime TIMED_OUT');

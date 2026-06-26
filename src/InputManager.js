@@ -16,6 +16,14 @@ export class InputManager {
     this._wheelDelta   = 0;     // acumula scroll p/ trocar de arma
     this.gameActive    = false;
     this._lockConfirmed     = false;  // lock já confirmou pelo menos uma vez
+    this._embeddedPreview   = (() => {
+      try { return window.self !== window.top; } catch (_) { return true; }
+    })();
+    this._fallbackLookEnabled = false;
+    this._fallbackLookActive  = false;
+    this._fallbackLastClientX = 0;
+    this._fallbackLastClientY = 0;
+    this._fallbackPointerId   = null;
     // Só vira true DEPOIS do primeiro pointer-lock confirmado pelo browser.
     // O ramo de PAUSA do pointerlockchange só pode disparar quando isto for true,
     // pra ignorar o pointerlockchange transitório (lock=null) do boot/transição.
@@ -124,11 +132,19 @@ export class InputManager {
       //  acumulássemos isso, a câmera giraria com o mouse solto E o cursor
       //  vazaria pra fora da janela clicando em coisas do Windows. Ignorando
       //  aqui, o mouse solto não mexe a mira; o próximo clique re-trava o lock.
-      if (document.pointerLockElement !== this.canvas) return;
+      const usingPointerLock = document.pointerLockElement === this.canvas;
+      const usingFallbackLook = !usingPointerLock && this._fallbackLookActive;
+      if (!usingPointerLock && !usingFallbackLook) return;
       // GUARDA NaN: movementX/Y podem vir undefined/NaN em frames de transição
       //  do lock (raw input / unadjustedMovement). Acumular NaN aqui propagaria
       //  pro yaw/pitch do Player → posição NaN → tela bugada + áudio NaN.
-      const mx = e.movementX, my = e.movementY;
+      let mx = e.movementX, my = e.movementY;
+      if (!usingPointerLock) {
+        mx = Number.isFinite(mx) && mx !== 0 ? mx : ((e.clientX || 0) - this._fallbackLastClientX);
+        my = Number.isFinite(my) && my !== 0 ? my : ((e.clientY || 0) - this._fallbackLastClientY);
+        this._fallbackLastClientX = e.clientX || 0;
+        this._fallbackLastClientY = e.clientY || 0;
+      }
       if (Number.isFinite(mx)) this._mouseX += mx;
       if (Number.isFinite(my)) this._mouseY += my;
     });
@@ -166,7 +182,8 @@ export class InputManager {
         '#pause-overlay, #start-screen, .agui, .bm-panel, .meshy-panel, .tex-panel'
       );
       if (!document.pointerLockElement && !_menuOpen && !_onUI) {
-        this._requestLock(true);
+        if (this._shouldUseMouseFallback()) this._beginFallbackLook(e);
+        else this._requestLock(true);
       }
       // Cliques de tiro/ação só contam jogando (ou posicionando peça no build).
       if (!this.gameActive && !_placing) return;
@@ -180,13 +197,18 @@ export class InputManager {
     document.addEventListener('mouseup', e => {
       if (e.button === 0) this._leftHeld  = false;
       if (e.button === 2) this._rightHeld = false;
+      if (!document.pointerLockElement) this._endFallbackLook(e);
     });
     // Se perder o foco/lock, zera o "segurando" (senão a metralhadora trava ligada)
-    window.addEventListener('blur', () => { this._leftHeld = false; this._rightHeld = false; });
+    window.addEventListener('blur', () => {
+      this._leftHeld = false;
+      this._rightHeld = false;
+      this._fallbackLookActive = false;
+    });
 
     // Impede menu de contexto do browser no canvas durante o jogo
     canvas.addEventListener('contextmenu', e => {
-      if (this.gameActive) e.preventDefault();
+      if (this.gameActive || this._fallbackLookEnabled) e.preventDefault();
     });
 
     // ── AudioContext: resume no gesto + ao voltar pra aba ────────────
@@ -210,6 +232,7 @@ export class InputManager {
       if (document.pointerLockElement === this.canvas) {
         // Lock CONFIRMADO pelo browser → travou de verdade.
         this._lockConfirmed = true;
+        this._setMouseFallback(false);
         // Primeira confirmação → libera o jogo pra valer e habilita a pausa
         // por perda de lock daqui pra frente (ESC real). Garante gameActive.
         this._gameFullyStarted = true;
@@ -246,8 +269,40 @@ export class InputManager {
       // Marca _pendingLock pra deixar explícito que falta o gesto do jogador.
       this._lockConfirmed = false;
       this._pendingLock = true;
+      this._setMouseFallback(true);
       console.debug('[Input] pointerlockerror — re-lock adiado pro proximo clique.');
     });
+  }
+
+  _shouldUseMouseFallback() {
+    return this._embeddedPreview || this._fallbackLookEnabled;
+  }
+
+  _setMouseFallback(enabled) {
+    this._fallbackLookEnabled = !!enabled;
+    if (!enabled) this._fallbackLookActive = false;
+    document.body.classList.toggle('game-fallback-look', this.gameActive && this._fallbackLookEnabled);
+  }
+
+  _beginFallbackLook(e) {
+    if (!this.gameActive) return;
+    this._setMouseFallback(true);
+    this._fallbackLookActive = true;
+    this._fallbackLastClientX = e.clientX || 0;
+    this._fallbackLastClientY = e.clientY || 0;
+    this._fallbackPointerId = Number.isFinite(e.pointerId) ? e.pointerId : null;
+    if (this._fallbackPointerId != null) {
+      try { this.canvas.setPointerCapture(this._fallbackPointerId); } catch (_) {}
+    }
+    try { this.canvas.focus(); } catch (_) {}
+  }
+
+  _endFallbackLook() {
+    this._fallbackLookActive = false;
+    if (this._fallbackPointerId != null) {
+      try { this.canvas.releasePointerCapture(this._fallbackPointerId); } catch (_) {}
+    }
+    this._fallbackPointerId = null;
   }
 
   // ── Bootstrap de áudio: resume centralizado ─────────────────────
@@ -294,6 +349,12 @@ export class InputManager {
   //   requestPointerLock — só armamos _pendingLock, que o próximo mousedown
   //   real consome. Sem loop de re-tentativa, sem ruído de erro.
   _requestLock(fromGesture = false) {
+    if (this._embeddedPreview) {
+      this._pendingLock = false;
+      this._setMouseFallback(true);
+      try { this.canvas.focus(); } catch (_) {}
+      return;
+    }
     // GUARD de cooldown / non-gesture: evita o SecurityError na origem.
     if (!fromGesture) {
       const sinceUnlock = performance.now() - (this._lastUnlockAt || 0);
@@ -349,6 +410,7 @@ export class InputManager {
     this.gameActive = false;
     this._lastUnlockAt = performance.now();   // marca unlock → arma cooldown de re-lock
     document.body.classList.remove('game-active');
+    document.body.classList.remove('game-fallback-look');
     this._mouseX = 0; this._mouseY = 0; this._clicked = false;
     this.onDeactivated?.();   // notifica main.js para atualizar a UI
   }
@@ -364,6 +426,7 @@ export class InputManager {
   activate(fromGesture = false) {
     this.gameActive = true;
     document.body.classList.add('game-active');
+    if (this._embeddedPreview) this._setMouseFallback(true);
     this._requestLock(fromGesture);
   }
 
@@ -372,14 +435,23 @@ export class InputManager {
     this.gameActive = false;
     this._lastUnlockAt = performance.now();   // marca unlock → arma cooldown de re-lock
     document.body.classList.remove('game-active');
+    document.body.classList.remove('game-fallback-look');
     try { document.exitPointerLock?.(); } catch (_) {}
     this._mouseX = 0; this._mouseY = 0; this._clicked = false;
+    this._fallbackLookActive = false;
     // Não chama onDeactivated aqui pois quem chamou deactivate() já sabe
   }
 
   toggle() {
     if (this.gameActive) this.deactivate();
     else                 this.activate();
+  }
+
+  getFocusMode() {
+    if (!this.gameActive) return 'none';
+    if (document.pointerLockElement === this.canvas) return 'pointer-lock';
+    if (this._fallbackLookEnabled) return 'drag-look';
+    return 'pending';
   }
 
   isDown(code) { return !!this.keys[code]; }

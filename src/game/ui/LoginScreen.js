@@ -3,7 +3,7 @@
 //
 //  Mostra:
 //   - Botão Google OAuth
-//   - Botão "Jogar como convidado" (local, sem Supabase)
+//   - Botão "Jogar como visitante" (online, sem Google)
 //   - Após login: nickname + botão CONTINUAR + LOBBY + LOGOUT
 // ─────────────────────────────────────────────────────────────────
 
@@ -66,11 +66,11 @@ export class LoginScreen {
             ENTRAR COM GOOGLE
           </button>
 
-          <!-- Modo offline/teste (sem login, sem rede) — testa VR + IA local -->
+          <!-- Entrada online sem Google: cai no Colyseus como visitante -->
           <button id="ls-offline" class="gui-btn" style="
             justify-content:center; gap:8px; padding:12px 20px; width:100%;
             font-size:12px; letter-spacing:1px; opacity:0.85;">
-            🎮 JOGAR OFFLINE · TESTE VR / IA
+            🌐 JOGAR COMO VISITANTE
           </button>
         </div>
 
@@ -121,7 +121,7 @@ export class LoginScreen {
     this._el = el;
 
     el.querySelector('#ls-google').onclick = () => this._doGoogle();
-    el.querySelector('#ls-offline').onclick = () => this._doOffline();
+    el.querySelector('#ls-offline').onclick = () => this._doGuestOnline();
     el.querySelector('#ls-lobby').onclick    = () => this._doContinue(true);
     el.querySelector('#ls-logout').onclick   = () => this._doLogout();
     el.querySelector('#ls-edit-nick').onclick = () => this._openNickEdit();
@@ -189,21 +189,19 @@ export class LoginScreen {
   // _doGuest removido: produto pessoal exige credenciais 100% Lucas.
   // Veja feedback_credenciais_pessoais.md.
 
-  /** Entra em modo offline/teste: sem login Google, sem rede. Vai direto pro
-   *  mundo aberto pra testar VR (Quest) e a IA local (tecla H spawna inimigos). */
-  async _doOffline() {
+  /** Entra online sem Google: abre o fluxo de lobby/servidor como visitante. */
+  async _doGuestOnline() {
     const btn = this._el?.querySelector('#ls-offline');
     if (btn?.disabled) return;
     if (btn) { btn.disabled = true; btn.style.cursor = 'wait'; btn.style.opacity = '0.7'; }
-    this._setStatus('Iniciando modo offline…', '#2effb6');
+    this._setStatus('Entrando como visitante online…', '#2effb6');
     try {
-      await this.auth.signInOffline();
-      this._setStatus('✓ Offline — entrando…', '#2effb6');
+      this._setStatus('✓ Visitante pronto — abrindo servidores…', '#2effb6');
       this.hide();
-      if (this._onOffline) this._onOffline();
+      if (this._onOpenLobby) this._onOpenLobby();
       else if (this._onContinue) this._onContinue();
     } catch (e) {
-      console.error('[Login] offline:', e);
+      console.error('[Login] visitante online:', e);
       this._setStatus('Erro: ' + e.message, '#ff3b4e');
       if (btn) { btn.disabled = false; btn.style.cursor = 'pointer'; btn.style.opacity = '1'; }
     }

@@ -1,0 +1,4 @@
+{"sessionId":"world-realtime-sync","runId":"pre-fix","hypothesisId":"C","location":"WorldObjects.js:realtime-status","msg":"[DEBUG] status do canal realtime","data":{"status":"CLOSED","message":null},"ts":1780978932520}
+{"sessionId":"world-realtime-sync","runId":"pre-fix","hypothesisId":"C","location":"WorldObjects.js:realtime-status","msg":"[DEBUG] status do canal realtime","data":{"status":"SUBSCRIBED","message":null},"ts":1780979057688}
+{"sessionId":"world-realtime-sync","runId":"pre-fix","hypothesisId":"C","location":"WorldObjects.js:realtime-status","msg":"[DEBUG] status do canal realtime","data":{"status":"CHANNEL_ERROR","message":null},"ts":1780979422695}
+{"sessionId":"world-realtime-sync","runId":"pre-fix","hypothesisId":"C","location":"WorldObjects.js:realtime-status","msg":"[DEBUG] status do canal realtime","data":{"status":"SUBSCRIBED","message":null},"ts":1780979427238}

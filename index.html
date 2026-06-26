@@ -154,6 +154,8 @@
     /* cursor some quando jogo está ativo — no body E todos os filhos */
     body.game-active,
     body.game-active * { cursor: none !important; }
+    body.game-active.game-fallback-look,
+    body.game-active.game-fallback-look * { cursor: crosshair !important; }
 
     /* ── Crosshair ── */
     #crosshair {

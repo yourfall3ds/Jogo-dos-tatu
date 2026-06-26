@@ -539,7 +539,7 @@ export class AuthSystem {
     if (meta.preferred_username) return String(meta.preferred_username).trim().slice(0, 24);
     const email = this.user?.email;
     if (email) return String(email).split('@')[0].slice(0, 24);
-    return 'Player';
+    return 'Visitante';
   }
   /** Retorna user id ou null se nao logado. Chamadas que precisam de id
    *  garantido devem validar antes (isAuthenticated()). */

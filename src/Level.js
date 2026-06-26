@@ -29,11 +29,7 @@ export class Level {
     this._createSky();
     this._createGround();
 
-    if (this.clean) {
-      // ── MAPA LIMPO: só chão + poucos obstáculos como shadow casters ──
-      //  Sem o entulho do mapa antigo. Sombra do sol projeta limpa aqui.
-      this._createCleanArena();
-    } else {
+    if (!this.clean) {
       this._createWallJumpAlley();
       this._createPlatformTower();
       this._createCombatZone();
@@ -47,28 +43,57 @@ export class Level {
   // Arena de jogo LIMPA: chão grande + obstáculos variados (todos casters).
   //  É a base nova pra construir em cima, com sombra funcionando.
   _createCleanArena() {
-    const mat = (r, g, b) => { const m = new BABYLON.StandardMaterial('clean_m' + Math.random(), this.scene); m.diffuseColor = new BABYLON.Color3(r, g, b); m.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05); return m; };
-    const block = (name, w, h, d, x, z, m) => {
-      const b = BABYLON.MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, this.scene);
-      b.position.set(x, h / 2, z);
-      b.material = m; b.checkCollisions = true; b.receiveShadows = true;
-      this.shadowGen.addShadowCaster(b);
-      try { new BABYLON.PhysicsAggregate(b, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.6 }, this.scene); } catch (_) {}
-      return b;
+    const mat = (name, r, g, b) => {
+      const m = new BABYLON.StandardMaterial(name, this.scene);
+      m.diffuseColor = new BABYLON.Color3(r, g, b);
+      m.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+      return m;
     };
-    // alguns prédios/caixas espalhados — referência visual + cobertura
-    block('clean_wall1', 8, 6, 1.5, -12, 8, mat(0.7, 0.5, 0.4));
-    block('clean_wall2', 1.5, 5, 10, 14, 2, mat(0.5, 0.6, 0.7));
-    block('clean_box1', 4, 4, 4, -6, -8, mat(0.8, 0.35, 0.3));
-    block('clean_box2', 3, 3, 3, 5, -10, mat(0.4, 0.7, 0.45));
-    const pillar = BABYLON.MeshBuilder.CreateCylinder('clean_pillar', { diameter: 2.5, height: 9 }, this.scene);
-    pillar.position.set(0, 4.5, 12); pillar.material = mat(0.85, 0.75, 0.3);
-    pillar.checkCollisions = true; pillar.receiveShadows = true;
-    this.shadowGen.addShadowCaster(pillar);
-    try { new BABYLON.PhysicsAggregate(pillar, BABYLON.PhysicsShapeType.CYLINDER, { mass: 0, friction: 0.6 }, this.scene); } catch (_) {}
-    // duas plataformas pra pular
-    block('clean_plat1', 6, 1, 6, -18, -2, mat(0.6, 0.6, 0.65)).position.y = 2;
-    block('clean_plat2', 6, 1, 6, 18, 6, mat(0.6, 0.6, 0.65)).position.y = 4;
+
+    const mats = {
+      wall:  mat('clean_wall_mat', 0.64, 0.56, 0.48),
+      block: mat('clean_block_mat', 0.46, 0.60, 0.68),
+      cover: mat('clean_cover_mat', 0.48, 0.68, 0.50),
+      plat:  mat('clean_plat_mat', 0.60, 0.62, 0.67),
+      hub:   mat('clean_hub_mat', 0.82, 0.73, 0.30),
+    };
+
+    const staticCylinder = (name, diameter, height, x, y, z, material) => {
+      const c = BABYLON.MeshBuilder.CreateCylinder(name, { diameter, height, tessellation: 20 }, this.scene);
+      c.position.set(x, y, z);
+      c._scenePersistKey = name;
+      c.material = material;
+      c.checkCollisions = true;
+      c.receiveShadows = true;
+      this.shadowGen.addShadowCaster(c);
+      try {
+        new BABYLON.PhysicsAggregate(c, BABYLON.PhysicsShapeType.CYLINDER, { mass: 0, friction: 0.7, restitution: 0.05 }, this.scene);
+      } catch (_) {}
+      return c;
+    };
+
+    // Coberturas principais do mapa base
+    this._box('clean_wall_north', 14, 5, 1.2,   0, 2.5, -22, mats.wall);
+    this._box('clean_wall_west',   1.2, 6, 14, -24, 3.0,   0, mats.block);
+    this._box('clean_wall_east',   1.2, 6, 14,  24, 3.0,   0, mats.block);
+
+    // Blocos centrais de cobertura
+    this._box('clean_cover_a', 6, 3, 3, -10, 1.5,  -8, mats.cover, 0.18);
+    this._box('clean_cover_b', 6, 3, 3,  10, 1.5,  -8, mats.cover, -0.18);
+    this._box('clean_cover_c', 5, 4, 5,  -8, 2.0,   9, mats.block);
+    this._box('clean_cover_d', 5, 4, 5,   8, 2.0,   9, mats.block);
+    this._box('clean_mid_wall', 10, 4, 1.2, 0, 2.0, 4, mats.wall);
+
+    // Plataforma lateral esquerda
+    this._box('clean_plat_left', 7, 1, 7, -18, 1.5, -2, mats.plat);
+    this._box('clean_plat_left_step', 3, 1, 3, -12, 0.5, -2, mats.plat);
+
+    // Plataforma lateral direita
+    this._box('clean_plat_right', 7, 1, 7, 18, 2.5, 6, mats.plat);
+    this._box('clean_plat_right_step', 3, 1, 3, 12, 0.5, 6, mats.plat);
+
+    // Pilar central estático, criado já na altura correta
+    staticCylinder('clean_hub_pillar', 3.2, 7, 0, 3.5, 16, mats.hub);
   }
 
   /** Lê o LocalDB e aplica transforms + configs de gameplay salvos */
@@ -176,6 +201,7 @@ export class Level {
     const b = BABYLON.MeshBuilder.CreateBox(name,
       { width: w, height: h, depth: d }, this.scene);
     b.position.set(x, y, z);
+    b._scenePersistKey = name;
     b.rotationQuaternion = BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, ry);
     b.material       = mat;
     b.checkCollisions = true;   // ← colisão nativa (coexiste durante a migração)
@@ -187,6 +213,10 @@ export class Level {
     if (this.scene.getPhysicsEngine?.()) {
       try { new BABYLON.PhysicsAggregate(b, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.6, restitution: 0.1 }, this.scene); }
       catch (e) { console.warn('[Level] física da caixa falhou:', name, e.message); }
+    }
+    if (/^(ground|bump_|towerbase|tplat_|clean_plat)/i.test(name)) {
+      b._isGround = true;
+      b._navSurface = true;
     }
     return b;
   }
@@ -209,6 +239,9 @@ export class Level {
       g.material = gm;
       g.receiveShadows = true;
       g.checkCollisions = true;
+      g._scenePersistKey = 'ground';
+      g._isGround = true;
+      g._navSurface = true;
       try { new BABYLON.PhysicsAggregate(g, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.7 }, this.scene); } catch (_) {}
       return;
     }
@@ -396,12 +429,57 @@ export class Level {
     }
 
     // ── Atualiza inimigos ────────────────────────────────────────
-    const playerPos  = this.player?.mesh?.position ?? BABYLON.Vector3.Zero();
     const cameraPos  = this.player?.camera?.position ?? null;
+    const enemyTargets = this._getEnemyTargets();
     for (let i = this.enemies.length - 1; i >= 0; i--) {
-      const alive = this.enemies[i].update(dt, playerPos, cameraPos);
+      const alive = this.enemies[i].update(dt, enemyTargets, cameraPos);
       if (!alive) this.enemies.splice(i, 1);
     }
+  }
+
+  _getEnemyTargets() {
+    const localPos = this.player?.animator?.root?.absolutePosition
+      ?? this.player?.mesh?.position
+      ?? null;
+
+    const candidates = [];
+    if (localPos) {
+      candidates.push({
+        id: 'local-player',
+        kind: 'local',
+        position: localPos,
+        actor: this.player,
+        canBeHit: true,
+        receiveDamage: (dmg, attackType, fromPos, kbForce = 0) => {
+          this.player?.takeDamage?.(dmg, attackType, fromPos, kbForce);
+        },
+      });
+    }
+
+    const remotePlayers = window._remotePlayers;
+    if (remotePlayers?.values) {
+      for (const rp of remotePlayers.values()) {
+        const pos = rp?.root?.absolutePosition || rp?.root?.position;
+        if (!pos || rp?.root?.isDisposed?.()) continue;
+        candidates.push({
+          id: rp.playerId || rp.nickname || `remote-${candidates.length}`,
+          kind: 'remote',
+          position: pos,
+          actor: rp,
+          canBeHit: true,
+        });
+      }
+    }
+
+    if (!candidates.length) {
+      return [{
+        id: 'fallback-spawn',
+        kind: 'none',
+        position: BABYLON.Vector3.Zero(),
+        canBeHit: false,
+      }];
+    }
+    return candidates;
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -627,8 +705,14 @@ export class Level {
     ];
     for (const pos of spots) {
       const enemy = new MonsterPlant(this.scene, this.shadowGen, meshes, pos);
-      enemy.onAttack = (dmg, attackType, fromPos, kbForce = 0) => {
-        if (this.player) this.player.takeDamage(dmg, attackType, fromPos, kbForce);
+      enemy.onAttack = (dmg, attackType, fromPos, kbForce = 0, target = null) => {
+        if (typeof target?.receiveDamage === 'function') {
+          target.receiveDamage(dmg, attackType, fromPos, kbForce);
+          return;
+        }
+        if (this.player && (!target || target.kind === 'local')) {
+          this.player.takeDamage(dmg, attackType, fromPos, kbForce);
+        }
       };
       enemy.onPlaySound = (id) => { this.player?.sounds?.playNow(id); };
       this.enemies.push(enemy);

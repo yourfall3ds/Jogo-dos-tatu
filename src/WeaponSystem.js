@@ -3,6 +3,24 @@ import { Metralhadora }     from './game/weapons/Metralhadora.js';
 import { EspadaPaladin }    from './game/weapons/EspadaPaladin.js';
 import { LocalDB }           from './game/data/LocalDB.js';
 
+function getLocalCombatTarget(player) {
+  const actor = player || window._gamePlayer || null;
+  const position = actor?.animator?.root?.absolutePosition
+    ?? actor?.mesh?.position
+    ?? null;
+  if (!position) return null;
+  return {
+    id: 'local-player',
+    kind: 'local',
+    position,
+    actor,
+    canBeHit: true,
+    receiveDamage: (dmg, attackType, fromPos, kbForce = 0) => {
+      actor?.takeDamage?.(dmg, attackType, fromPos, kbForce);
+    },
+  };
+}
+
 /**
  * WeaponSystem - Controla o inventário e troca de armas.
  */
@@ -549,7 +567,7 @@ export class WeaponSystem {
       // ── Inimigo ──────────────────────────────────────────────────
       if (hit.pickedMesh?._enemyRef) {
         const dmg = this.getCurrentWeapon().damage;
-        hit.pickedMesh._enemyRef.takeDamage(dmg, dir);
+        hit.pickedMesh._enemyRef.takeDamage(dmg, dir, 1.0, false, getLocalCombatTarget(this.level?.player || window._gamePlayer));
         // Número de dano flutuante no ponto do tiro
         window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, { color: '#ffffff' });
         // SANGUE no ponto do tiro
