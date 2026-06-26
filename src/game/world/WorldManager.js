@@ -56,12 +56,19 @@ export class WorldManager {
       });
       await this._builder.build();
 
-      // posiciona no spawn seguro (clareira central). No MP o servidor também
-      //  manda a posição (zone_change) — aqui garantimos o local até sincronizar.
+      // SKYDIVE no spawn seguro (clareira central): nasce CAINDO de 200m e
+      //  POUSA no terreno (que já tem colisão). Assim NUNCA atravessa o chão /
+      //  cai no vazio — o problema do teleporte direto. spawn({sky:true}) usa o
+      //  X/Z do spawn e despenca até o chão.
       const sp = this._builder.spawnPoint || new BABYLON.Vector3(0, 4, 0);
-      this._teleportPlayer(sp);
-
-      this._inBiomeWorld = true;
+      this._inBiomeWorld = true;          // marca ANTES (respawn/colisão sabem)
+      const p = window._gamePlayer;
+      if (p?.spawn) {
+        try { p.spawn({ sky: true, x: sp.x, z: sp.z }); }
+        catch (e) { console.error('[WorldManager] skydive spawn:', e); this._teleportPlayer(sp); }
+      } else {
+        this._teleportPlayer(sp);
+      }
       await new Promise(r => setTimeout(r, 400)); // respiro visual
       this.loadScreen.hide();
 
@@ -98,19 +105,33 @@ export class WorldManager {
     }
   }
 
-  /** Esconde/mostra o mapa atual (meshes do Level), sem deletar. */
+  /** Esconde/mostra o mapa da ARENA (cemetery etc.), sem deletar. */
   _hideCurrentMap(hidden) {
     try {
-      const level = window._gameLevel;
-      const root = level?.root || level?.mapRoot;
-      if (root && typeof root.setEnabled === 'function') {
-        root.setEnabled(!hidden);
-        return;
+      // 1) O mapa carregado pelo ChibataMapLoader fica em _activeMeshes.
+      //    É AQUI que o mapa da arena (cemetery) realmente vive.
+      const ml = window._chibataMaps;
+      if (ml?._activeMeshes?.length) {
+        for (const m of ml._activeMeshes) {
+          try { m.setEnabled(!hidden); } catch (_) {}
+        }
       }
-      // fallback: esconde meshes marcadas como mapa
+      // 2) Mundo procedural antigo do jogo (se ligado) — esconde também.
+      try { ml?._setProceduralVisible?.(!hidden); } catch (_) {}
+      // 3) O Level base (chão/luz do mapa de treino) — esconde o que der.
+      const level = window._gameLevel;
+      const root = level?.root || level?.mapRoot || level?.ground;
+      if (root && typeof root.setEnabled === 'function') {
+        try { root.setEnabled(!hidden); } catch (_) {}
+      }
+      // 4) Varredura de segurança: qualquer mesh do mapa de treino que sobrou.
+      //    Marca os do mundo de biomas pra NÃO esconder por engano.
       this.scene.meshes.forEach(m => {
-        if (m._isMapMesh || m.name?.startsWith('map_') || m.name?.startsWith('chibata')) {
-          m.setEnabled(!hidden);
+        if (m._biomeWorldMesh) return;              // não toca no mundo novo
+        const n = m.name || '';
+        if (m._isMapMesh || n.startsWith('map_') || n.startsWith('chibata') ||
+            n.startsWith('cemetery') || n.startsWith('ground') || n.startsWith('floor_world')) {
+          try { m.setEnabled(!hidden); } catch (_) {}
         }
       });
     } catch (e) { console.warn('[WorldManager] hideCurrentMap:', e?.message); }

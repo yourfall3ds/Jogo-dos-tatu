@@ -85,6 +85,7 @@ export class BiomeWorldBuilder {
     // Colisão do chão: checkCollisions + (se houver Havok) corpo estático.
     mesh.checkCollisions = true;
     mesh.isPickable = true;
+    mesh._biomeWorldMesh = true;   // marca: NÃO esconder na troca de mapa
     this._terrain = mesh;
     // AWAIT o corpo estático: o chão precisa colidir ANTES do teleporte.
     await this._tryStaticBody(mesh, 'mesh');
@@ -143,6 +144,8 @@ export class BiomeWorldBuilder {
   _plantTree(tpl, name, x, y, z, scale, idx) {
     const inst = tpl.clone(`tree_${name}_${idx}`, this.root);
     if (!inst) return;
+    inst._biomeWorldMesh = true;
+    inst.getChildMeshes?.(false).forEach(c => { c._biomeWorldMesh = true; });
     inst.setEnabled(true);
     inst.position.set(x, y, z);
     inst.scaling.setAll(scale);
