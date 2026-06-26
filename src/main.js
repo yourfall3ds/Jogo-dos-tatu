@@ -420,6 +420,16 @@ async function init() {
       FALLBACK_WEBGL = true;
       console.log("[Boot] Quest UA detectado, forçando WebGL2 pra suportar WebXR");
     }
+    // MOBILE (Android/iPhone/iPad): o WebGPU em celular é instável/ausente em
+    //  muitos browsers → forçamos WebGL2 (tanque confiável). Era a causa do
+    //  "erro de WebGL2" no celular (na real o WebGPU falhava e não caía pro 2).
+    const _isMobileUA = /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent || "")
+      || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent || "")); // iPad desktop-mode
+    if (_isMobileUA) {
+      FALLBACK_WEBGL = true;
+      console.log("[Boot] Mobile detectado → WebGL2 (WebGPU instável em celular)");
+      window._isMobile = true;
+    }
     // Ou via URL ?webgl
     if (location.search.includes("webgl")) FALLBACK_WEBGL = true;
   } catch (_) {}
@@ -601,6 +611,17 @@ async function init() {
 
   // ── Sistemas base ────────────────────────────────────────────────
   const input  = new InputManager(canvas);
+  // ── Controles MOBILE (celular de lado): joystick + botões na tela ──
+  if (window._isMobile) {
+    try {
+      const { MobileControls } = await import('./game/ui/MobileControls.js');
+      window._mobileControls = new MobileControls(input);
+      // no mobile não há pointer lock: o "olhar" é por arrasto → marca gameActive
+      input.gameActive = true;
+      document.body.classList.add('game-active');
+      console.log('[Mobile] controles na tela ativos');
+    } catch (e) { console.error('[Mobile] controls init:', e); }
+  }
   // ── Domínio de tela: dono único do cursor/lock (desbuga o ESC no MP) ──
   const screenFocus = new ScreenFocusManager(canvas);
   window._screenFocus = screenFocus;
