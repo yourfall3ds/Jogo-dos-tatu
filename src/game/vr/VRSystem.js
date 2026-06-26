@@ -19,6 +19,10 @@
 //   Botão A / Grip        → pular
 //   Botão B (dir.)        → recarregar
 //   Botão X / Y (esq.)    → trocar de arma
+//   Botão MENU (esq.)     → abre/fecha o menu de pausa VR (painel 3D)
+
+import { ItemCatalog } from '../items/ItemCatalog.js';
+import { SKILL_DEFS } from '../skills/SkillSystem.js';
 
 export class VRSystem {
   constructor(scene, player, cs) {
@@ -265,7 +269,9 @@ export class VRSystem {
       if (trigger && hand === "right") {
         trigger.onButtonStateChangedObservable.add(() => {
           if (!trigger.changes.pressed) return;
-          // Painel VR aberto → 1º gatilho FECHA o menu e começa a jogar (não atira).
+          // Menu de PAUSA VR aberto → gatilho ATIVA o item selecionado (não atira).
+          if (trigger.pressed && this._vrPauseActive) { this._vrPauseActivate(); return; }
+          // Painel de boas-vindas aberto → 1º gatilho FECHA e começa a jogar.
           if (trigger.pressed && this._vrMenuActive) { this._hideVRMenu(); return; }
           this._fireHeld = trigger.pressed;
           if (trigger.pressed) {
@@ -315,6 +321,13 @@ export class VRSystem {
         if (bOrY) bOrY.onButtonStateChangedObservable.add(() => {
           if (bOrY.changes.pressed && bOrY.pressed) this._switchWeapon(+1); // Y → próxima arma
         });
+        // ── Botão MENU (esquerdo) → abre/fecha o menu de pausa VR ──────
+        //  O "menu" pode não existir no mapping padrão (reservado no Quest);
+        //  fallback = CLICAR o analógico esquerdo (button do thumbstick).
+        const menuBtn = mc.getComponent("menu") || mc.getComponent("xr-standard-thumbstick");
+        if (menuBtn) menuBtn.onButtonStateChangedObservable.add(() => {
+          if (menuBtn.changes.pressed && menuBtn.pressed) this._toggleVRPause();
+        });
       }
     } catch (e) { console.error("[VR] bindControllerInputs", e); }
   }
@@ -335,6 +348,16 @@ export class VRSystem {
       const f = this.xrCamera.getDirection(BABYLON.Axis.Z);
       this.player.yaw = Math.atan2(f.x, f.z) * 180 / Math.PI;
     } catch (_) {}
+
+    // MENU DE PAUSA VR aberto → o analógico esquerdo NAVEGA (não anda). A câmera
+    // segue a cabeça normalmente (_followHead), mas sem locomoção/giro/tiro.
+    if (this._vrPauseActive) {
+      if (k) k.KeyW = k.KeyS = k.KeyA = k.KeyD = k.ShiftLeft = false;
+      this._vrPauseNavTick();
+      if (!this._heightCalibrated) this._calibrateHeight();
+      this._followHead();
+      return;
+    }
 
     // 2) Analógico ESQ → W/A/S/D (a física do player anda/pula/corre no chão).
     if (k) {
@@ -584,6 +607,145 @@ export class VRSystem {
     ctx.arcTo(x, y + h, x, y, r);
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  MENU DE PAUSA VR — painel 3D estilo Far Cry (top bar + painel por aba).
+  //  Navegação por ANALÓGICO esquerdo (L/R = aba · U/D = item) + GATILHO ativa.
+  //  Abre/fecha pelo botão MENU (ou clique do analógico) esquerdo.
+  //  Renderizado por DynamicTexture (canvas) — DOM não aparece no immersive-vr.
+  // ═══════════════════════════════════════════════════════════════════
+  _vrPauseTabs() {
+    const pvpOn = !!(window._pvpToggle?.isOn?.());
+    return [
+      { id: 'inv',    t: '🎒 INVENTÁRIO',  info: this._vrInvLines() },
+      { id: 'skills', t: '⚡ HABILIDADES',  info: this._vrSkillLines() },
+      { id: 'world',  t: '🌍 MUNDO',        acts: [
+        { l: '🧱 Construir (B)',          fn: () => { window._buildMode?.toggle?.() ?? window._buildMode?.enter?.(); } },
+        { l: '📦 Biblioteca de Assets',   fn: () => window._assetGroupsUI?.open?.() } ] },
+      { id: 'char',   t: '🐭 PERSONAGEM',   acts: [
+        { l: '🎭 Seleção de Personagem',  fn: () => (window._charSelectUI?.show?.() ?? window._charSelectScreen?.open?.()) } ] },
+      { id: 'edit',   t: '🧰 EDITORES',     acts: [
+        { l: '🎬 Editor de Cena (F9)',    fn: () => window.enterEngineMode?.('scene') },
+        { l: '🎞 Animador (F6)',          fn: () => window.openAnimator?.() },
+        { l: '🔫 Editor de Arma (F4)',    fn: () => window._weaponEditor?.show?.() },
+        { l: '🐛 Debug de Monstros (F7)', fn: () => window.openMonsterDebug?.('monsterPlant') },
+        { l: '🗺 Mapas Chibata (N)',      fn: () => (window._chibataMaps?.show?.() ?? window._chibataMaps?.toggle?.()) } ] },
+      { id: 'cfg',    t: '⚙️ CONFIG',       acts: [
+        { l: '🛠 Configurações',          fn: () => window._settingsUI?.show?.() } ] },
+      { id: 'pvp',    t: '⚔ PVP',          acts: [
+        { l: pvpOn ? '⚔ PVP ATIVADO — desligar' : '⚔ ATIVAR PVP', fn: () => this._vrTogglePvp() } ] },
+      { id: 'resume', t: '▶ RETOMAR',      acts: [
+        { l: '▶ Voltar ao Jogo', fn: () => this._hideVRPause() } ] },
+    ];
+  }
+
+  _vrInvLines() {
+    const bag = (window._gamePlayer || window._player)?.inventory?.bag || [];
+    const lines = bag.filter(s => s && s.qty > 0).slice(0, 10)
+      .map(s => `${(ItemCatalog[s.id]?.icon) || '📦'}  ${ItemCatalog[s.id]?.name || s.id}  ×${s.qty}`);
+    return lines.length ? lines : ['(mochila vazia — colete drops)'];
+  }
+  _vrSkillLines() {
+    const ls = Object.values(SKILL_DEFS).map(sk => `${sk.icon} ${(sk.key || '').replace('Key', '')}  ${sk.name}  ·  MP ${sk.mpCost}`);
+    return ls.length ? ls : ['Z·X·C·F·Q ativam as skills'];
+  }
+  _vrTogglePvp() {
+    try {
+      const cs = window._cs, auth = window._auth;
+      const myId = cs?.playerId || auth?.getUserId?.();
+      const me = myId ? cs?.state?.players?.get(myId) : null;
+      if (me && cs?.sendPvpToggle) cs.sendPvpToggle(!me.pvp_on);
+    } catch (_) {}
+    setTimeout(() => this._drawVRPause(), 150);
+  }
+
+  _showVRPause() {
+    if (this._vrPause) return;
+    this._vrTab = this._vrTab || 0;
+    this._vrSel = 0;
+    const plane = BABYLON.MeshBuilder.CreatePlane('vrPausePanel', { width: 1.7, height: 1.05 }, this.scene);
+    const tex = new BABYLON.DynamicTexture('vrPauseTex', { width: 1280, height: 800 }, this.scene, true);
+    tex.hasAlpha = true;
+    const mat = new BABYLON.StandardMaterial('vrPauseMat', this.scene);
+    mat.diffuseTexture = tex; mat.emissiveTexture = tex; mat.opacityTexture = tex;
+    mat.emissiveColor = new BABYLON.Color3(1, 1, 1); mat.disableLighting = true; mat.backFaceCulling = false;
+    plane.material = mat; plane.isPickable = false;
+    plane.parent = this.xrCamera; plane.position.set(0, 0, 1.5);
+    this._vrPause = plane; this._vrPauseTex = tex;
+    this._vrPauseActive = true;
+    try { if (this._movement) { this._movement.movementEnabled = false; this._movement.rotationEnabled = false; } } catch (_) {}
+    this._drawVRPause();
+  }
+  _hideVRPause() {
+    this._vrPauseActive = false;
+    try { if (this._movement) { this._movement.movementEnabled = true; this._movement.rotationEnabled = true; } } catch (_) {}
+    try { this._vrPause?.material?.diffuseTexture?.dispose?.(); this._vrPause?.material?.dispose?.(); this._vrPause?.dispose?.(); } catch (_) {}
+    this._vrPause = null; this._vrPauseTex = null;
+  }
+  _toggleVRPause() { this._vrPauseActive ? this._hideVRPause() : this._showVRPause(); }
+
+  _drawVRPause() {
+    const tex = this._vrPauseTex; if (!tex) return;
+    const W = 1280, H = 800, ctx = tex.getContext();
+    const tabs = this._vrPauseTabs();
+    this._vrTab = Math.max(0, Math.min(tabs.length - 1, this._vrTab || 0));
+    const tab = tabs[this._vrTab];
+    ctx.clearRect(0, 0, W, H);
+    // fundo
+    ctx.fillStyle = 'rgba(8,14,26,0.95)'; this._roundRect(ctx, 12, 12, W - 24, H - 24, 28); ctx.fill();
+    ctx.strokeStyle = '#2a6fff'; ctx.lineWidth = 5; this._roundRect(ctx, 12, 12, W - 24, H - 24, 28); ctx.stroke();
+    // top bar (abas)
+    ctx.textAlign = 'left'; ctx.font = 'bold 30px Segoe UI, Arial';
+    let tx = 40;
+    tabs.forEach((tb, i) => {
+      const label = tb.t; const w = ctx.measureText(label).width + 28;
+      const on = i === this._vrTab;
+      if (on) { ctx.fillStyle = 'rgba(63,208,255,0.16)'; this._roundRect(ctx, tx - 8, 36, w, 50, 12); ctx.fill();
+        ctx.fillStyle = '#3fd0ff'; ctx.fillRect(tx - 4, 84, w - 8, 4); }
+      ctx.fillStyle = on ? '#ffffff' : '#6f8aa3'; ctx.fillText(label, tx + 6, 72);
+      tx += w + 8;
+    });
+    // conteúdo
+    ctx.font = '34px Segoe UI, Arial';
+    let cy = 180;
+    if (tab.info) {
+      ctx.fillStyle = '#cfe6ff';
+      tab.info.forEach(line => { ctx.fillText(line, 56, cy); cy += 52; });
+    } else if (tab.acts) {
+      this._vrSel = Math.max(0, Math.min(tab.acts.length - 1, this._vrSel || 0));
+      tab.acts.forEach((a, i) => {
+        const sel = i === this._vrSel;
+        if (sel) { ctx.fillStyle = 'rgba(63,208,255,0.18)'; this._roundRect(ctx, 48, cy - 42, W - 110, 60, 12); ctx.fill();
+          ctx.strokeStyle = '#3fd0ff'; ctx.lineWidth = 2; this._roundRect(ctx, 48, cy - 42, W - 110, 60, 12); ctx.stroke(); }
+        ctx.fillStyle = sel ? '#ffffff' : '#aecbe6'; ctx.font = (sel ? 'bold ' : '') + '34px Segoe UI, Arial';
+        ctx.fillText(a.l, 72, cy); cy += 78;
+      });
+    }
+    // rodapé: dicas de navegação
+    ctx.fillStyle = '#5e7a90'; ctx.font = '26px Segoe UI, Arial';
+    ctx.fillText('Analógico ◄ ► troca aba   ·   ▲ ▼ move   ·   GATILHO ativa   ·   MENU fecha', 56, H - 40);
+    tex.update();
+  }
+
+  // chamado pelo _tick quando o menu VR de pausa está aberto (analógico = navegação)
+  _vrPauseNavTick() {
+    const lx = this._leftAxes.x, ly = this._leftAxes.y;
+    const now = (this._vrNavAt || 0);
+    const t = performance.now();
+    if (t - now < 220) return;            // debounce entre passos
+    const tabs = this._vrPauseTabs();
+    let moved = false;
+    if (lx > 0.6) { this._vrTab = Math.min(tabs.length - 1, (this._vrTab || 0) + 1); this._vrSel = 0; moved = true; }
+    else if (lx < -0.6) { this._vrTab = Math.max(0, (this._vrTab || 0) - 1); this._vrSel = 0; moved = true; }
+    else if (ly > 0.6) { this._vrSel = (this._vrSel || 0) + 1; moved = true; }
+    else if (ly < -0.6) { this._vrSel = (this._vrSel || 0) - 1; moved = true; }
+    if (moved) { this._vrNavAt = t; this._drawVRPause(); }
+  }
+  _vrPauseActivate() {
+    const tab = this._vrPauseTabs()[this._vrTab || 0];
+    const act = tab?.acts?.[this._vrSel || 0];
+    if (act?.fn) { try { act.fn(); } catch (e) { console.warn('[VR pause]', e?.message); } }
   }
 
   // ───────────────────────────────────────────────────────────────────
