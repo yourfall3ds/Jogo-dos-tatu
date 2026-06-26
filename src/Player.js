@@ -1250,18 +1250,22 @@ export class Player {
         // Tick do crossfade por peso (suaviza transições — tira o "robótico")
         this.animCtrl.update(dt);
 
-        // MORTO: FORÇA o corpo de costas pra câmera todo frame (override do root
-        // motion do clipe 'dead' + do freeze do facing). Trava no yaw da morte —
-        // se a câmera não mexer, vê as costas; sem auto-inverter pro rosto.
-        //  SEM +π: o facing block VIVO logo abaixo (1275) usa rotation.y = yawRad
-        //  PURO (sem offset) pra ficar de costas — é a convenção REAL do modelo
-        //  animLib ativo. O +π aqui somava 180° → no instante da morte o corpo
-        //  girava de costas→frente e o rosto encarava a câmera ("morre de frente").
-        //  Travar no MESMO ângulo do último frame vivo (deathYaw, sem offset)
-        //  mantém as costas pra câmera sem o flip.
+        // MORTO: corpo SEMPRE de costas pra câmera, todo frame. Override do root
+        // motion do clipe 'dead' + do facing congelado.
+        //  CHAVE: segue o yaw ATUAL da câmera (this.yaw), NÃO o congelado da morte.
+        //  Em MP a câmera fica controlável morto — se travar no deathYaw, orbitar
+        //  o mouse mostra o lado/rosto do cadáver ("morre de frente"). Seguindo o
+        //  yaw vivo, as costas ficam pra câmera mexendo o mouse ou não.
+        //  SEM +π: rotation.y = yawRad PURO já é de costas (mesma convenção do
+        //  facing vivo logo abaixo; +π girava 180° pro rosto). this.yaw está em
+        //  GRAUS → ToRadians, igual ao yawRad do facing block.
         if (this._dead && this.animator?.root) {
           if (this.animator.root.rotationQuaternion) this.animator.root.rotationQuaternion = null;
-          this.animator.root.rotation.y = BABYLON.Tools.ToRadians(this._deathYaw ?? this.yaw);
+          // +π = COSTAS pra câmera. O modelo (Meshy) tem o ROSTO em −Z → rotation.y
+          // = yaw deixa o rosto ENCARANDO a câmera; +π vira pras costas (MESMA
+          // convenção do RemotePlayer e do FACING_OFFSET). Segue o yaw VIVO pra a
+          // câmera ficar sempre atrás, mexendo o mouse ou não.
+          this.animator.root.rotation.y = BABYLON.Tools.ToRadians(this.yaw) + Math.PI;
         }
 
         // Rotação manual do mesh root (já que o novo controlador não faz isso sozinho)
@@ -1273,7 +1277,9 @@ export class Player {
         //  Como o alvo é sempre yawRad, o personagem nunca vira de lado ao
         //  andar — vai sempre pra frente, costas pra câmera.
         const isArmedNow = this.stateMachine && this.stateMachine.state === 'armed';
-        const targetYaw = yawRad;
+        // +π = COSTAS pra câmera. O rosto do modelo (Meshy) é −Z → sem offset ele
+        // encara a câmera. +π (FACING_OFFSET, igual ao RemotePlayer) vira de costas.
+        const targetYaw = yawRad + Math.PI;
 
         // MORTO: NÃO reorienta o corpo. Em MP a câmera segue controlável até o
         // respawn; sem este guard, mexer o mouse girava o cadáver pra encarar a
@@ -1921,19 +1927,18 @@ export class Player {
     this._vx = 0; this._vz = 0; this.velY = 0;
     this._exhausted = false; this.stamina = this.maxStamina;
     // Renasce com a CÂMERA ATRÁS (vendo as costas), não na frente do rosto.
-    //  Antes: yaw=0 + rotation.y=0 → o GLB do Meshy exporta o rosto pra −Z
-    //  (rotation.y=0 = olhando pra −Z). A câmera TPS fica em Z− → enxergava
-    //  o ROSTO direto (renascia "de frente"). Agora rotation.y = π faz o
-    //  personagem olhar pra +Z; câmera em Z− vê as costas. Mesmo offset que o
-    //  PlayerAnimator usa (FACING_OFFSET = Math.PI).
-    //  _bodyYaw=null faz o PlayerAnimator re-inicializar no próximo frame em
-    //  vez de lerpar 180° do valor congelado durante a morte (spin visível).
+    //  CONVENÇÃO do modelo animLib ATIVO (confirmada com o player VIVO): o facing
+    //  block usa rotation.y = yawRad PURO (SEM offset) = de costas pra câmera.
+    //  Como o respawn zera o yaw, rotation.y = 0 já deixa as costas pra câmera.
+    //  O Math.PI antigo era a convenção do PlayerAnimator (FACING_OFFSET=π) e no
+    //  caminho animLib o facing block lerpava 180° (π→0) → rosto/spin visível ao
+    //  renascer. _bodyYaw=null cobre o caminho PlayerAnimator (re-init).
     this.yaw = 0; this.pitch = 0;
     this._recoilOffset = 0;
     if (this.animator?.root) {
       try {
         if (this.animator.root.rotationQuaternion) this.animator.root.rotationQuaternion = null;
-        this.animator.root.rotation.y = Math.PI;
+        this.animator.root.rotation.y = Math.PI;   // yaw=0 +π = COSTAS pra câmera (rosto −Z)
       } catch (_) {}
     }
     if (this.animator) { try { this.animator._bodyYaw = null; } catch (_) {} }

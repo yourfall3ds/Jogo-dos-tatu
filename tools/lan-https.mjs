@@ -118,6 +118,12 @@ createServer(options, (req, res) => {
     res.writeHead(200, {
       'Content-Type': type,
       'Access-Control-Allow-Origin': '*',
+      // DEV/LAN: NUNCA cachear. Sem isto o navegador faz cache heurístico do
+      // JS/HTML → você recarrega e continua com o código ANTIGO (era o motivo
+      // de fix nenhum "pegar"). no-store força buscar fresco todo load.
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
       // Permite WebXR/câmera/mic na página (casa com o meta do index.html)
       'Permissions-Policy': 'xr-spatial-tracking=*, camera=*, microphone=*, fullscreen=*',
     });
