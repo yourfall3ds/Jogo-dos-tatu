@@ -139,10 +139,6 @@ const MOB_KINDS = [
 
 let _mobUid = 0;
 let _dropUid = 0;
-// Spawn seguro do MUNDO SELVAGEM = centro do gerador de biomas (clareira de
-//  ruínas, baseH≈0). Cai ~3m e pousa no chão local do cliente. DEVE bater com
-//  o BiomeWorld do cliente (spawnPoint em 0,0).
-const WILD_SPAWN = { x: 0, y: 4, z: 0 };
 let _propUid = 0;
 let _fxUid = 0;
 
@@ -242,8 +238,6 @@ export class ArenaRoom extends Room {
     this.onMessage('clear_mobs', (client) => this._onClearMobs(client));
     this.onMessage('respawn', (client) => this._onRespawn(client));
     // ── Mundo de aventura: entrar/sair do mundo selvagem (mesma sala) ──
-    this.onMessage('enter_wild', (client) => this._onEnterWild(client));
-    this.onMessage('enter_arena', (client) => this._onEnterArena(client));
     this.onMessage('chat', (client, payload) => this._onChat(client, payload));
     this.onMessage('pickup_drop', (client, payload) => this._onPickupDrop(client, payload));
     this.onMessage('cast_skill', (client, payload) => this._onCastSkill(client, payload));
@@ -1972,37 +1966,6 @@ export class ArenaRoom extends Room {
     this.broadcast('respawn', { player_id: p.id });
   }
 
-  // ── MUNDO DE AVENTURA: entrar no mundo selvagem (mesma sala) ──────
-  //  A arena (skydive/PvP) e a wild são DUAS ZONAS da mesma sala. Aqui o
-  //  servidor é autoritativo: seta player.zone='wild' e teleporta pro spawn
-  //  seguro do mundo (clareira central, coords do gerador de biomas). Todos
-  //  na sala veem o player mudar de zona. Mobs da wild spawnam nessa zona.
-  _onEnterWild(client) {
-    const p = this.state.players.get(client.userData?.playerId);
-    if (!p) return;
-    p.zone = 'wild';
-    // spawn seguro = centro do mundo de biomas (clareira de ruínas), no ar
-    //  3m pra cair e pousar (chão local pronto no cliente). y alto evita o
-    //  anti-fly-hack rejeitar; o cliente assenta.
-    p.x = WILD_SPAWN.x; p.z = WILD_SPAWN.z; p.y = WILD_SPAWN.y;
-    p.vy = 0; p.dead = false; p.hp = p.maxHp;
-    p.anim_state = 'idle';
-    this.broadcast('zone_change', { player_id: p.id, zone: 'wild', x: p.x, y: p.y, z: p.z });
-    console.log(`[wild] ${p.nickname} entrou no mundo selvagem`);
-  }
-
-  // ── Voltar pra arena (treino/PvP) ────────────────────────────────
-  _onEnterArena(client) {
-    const p = this.state.players.get(client.userData?.playerId);
-    if (!p) return;
-    p.zone = 'arena';
-    const sp = this._isOpenWorld ? this._pickSpawnPointOpenWorld() : this._pickSpawnPoint();
-    p.x = sp.x; p.z = sp.z; p.y = sp.y ?? 2.5;
-    p.vy = 0; p.dead = false; p.hp = p.maxHp;
-    this.broadcast('zone_change', { player_id: p.id, zone: 'arena', x: p.x, y: p.y, z: p.z });
-    console.log(`[wild] ${p.nickname} voltou pra arena`);
-  }
-
   _onChat(client, payload) {
     const p = this.state.players.get(client.userData?.playerId);
     if (!p || !payload?.msg) return;
@@ -2093,21 +2056,11 @@ export class ArenaRoom extends Room {
           p.br_state = "SKYDIVE"; p.anim_state = "falling";
         }
       });
-      // MOBS no mundo aberto: mantém até 4 (respawn 30s) + IA. (antes: deletava todos.)
-      this._openWorldMobTick(dt);
-      // Drops dos mobs do mundo expiram sozinhos (auto-despawn) — NÃO apaga aqui,
-      // senão a moeda/poção que o mob largou sumia na hora. Props/fx/boss seguem off.
+      if (this.state.mobs.size > 0) this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
+      if (this.state.drops.size > 0) this.state.drops.forEach((_, id) => this.state.drops.delete(id));
       if (this.state.props.size > 0) this.state.props.forEach((_, id) => this.state.props.delete(id));
-      if (this.state.fx.size > 0) {
-        const now = Date.now();
-        this.state.fx.forEach((f, id) => { if (!f.expires_at || now > f.expires_at) this.state.fx.delete(id); });
-      }
+      if (this.state.fx.size > 0) this.state.fx.forEach((_, id) => this.state.fx.delete(id));
       if (this.state.boss) this.state.boss = undefined;
-      // expira drops antigos (2 min) no mundo aberto também
-      if (this.state.drops.size > 0) {
-        const now = Date.now();
-        this.state.drops.forEach((d, id) => { if (d.expires_at && now > d.expires_at) this.state.drops.delete(id); });
-      }
       return; // SKIP director + brTick + boss
     }
     this._matchDirectorTick();
@@ -2135,12 +2088,6 @@ export class ArenaRoom extends Room {
       toDel.forEach((id) => this.state.fx.delete(id));
     }
 
-    this._tickMobAI(dt);
-  }
-
-  /** IA dos mobs: cada um persegue o player vivo mais próximo (≤25u) e ataca no
-   *  alcance. Usado pelo tick de horda E pelo mundo aberto (os 4 mobs fixos). */
-  _tickMobAI(dt) {
     if (this.state.mobs.size === 0) return;
     const players = [];
     this.state.players.forEach((p) => { if (!p.dead) players.push(p); });
@@ -2151,12 +2098,9 @@ export class ArenaRoom extends Room {
       const cd = this._cooldowns.get(mob.id) || { cdT: 0, lastAttack: 0 };
       if (cd.cdT > 0) cd.cdT = Math.max(0, cd.cdT - dt);
 
-      // Acha player vivo mais próximo — IGNORA quem está ALTO demais (skydive/
-      // pulo): o mob está no chão (y≈0) e não alcança quem está voando. Sem isto
-      // os mobs acertavam o player durante a queda de 200m ("nascia morto").
+      // Acha player vivo mais próximo
       let best = null, bestDist = Infinity;
       for (const p of players) {
-        if (Math.abs((p.y || 0) - (mob.y || 0)) > 4) continue;   // diferença de altura > 4u → fora de alcance
         const dx = p.x - mob.x, dz = p.z - mob.z;
         const d = Math.sqrt(dx * dx + dz * dz);
         if (d < bestDist) { bestDist = d; best = p; }
@@ -2204,56 +2148,6 @@ export class ArenaRoom extends Room {
       }
       this._cooldowns.set(mob.id, cd);
     });
-  }
-
-  // ── MUNDO ABERTO: mantém até 4 mobs no mapa, respawn 30s ao morrer ──
-  //  Cada "slot" é uma vaga: ou tem um mob vivo, ou conta 30s pra renascer.
-  //  Roda no lugar do "deleta todos os mobs" do tick OPEN_WORLD.
-  _openWorldMobTick(dt) {
-    const CAP = 4;            // no máximo 4 mobs
-    const RESPAWN_MS = 30000; // 30s pra renascer após morrer
-    const now = Date.now();
-    if (!this._owMobSlots) {
-      this._owMobSlots = Array.from({ length: CAP }, () => ({ mobId: null, respawnAt: 0 }));
-    }
-    // Só nasce mob DEPOIS que existe player vivo NO CHÃO (não no skydive). Sem
-    // isto os 4 mobs já estavam no mapa antes de você cair e te matavam durante a
-    // queda ("nascendo morto"). Player no ar (y>6) ainda não conta.
-    let grounded = false;
-    this.state.players.forEach((p) => { if (!p.dead && (p.y || 0) < 6) grounded = true; });
-
-    for (const slot of this._owMobSlots) {
-      const mob = slot.mobId ? this.state.mobs.get(slot.mobId) : null;
-      if (mob && mob.hp > 0) continue;                 // vivo → ok
-      if (slot.mobId) {                                 // morreu/sumiu → agenda 30s (1x)
-        slot.mobId = null;
-        slot.respawnAt = now + RESPAWN_MS;
-      }
-      if (!grounded) continue;                          // ninguém no chão ainda → segura o spawn
-      if (!slot.respawnAt) slot.respawnAt = now;        // 1º spawn imediato (já tem player no chão)
-      if (now >= slot.respawnAt) {                      // deu o tempo → nasce
-        const id = this._spawnOpenWorldMob();
-        if (id) { slot.mobId = id; slot.respawnAt = 0; }
-      }
-    }
-    this._tickMobAI(dt);   // IA (perseguir/atacar) pros mobs do mundo
-  }
-
-  /** Spawna 1 mob ROOKIE num anel ao redor do centro do mapa. Retorna o id. */
-  _spawnOpenWorldMob() {
-    if (this.state.mobs.size >= 40) return null;
-    const rookies = MOB_KINDS.filter((k) => k.tier === 'rookie');
-    const def = rookies[Math.floor(Math.random() * rookies.length)] || MOB_KINDS[0];
-    const ang = Math.random() * Math.PI * 2;
-    const dist = 14 + Math.random() * 16;   // 14–30u do centro
-    const id = `mob_${++_mobUid}`;
-    const m = new MobState();
-    m.id = id; m.kind = def.kind; m.tier = def.tier;
-    m.x = Math.cos(ang) * dist; m.y = 0; m.z = Math.sin(ang) * dist;
-    m.ry = 0; m.hp = def.hp; m.maxHp = def.hp;
-    m.state = 'idle'; m.target_id = '';
-    this.state.mobs.set(id, m);
-    return id;
   }
 
   _spawnMob(kindReq) {

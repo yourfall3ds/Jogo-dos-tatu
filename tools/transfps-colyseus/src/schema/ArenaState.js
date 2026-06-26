@@ -58,8 +58,6 @@ type('number')(PlayerState.prototype, 'skydive_pitch'); // 0=horizontal, 75=pica
 type('number')(PlayerState.prototype, 'skydive_yaw');
 type('number')(PlayerState.prototype, 'altitude');
 type('number')(PlayerState.prototype, 'place'); // ranking final (1=winner)
-// ── Mundo de aventura: zona do player ('arena' = treino/PvP | 'wild' = mundo) ──
-type('string')(PlayerState.prototype, 'zone');
 
 // ── 2.5) Battle Royale state ──
 export class ZoneState extends Schema {}
@@ -133,9 +131,6 @@ type('number')(MobState.prototype, 'hp');
 type('number')(MobState.prototype, 'maxHp');
 type('string')(MobState.prototype, 'state');
 type('string')(MobState.prototype, 'target_id');
-// ── Mundo de aventura: região (bioma) + level do mob (XP/dificuldade) ──
-type('string')(MobState.prototype, 'region');
-type('number')(MobState.prototype, 'level');
 
 // ── 4.5) WorldObjectState (placed/built objects per owner) ──
 export class WorldObjectState extends Schema {}
