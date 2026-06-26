@@ -93,6 +93,7 @@ body.fn-hud-active #interactive-toggle,  /* botão Interativos */
 body.fn-hud-active #music-mute-btn,      /* mudo */
 body.fn-hud-active #match-banner,        /* WAVE 1 · 0:00 · 0 kills (banner topo) */
 body.fn-hud-active #xp-hud,              /* LV 1 / XP / OV (barra topo-direito) */
+body.fn-hud-active #party-hud,           /* OV · 0/0 (topo-direito) */
 body.fn-hud-active #rpg-hud {            /* barra empilhada XP/MP/stamina antiga */
   display: none !important;
 }
