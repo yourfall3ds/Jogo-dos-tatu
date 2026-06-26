@@ -50,7 +50,10 @@ export class RemoteMob {
 
     this.root = new BABYLON.TransformNode(`mob_${this.id}`, scene);
     this.root.position.set(state.x || 0, state.y || 0, state.z || 0);
-    this.root.rotation.y = BABYLON.Tools.ToRadians(state.ry || 0);
+    // +π: os GLBs chibata exportam com o ROSTO pra +Z, mas o server manda ry =
+    // atan2(nx,nz) (direção do movimento p/ o +Z do modelo) → sem o offset o mob
+    // andava DE COSTAS pro player. O +π vira o rosto pra direção do movimento.
+    this.root.rotation.y = BABYLON.Tools.ToRadians(state.ry || 0) + Math.PI;
 
     // Placeholder visual antes do GLB carregar (capsule cinza)
     this.placeholder = BABYLON.MeshBuilder.CreateCapsule(`mob_ph_${this.id}`,
@@ -237,7 +240,7 @@ export class RemoteMob {
       this._current.ry += dy * k;
     }
     this.root.position.set(this._current.x, this._current.y, this._current.z);
-    this.root.rotation.y = BABYLON.Tools.ToRadians(this._current.ry);
+    this.root.rotation.y = BABYLON.Tools.ToRadians(this._current.ry) + Math.PI;   // +π: rosto na direção do movimento (ver setup)
 
     if (camera) {
       const wpos = new BABYLON.Vector3(this._current.x, this._current.y + 2.0, this._current.z);
