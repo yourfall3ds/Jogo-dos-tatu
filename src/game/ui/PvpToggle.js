@@ -81,14 +81,19 @@ export class PvpToggle {
   update(input) {
     const yNow = input?.isDown?.('KeyY') === true || input?.keys?.KeyY === true;
     if (yNow && !this._wasKey && this.cs?.connected) {
-      const me = this.cs.state?.players?.get(this.auth.getUserId());
+      // SOU EU: usa cs.playerId (id estável usado no join). Em sessão ANÔNIMA
+      // auth.getUserId() = null → players.get(null) = undefined → me era sempre
+      // falsy → tecla Y nunca disparava o toggle. Mesmo motivo da duplicação.
+      const myId = this.cs.playerId || this.auth.getUserId();
+      const me = myId ? this.cs.state?.players?.get(myId) : null;
       if (me) this._sendToggle(!me.pvp_on);
     }
     this._wasKey = yNow;
   }
 
   isOn() {
-    const me = this.cs.state?.players?.get(this.auth.getUserId());
+    const myId = this.cs.playerId || this.auth.getUserId();
+    const me = myId ? this.cs.state?.players?.get(myId) : null;
     return !!me?.pvp_on;
   }
 }

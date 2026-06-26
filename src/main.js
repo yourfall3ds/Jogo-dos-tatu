@@ -712,7 +712,12 @@ async function init() {
 
   // ── State listeners ──
   cs.on('player_add', ({ id, state }) => {
-    if (id === auth.getUserId()) return; // sou eu mesmo
+    // SOU EU MESMO: comparamos com cs.playerId (id estável usado no join, o que
+    // o servidor REALMENTE guarda). Antes comparávamos com auth.getUserId(), que
+    // em sessões ANÔNIMAS é null → meu próprio id (anon-xxx) nunca casava → eu
+    // virava remoto de mim mesmo (avatar DUPLICADO em cima do local).
+    const myId = cs.playerId || auth.getUserId();
+    if (id === myId) return;
     if (_remotePlayers.has(id)) return;
     const rp = new RemotePlayer(scene, state);
     _remotePlayers.set(id, rp);
