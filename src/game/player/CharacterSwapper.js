@@ -79,7 +79,7 @@ export class CharacterSwapper {
       const probe = allAnims.find(a => a.name === 'idle') || allAnims[0];
       if (probe) {
         try {
-          await newLib.loadExternalAnimations(probe.path, probe.name, root);
+          await newLib.loadExternalAnimations(probe.path, probe.name, root, { retarget: true });
           if (newLib.animations.has(probe.name)) animsOk++;
         } catch (_) {}
       }
@@ -88,7 +88,7 @@ export class CharacterSwapper {
         // Rig COMPATÍVEL (Meshy) → vale baixar o resto das anims externas.
         const rest = allAnims.filter(a => a !== probe);
         await Promise.all(rest.map(a =>
-          newLib.loadExternalAnimations(a.path, a.name, root)
+          newLib.loadExternalAnimations(a.path, a.name, root, { retarget: true })
             .then(() => { if (newLib.animations.has(a.name)) animsOk++; })
             .catch(() => {})
         ));

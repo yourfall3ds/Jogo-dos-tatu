@@ -2458,21 +2458,21 @@ async function init() {
         if (player._dead) {
           try {
             player._serverRespawn = true;
-            // REGRA DO DONO #4: renasce CAINDO DO CÉU (skydive), não no chão.
-            // respawn()->spawn() já joga o player pra (0,200,0) caindo; aqui só
-            // ajustamos o X/Z pra cair PERTO do ponto que o server mandou
-            // (mantendo a altura de skydive = 200). Sem sobrescrever pro chão.
+            // TESTE: respawn BÁSICO no CHÃO (sem skydive) pra ISOLAR o facing/câmera.
+            // Antes caía de (sx,200,sz) com _isFalling; agora nasce direto no chão
+            // no ponto que o server mandou. Se a câmera ficar atrás aqui, o bug era
+            // o skydive; se ainda ficar na cara, é o respawn/câmera em si.
             const sx = me?.x, sz = me?.z;
             player.respawn();
             if (player.mesh && Number.isFinite(sx) && Number.isFinite(sz)) {
-              const SKY = 200;
-              player.mesh.position.set(sx, SKY, sz);
-              player.velY = -15; player._isFalling = true;
-              player._prevY = SKY;
+              const GY = 3;
+              player.mesh.position.set(sx, GY, sz);
+              player.velY = 0; player._isFalling = false;
+              player._prevY = GY;
               if (player._cc) {
                 try {
-                  player._cc.setPosition(new BABYLON.Vector3(sx, SKY, sz));
-                  player._cc.setVelocity(new BABYLON.Vector3(0, -15, 0));
+                  player._cc.setPosition(new BABYLON.Vector3(sx, GY, sz));
+                  player._cc.setVelocity(BABYLON.Vector3.Zero());
                 } catch (_) {}
               }
             }

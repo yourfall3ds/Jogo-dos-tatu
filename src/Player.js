@@ -573,6 +573,10 @@ export class Player {
     //  queda aqui — independente do input — ate aterrissar.
     if (this._isFalling && !this.input.gameActive && !this._dead) {
       this._skydiveFall(dt);
+      // A câmera TEM que seguir a queda ATRÁS do player. No respawn o yaw já foi
+      // pra 0; sem este update o _updateCamera é PULADO e a câmera fica ESTALE na
+      // visão da morte (yaw antigo) → no respawn parece "na cara" do personagem.
+      try { this._updateCamera(); } catch (_) {}
       return;
     }
     // Só roda após JOGAR. Exceção: MORTO → continua atualizando (queda/anim/
@@ -582,12 +586,64 @@ export class Player {
 
     // ── 1. Mouse look — funciona com ou sem pointer lock ─────────────
     const { dx, dy } = this.input.consumeMouseDelta();
-    this.yaw   += dx * this.MOUSE_SENS;
-    this.pitch  = Math.max(-88, Math.min(88, this.pitch + dy * this.MOUSE_SENS));
+    // MORTO: NÃO gira a câmera. Mexer o mouse (ou soltar o cursor pra clicar o
+    // botão de renascer) GIRAVA o personagem ao morrer → no respawn a câmera
+    // ficava "na cara". Congela yaw/pitch enquanto morto; respawn é por SPACE /
+    // auto-3s (abaixo), sem mouse e sem botão → zero rotação.
+    if (!this._dead) {
+      this.yaw   += dx * this.MOUSE_SENS;
+      this.pitch  = Math.max(-88, Math.min(88, this.pitch + dy * this.MOUSE_SENS));
+    }
     // GUARDA NaN final: se yaw/pitch escaparem, fwd vira NaN → posição NaN →
     //  tela buga + NaN no hitkill + áudio NaN. Sanitiza pra valores seguros.
     if (!Number.isFinite(this.yaw))   this.yaw = 0;
     if (!Number.isFinite(this.pitch)) this.pitch = 0;
+
+    // ── MORTO: RESPAWN por SPACE ou AUTO em 3s (sem botão clicável) ─────────
+    //  O botão exigia soltar o cursor (ESC) + mover o mouse pra clicar — e isso
+    //  girava a câmera. Tecla/auto = zero mouse. SP renasce local; MP manda
+    //  sendRespawn (o server orquestra). _respawnAt/_respawnSent são armados no
+    //  _startDeath e zerados a cada nova morte.
+    if (this._dead) {
+      const _sp = this.input.isDown?.('Space');
+      if (!this._respawnSent && ((_sp && !this._wasDeadSpace) || performance.now() >= (this._respawnAt || 0))) {
+        this._respawnSent = true;
+        if (window._cs?.connected) { try { window._cs.sendRespawn(); } catch (_) {} }
+        else { this.respawn(); }
+      }
+      this._wasDeadSpace = _sp;
+    }
+
+    // ── [FACING DEBUG] TEMP: offset clicável + leitura yaw/rotY. Captura os
+    //  valores no 1º frame do skydive (= respawn) pra caçar o "câmera na cara".
+    {
+      if (this._facingOff == null) {
+        try { this._facingOff = parseFloat(localStorage.getItem('facingOff')) || 0; } catch (_) { this._facingOff = 0; }
+      }
+      const _yawD = Math.round(this.yaw);
+      const _rotD = Math.round(BABYLON.Tools.ToDegrees(this.animator?.root?.rotation.y || 0));
+      const _diff = ((_rotD - _yawD) % 360 + 540) % 360 - 180;   // rotY−yaw normalizado
+      if (this._isFalling && !this._dbgWasFall) {                 // borda de subida do skydive
+        this._dbgWasFall = true;
+        this._dbgResp = `yaw:${_yawD} rotY:${_rotD} diff:${_diff}`;
+      }
+      if (!this._isFalling) this._dbgWasFall = false;
+      let _fe = document.getElementById('facing-off');
+      if (!_fe) {
+        _fe = document.createElement('div');
+        _fe.id = 'facing-off';
+        _fe.style.cssText = 'position:fixed;top:130px;left:12px;z-index:99999;background:#013;color:#0ff;font:bold 14px monospace;padding:8px 12px;border:2px solid #0ff;cursor:pointer;pointer-events:auto;user-select:none;white-space:pre;';
+        _fe.onclick = () => {
+          this._facingOff = (((this._facingOff || 0) + Math.PI / 2) % (Math.PI * 2));
+          try { localStorage.setItem('facingOff', String(this._facingOff)); } catch (_) {}
+        };
+        document.body.appendChild(_fe);
+      }
+      _fe.textContent =
+        'FACING off: ' + Math.round(BABYLON.Tools.ToDegrees(this._facingOff || 0)) + '° (CLIQUE)\n' +
+        'AGORA   yaw:' + _yawD + ' rotY:' + _rotD + ' diff:' + _diff + '\n' +
+        'RESPAWN ' + (this._dbgResp || '(renasce p/ capturar)');
+    }
 
     // ── 2. Grounded ──────────────────────────────────────────────────
     this._wasGrounded = this.isGrounded;
@@ -1261,11 +1317,8 @@ export class Player {
         //  GRAUS → ToRadians, igual ao yawRad do facing block.
         if (this._dead && this.animator?.root) {
           if (this.animator.root.rotationQuaternion) this.animator.root.rotationQuaternion = null;
-          // +π = COSTAS pra câmera. O modelo (Meshy) tem o ROSTO em −Z → rotation.y
-          // = yaw deixa o rosto ENCARANDO a câmera; +π vira pras costas (MESMA
-          // convenção do RemotePlayer e do FACING_OFFSET). Segue o yaw VIVO pra a
-          // câmera ficar sempre atrás, mexendo o mouse ou não.
-          this.animator.root.rotation.y = BABYLON.Tools.ToRadians(this.yaw) + Math.PI;
+          // Morto: corpo segue o yaw VIVO + offset ajustável (tecla J).
+          this.animator.root.rotation.y = BABYLON.Tools.ToRadians(this.yaw) + (this._facingOff || 0);
         }
 
         // Rotação manual do mesh root (já que o novo controlador não faz isso sozinho)
@@ -1277,9 +1330,8 @@ export class Player {
         //  Como o alvo é sempre yawRad, o personagem nunca vira de lado ao
         //  andar — vai sempre pra frente, costas pra câmera.
         const isArmedNow = this.stateMachine && this.stateMachine.state === 'armed';
-        // +π = COSTAS pra câmera. O rosto do modelo (Meshy) é −Z → sem offset ele
-        // encara a câmera. +π (FACING_OFFSET, igual ao RemotePlayer) vira de costas.
-        const targetYaw = yawRad + Math.PI;
+        // Offset de facing AJUSTÁVEL ao vivo (tecla J) pra achar "de frente pra mira".
+        const targetYaw = yawRad + (this._facingOff || 0);
 
         // MORTO: NÃO reorienta o corpo. Em MP a câmera segue controlável até o
         // respawn; sem este guard, mexer o mouse girava o cadáver pra encarar a
@@ -1758,10 +1810,13 @@ export class Player {
         this.animCtrl.play('falling', { loop: true, speed: 1.0, fade: 0.08 });
       }
     } else {
-      // Morte na fase → para no lugar e toca a anim de morto.
+      // Morte na fase → para PARADO em pé encarando a mira (igual ao spawn).
+      //  NÃO toca 'dead': no animLib ele mapeia pra 'Parkour_Vault_with_Roll'
+      //  (um ROLO que GIRA o personagem). Era a causa do "girou ao morrer" — e
+      //  nenhum offset de facing corrigia, porque a rotação é da ANIMAÇÃO, não do
+      //  root. O vanish (fade cyan + partículas) já sinaliza a morte.
       this._vx = 0; this._vz = 0; this.velY = 0;
-      const dieAnim = this.animLib?.has('dead') ? 'dead' : 'knockdown';
-      this.animCtrl?.play(dieAnim, { loop: false, speed: 1.0, fade: 0.10 });
+      this.animCtrl?.play('idle', { loop: true, speed: 1.0, fade: 0.12 });
     }
 
     // Mensagem da tela de morte conforme o tipo
@@ -1770,20 +1825,23 @@ export class Player {
       ? 'Você caiu do mapa! 🔄 Renascer pra voltar ao topo.'
       : 'Você foi derrotado! 🔄 Renascer pra continuar.';
 
-    // SOLO: libera o cursor (pra clicar Renascer). O loop continua atualizando
-    //   a morte mesmo sem pointer-lock (ver main.js / update).
-    // MULTIPLAYER: NÃO solta o cursor — o respawn é AUTOMÁTICO (~5s) e não há
-    //   botão pra clicar. Soltar o mouse fazia ele VAZAR pra fora da tela e
-    //   perder o controle da câmera. Mantém o lock + gameActive: a câmera
-    //   segue controlável até o renascimento automático.
-    const _isMp = !!window._cs?.connected;
-    if (!_isMp) {
-      try { document.exitPointerLock?.(); } catch (_) {}
-    } else {
-      try { this.input.gameActive = true; } catch (_) {}
-    }
+    // NÃO solta o cursor ao morrer (nem SP nem MP). Antes o SP soltava o pointer
+    // pra clicar o botão Renascer — mas mover o mouse pra clicar GIRAVA a câmera
+    // (ficava "na cara" no respawn). Agora o respawn é por SPACE / auto-3s (ver
+    // update): mantém o pointer-lock + gameActive, sem cursor e sem botão.
+    try { this.input.gameActive = true; } catch (_) {}
 
-    // A tela de morte aparece pelo HUD (info.dead). Expõe o respawn global.
+    // Arma o respawn por SPACE ou automático em 3s (zerado a cada nova morte).
+    this._respawnAt = performance.now() + 3000;
+    this._respawnSent = false;
+
+    // Esconde o botão clicável (respawn agora é por tecla/auto) e atualiza o texto.
+    try {
+      const _rb = document.getElementById('respawn-btn'); if (_rb) _rb.style.display = 'none';
+      const _dm = document.getElementById('death-msg');   if (_dm) _dm.textContent = 'Pressione ESPAÇO pra renascer (ou aguarde 3s)';
+    } catch (_) {}
+
+    // Fallback global (caso algo ainda chame): renasce.
     window.respawnPlayer = () => this.respawn();
 
     // REGRA DO DONO #2/#3: CADÁVER estilo Fortnite. O corpo cai/fica ~1.4s,
@@ -1938,7 +1996,7 @@ export class Player {
     if (this.animator?.root) {
       try {
         if (this.animator.root.rotationQuaternion) this.animator.root.rotationQuaternion = null;
-        this.animator.root.rotation.y = Math.PI;   // yaw=0 +π = COSTAS pra câmera (rosto −Z)
+        this.animator.root.rotation.y = (this._facingOff || 0);   // yaw=0 + offset ajustável (J)
       } catch (_) {}
     }
     if (this.animator) { try { this.animator._bodyYaw = null; } catch (_) {} }
@@ -1958,7 +2016,7 @@ export class Player {
     if (this.stateMachine) {
       this.stateMachine.setState(this.stateMachine.isArmedFlag ? 'armed' : 'unarmed');
     }
-    this.spawn();         // skydive: (0,200,0) caindo
+    this.spawn({ sky: false });   // TESTE: respawn BÁSICO no chão (sem skydive) p/ isolar o facing
     this.onRespawn?.();   // reseta inimigos
     // Re-trava o cursor e volta o jogo ao normal (reativa input — regra #4).
     try { this.input.activate?.(); } catch (_) {}

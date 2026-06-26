@@ -134,6 +134,22 @@ const CHARACTERS = [
     faceYaw: 0,
     sound: 'spray_bnookker',
   },
+  {
+    id: 'lucasmods', name: 'LUCASMODS', emoji: '🦖',
+    url: 'assets/characters/lucasmods.glb',
+    desc: 'Mod do Lucas · rig Meshy (todas as anims)',
+    // MESMO rig biped Meshy do rato → as anims do jogo (MOVESETS) casam in-game
+    // via CharacterSwapper. Os hints abaixo são só pro PREVIEW desta tela e
+    // reusam os nomes do player.glb (mesmo rig). Se o GLB não tiver anims
+    // embutidas, o preview fica numa pose estática — mas in-game ANIMA normal,
+    // pois usa as anims externas retargetadas.
+    idleHints: ['Idle_5', 'Idle'],
+    attackHints: ['Archery_Shot_1', 'Archery_Shot', 'Shot'],
+    comboHints: ['Archery_Shot_3', 'Run_and_Shoot'],
+    walkHints: ['Walking', 'Walk'],
+    faceYaw: 0,
+    sound: 'ui_select',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────

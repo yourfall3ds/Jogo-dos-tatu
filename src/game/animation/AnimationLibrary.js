@@ -25,65 +25,100 @@ export class AnimationLibrary {
    * redireciona os ossos/nós para o mesh do seu Player atual e descarta o mesh baixado.
    * IMPORTANTE: O modelo baixado precisa ter a mesma estrutura de ossos do seu player.
    */
-  async loadExternalAnimations(url, name, targetRootMesh) {
+  async loadExternalAnimations(url, name, targetRootMesh, opts = {}) {
     // Separa folder e filename para o Babylon.js
     const lastSlash = url.lastIndexOf('/');
     const folder = url.substring(0, lastSlash + 1);
     const file = url.substring(lastSlash + 1);
 
     const result = await BABYLON.SceneLoader.ImportMeshAsync(null, folder, file, this.scene);
-    
-    // Se o GLB carregado tem esqueleto, precisamos garantir que as animações
-    // sejam vinculadas aos ossos do Player atual.
+
+    // Se o GLB carregado tem animações, vinculamos aos ossos do Player atual.
     if (result.animationGroups.length > 0) {
-      // Mescla todas as AnimationGroups do arquivo num único grupo (alguns GLBs exportam
-      // cada propriedade como um grupo separado)
-      const newAg = new BABYLON.AnimationGroup(name, this.scene);
+      let finalAg = null;
 
-      // Mapeia todos os nós do personagem alvo por nome para busca rápida
-      const nodesMap = new Map();
-      targetRootMesh.getDescendants(false).forEach(n => {
-        nodesMap.set(n.name, n);
-      });
-
-      let matched = 0;
-      let total   = 0;
-
-      for (const ag of result.animationGroups) {
-        ag.targetedAnimations.forEach(ta => {
-          total++;
-          // Busca o nó correspondente APENAS dentro do nosso player
-          const targetNode = nodesMap.get(ta.target.name);
-          if (targetNode) {
-            newAg.addTargetedAnimation(ta.animation, targetNode);
-            matched++;
+      // ── RETARGET OFICIAL (Babylon AnimatorAvatar) — opt-in via opts.retarget ──
+      //  Quando os ossos têm os MESMOS nomes mas REST-POSE diferente (ex.: anims
+      //  do rato → modelo HUMANO lucasmods), o remap por nome (fallback abaixo)
+      //  aplica os keyframes CRUS e CONTORCE o esqueleto. O retargetAnimationKeys
+      //  compensa a diferença de rest-pose (math W_target·W_src⁻¹·…) e o
+      //  fixRootPosition escala a raiz pela altura (rato baixo → humano alto).
+      //  Só é ligado na TROCA de personagem (CharacterSwapper). O boot do rato
+      //  (rato→rato) NÃO retarga: seria identidade e custaria por-keyframe à toa.
+      if (opts.retarget && typeof BABYLON.AnimatorAvatar === 'function') {
+        let mergedSrc = null;
+        try {
+          // Junta os AGs do arquivo num só "source" (alguns GLBs separam por faixa).
+          let sourceAG = result.animationGroups[0];
+          if (result.animationGroups.length > 1) {
+            mergedSrc = new BABYLON.AnimationGroup(name + '__src', this.scene);
+            for (const ag of result.animationGroups) {
+              ag.targetedAnimations.forEach(ta => mergedSrc.addTargetedAnimation(ta.animation, ta.target));
+            }
+            sourceAG = mergedSrc;
           }
-        });
+          sourceAG.stop();   // fonte DEVE estar em rest-pose antes de retargetar
+
+          const avatar = new BABYLON.AnimatorAvatar(name, targetRootMesh, false);
+          const rt = avatar.retargetAnimationGroup(sourceAG, {
+            animationGroupName: name,
+            retargetAnimationKeys: true,
+            fixRootPosition: true,
+            fixGroundReference: false,
+            rootNodeName: 'Hips',
+            checkHierarchy: false,
+            fixAnimations: false,
+          });
+          try { avatar.dispose(); } catch (_) {}  // não dispõe o modelo (só o wrapper)
+
+          if (rt && rt.targetedAnimations && rt.targetedAnimations.length > 0) {
+            finalAg = rt;
+            DEBUG.log(`[AnimLib] ✅ "${name}" retargetado (${rt.targetedAnimations.length} faixas)`);
+          } else {
+            try { rt?.dispose?.(); } catch (_) {}
+            DEBUG.log(`[AnimLib] retarget "${name}" vazio → fallback remap`);
+          }
+        } catch (e) {
+          console.warn(`[AnimLib] retarget "${name}" falhou (${e?.message}) → fallback remap`);
+        } finally {
+          try { mergedSrc?.dispose(); } catch (_) {}
+        }
       }
 
-      if (matched === 0) {
-        // Nenhum osso correspondeu → provavelmente nomes de ossos diferentes.
-        // Registra diagnóstico com os nomes encontrados no GLB de animação.
-        const glbBones = result.animationGroups.flatMap(ag =>
-          ag.targetedAnimations.map(ta => ta.target.name)
-        );
-        console.warn(
-          `[AnimLib] ⚠️ "${name}": 0/${total} ossos mapeados!\n` +
-          `  GLB tem: ${[...new Set(glbBones)].join(', ')}\n` +
-          `  Player tem: ${[...nodesMap.keys()].slice(0, 10).join(', ')}…`
-        );
-        newAg.dispose(); // descarta grupo vazio para não poluir a cena
-      } else {
-        DEBUG.log(`[AnimLib] ✅ "${name}": ${matched}/${total} ossos mapeados`);
-        newAg.stop();
-        this.animations.set(name, newAg);
+      // ── FALLBACK / PADRÃO: remap por nome (rápido; correto p/ mesmo rest-pose) ──
+      if (!finalAg) {
+        const newAg = new BABYLON.AnimationGroup(name, this.scene);
+        const nodesMap = new Map();
+        targetRootMesh.getDescendants(false).forEach(n => nodesMap.set(n.name, n));
+        let matched = 0, total = 0;
+        for (const ag of result.animationGroups) {
+          ag.targetedAnimations.forEach(ta => {
+            total++;
+            const targetNode = nodesMap.get(ta.target.name);
+            if (targetNode) { newAg.addTargetedAnimation(ta.animation, targetNode); matched++; }
+          });
+        }
+        if (matched === 0) {
+          const glbBones = result.animationGroups.flatMap(ag => ag.targetedAnimations.map(ta => ta.target.name));
+          console.warn(
+            `[AnimLib] ⚠️ "${name}": 0/${total} ossos mapeados!\n` +
+            `  GLB tem: ${[...new Set(glbBones)].join(', ')}\n` +
+            `  Player tem: ${[...nodesMap.keys()].slice(0, 10).join(', ')}…`
+          );
+          newAg.dispose();
+        } else {
+          DEBUG.log(`[AnimLib] ✅ "${name}": ${matched}/${total} ossos mapeados`);
+          finalAg = newAg;
+        }
       }
+
+      if (finalAg) { finalAg.stop(); this.animations.set(name, finalAg); }
     }
 
     // Limpeza pesada: destrói tudo o que veio no arquivo de animação (malhas e esqueletos extras)
     result.meshes.forEach(m => m.dispose());
     result.skeletons.forEach(s => s.dispose());
-    result.animationGroups.forEach(ag => ag.dispose());
+    result.animationGroups.forEach(ag => { try { ag.dispose(); } catch (_) {} });
   }
 
   // ════════════════════════════════════════════════════════════════

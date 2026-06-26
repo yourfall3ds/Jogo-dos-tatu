@@ -17,6 +17,7 @@ const PLAYER_BIPED = 'assets/itens 3d/Animations-meshy/Meshy_AI_Faça_um_rato_mi
 const COMPAT_MODELS = [
   { name: '🐭 Rato (padrão)', url: PLAYER_BIPED },
   { name: '🐉 AzureFin',      url: 'assets/characters/azurefin.glb' },
+  { name: '🦖 LucasMods',     url: 'assets/characters/lucasmods.glb' },
 ];
 
 export class CharacterSelectUI {
