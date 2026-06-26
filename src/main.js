@@ -666,6 +666,15 @@ async function init() {
   cs.connect(TRANSFPS_CS_URL);
   window._cs = cs;
   cs.setPlayerId(auth.getUserId());   // null = anônimo até a auth resolver
+  // ── ID ESTÁVEL do MEU player ────────────────────────────────────────
+  //  Em sessão LOGADA: auth.getUserId() = UUID do Supabase.
+  //  Em sessão VISITANTE: auth.getUserId() = null → cai pro cs.playerId
+  //  (= stableId 'anon-xxx' usado no join). Quem ignorava esse fallback
+  //  comparava com null → eu nunca casava com meu próprio state → dano,
+  //  PvP, HP, kills, dmg numbers, drops, knockback, SFX… nada dava como
+  //  "isMe". Use SEMPRE este helper, NÃO auth.getUserId() direto.
+  const getMyId = () => cs.playerId || auth.getUserId();
+  window._getMyId = getMyId;
 
   // init() não-awaitada, com guarda de tempo. Quando resolver, atualiza o
   // playerId no Colyseus (sem reconectar) e o HUD via onAuthChange já existente.
@@ -741,7 +750,7 @@ async function init() {
     _remoteFx.clear();
   });
   cs.on('player_change', ({ id, field, value, state }) => {
-    const isMe = id === auth.getUserId();
+    const isMe = id === getMyId();
     // HP é AUTORITATIVO do servidor no MP → reflete na barra local + morte/respawn.
     // (antes a vida do servidor caía mas a barra local nunca atualizava → "morria do nada")
     if (isMe && (field === 'hp' || field === 'maxHp')) {
@@ -821,7 +830,7 @@ async function init() {
 
   // ── PICKUP confirmado pelo servidor (aplica efeito local) ──
   cs.on('pickup', (m) => {
-    const isMine = m.player_id === auth.getUserId();
+    const isMine = m.player_id === getMyId();
     // VFX onde estava o drop (já foi removido pelo drop_remove)
     if (isMine) {
       // Som de pickup
@@ -868,7 +877,7 @@ async function init() {
 
   // ── HIT CONFIRMADO pelo servidor (dmg autoritativo) ──
   cs.on('hit_confirmed', (m) => {
-    const myId = auth.getUserId();
+    const myId = getMyId();
     let targetPos = null;
     let targetMesh = null;
     if (m.mob) {
@@ -944,7 +953,7 @@ async function init() {
   //  (mob→player), a reação (hit_face/hit_back_run) e o camera-shake. Antes ia
   //  fromPos=null,kb=1 → o player tomava dano mas não "sentia" o soco.
   cs.on('mob_attack', (m) => {
-    if (m.target_id === auth.getUserId() && !player._dead) {
+    if (m.target_id === getMyId() && !player._dead) {
       try { window._dbgLastOp = 'levar dano (mob)'; } catch (_) {}
       const fromPos = Number.isFinite(m.from_x)
         ? new BABYLON.Vector3(m.from_x, Number.isFinite(m.from_y) ? m.from_y : 0, m.from_z)
@@ -962,7 +971,7 @@ async function init() {
 
   // ── Died (kill feed) ──
   cs.on('died', (d) => {
-    const myId = auth.getUserId();
+    const myId = getMyId();
     const killerNick = d.killer === myId ? 'VOCÊ'
       : (_remotePlayers.get(d.killer)?.nickname || cs.state?.players?.get(d.killer)?.nickname || 'alguém');
     const victimNick = d.player_id === myId ? 'VOCÊ'
@@ -980,7 +989,7 @@ async function init() {
 
   // ── SKILL CAST: server validou e broadcastou. Renderiza VFX. ──
   cs.on('skill_cast', (m) => {
-    const isMe = m.caster_id === auth.getUserId();
+    const isMe = m.caster_id === getMyId();
     // Posição do caster: meu próprio player ou um RemotePlayer
     const casterPos = isMe
       ? player.mesh?.position
@@ -1080,7 +1089,7 @@ async function init() {
   // ── DISPARO/GOLPE do parceiro (tiro/swing) — som ESPACIAL na pos do ATIRADOR.
   //    Dispara mesmo quando o tiro ERRA (hit_confirmed só toca o whiz no acerto). ──
   cs.on('remote_fire', (m) => {
-    if (!m || m.id === auth.getUserId()) return; // ignora meu próprio disparo (já soa local)
+    if (!m || m.id === getMyId()) return; // ignora meu próprio disparo (já soa local)
     // ── ANIMAÇÃO DE ATAQUE do parceiro (soco/espada/chibata/tiro) ──
     // O anim_state que trafega é só locomoção (idle/walk/run); o estado de
     // combate é descartado no sendInput. Então o ÚNICO sinal de golpe que chega
@@ -1172,7 +1181,7 @@ async function init() {
   //   RemotePlayer._maybePlayFootstep; tiro/golpe via remote_fire.
   const _SFX_MAP = { jump: 'jump', dash: 'dash', land: 'land', walljump: 'walljump' };
   cs.on('remote_sfx', (m) => {
-    if (!m || m.id === auth.getUserId()) return;       // meu próprio SFX já soou local
+    if (!m || m.id === getMyId()) return;       // meu próprio SFX já soou local
     const sid = _SFX_MAP[m.kind];
     if (!sid) return;
     const sm = window._soundManager;
@@ -1202,7 +1211,7 @@ async function init() {
   //  cosmético no atacante e o alvo nunca sentia.
   cs.on('player_knockback', (m) => {
     try {
-      const myId = auth.getUserId();
+      const myId = getMyId();
       const dirX = +m?.dirX || 0;
       const dirZ = +m?.dirZ || 0;
       const force = +m?.force || 7;
@@ -1240,12 +1249,12 @@ async function init() {
 
   // ── XP/LEVEL UP (server-authoritative) ──
   cs.on('xp_gain', (m) => {
-    if (m.player_id === auth.getUserId() && player.mesh) {
+    if (m.player_id === getMyId() && player.mesh) {
       window._dmgNumbers?.spawn(player.mesh.position, `+${m.gain} XP`, { color: '#5cf' });
     }
   });
   cs.on('level_up', (m) => {
-    if (m.player_id === auth.getUserId()) {
+    if (m.player_id === getMyId()) {
       _showKillFeed(`🆙 LEVEL ${m.level}!`);
       // Restaura HP total visualmente (server já curou)
       player.hp = player.maxHp;
@@ -1434,7 +1443,7 @@ async function init() {
   let _lastDeadState = false;
   let _lastKillerId = null;
   cs.on('died', (m) => {
-    if (m.player_id === auth.getUserId()) _lastKillerId = m.killer;
+    if (m.player_id === getMyId()) _lastKillerId = m.killer;
   });
 
   // Ping tick (2Hz)
@@ -2436,7 +2445,7 @@ async function init() {
     // auto-respawna em ~5s (dead→false); aqui só limpamos o estado local
     // e reposicionamos. Sem câmera presa, sem replay, sem tela preta.
     if (cs.connected && cs.state && cs.state.players && typeof cs.state.players.get === 'function') {
-      const me = cs.state.players.get(auth.getUserId());
+      const me = cs.state.players.get(getMyId());
       const isDead = !!me?.dead;
       if (!isDead && _lastDeadState) {
         // ── SERVER RESPAWNOU (dead→false) ──────────────────────────────
