@@ -3,7 +3,7 @@
 //  Camera via setTarget() — mais confiável que .rotation direto
 // ─────────────────────────────────────────────────────────────────
 import { WallJumpController } from './game/player/WallJumpController.js';
-import { WeaponSystem }       from './WeaponSystem.js';
+import { WeaponSystem }       from './game/weapons/WeaponSystem.js';
 import { PlayerAnimator }     from './game/player/PlayerAnimator.js';
 import { AnimConfigUI }       from './game/ui/AnimConfigUI.js';
 import { physicsReady }       from './game/physics/PhysicsWorld.js';

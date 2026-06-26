@@ -1,7 +1,7 @@
-import { PistolaBucaneira } from './game/weapons/PistolaBucaneira.js';
-import { Metralhadora }     from './game/weapons/Metralhadora.js';
-import { EspadaPaladin }    from './game/weapons/EspadaPaladin.js';
-import { LocalDB }           from './game/data/LocalDB.js';
+import { PistolaBucaneira } from './PistolaBucaneira.js';
+import { Metralhadora }     from './Metralhadora.js';
+import { EspadaPaladin }    from './EspadaPaladin.js';
+import { LocalDB }           from '../data/LocalDB.js';
 
 function getLocalCombatTarget(player) {
   const actor = player || window._gamePlayer || null;
