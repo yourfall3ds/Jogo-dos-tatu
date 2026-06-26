@@ -4,11 +4,11 @@
 //  Objetos dinâmicos (barris / caixas) têm física simples manual:
 //  DynamicObject rastreia velocidade e usa moveWithCollisions.
 // ─────────────────────────────────────────────────────────────────
-import { MonsterPlant } from './game/enemies/Enemy.js';
-import { GameObject }   from './game/scene/GameObject.js';
-import { LocalDB }      from './game/data/LocalDB.js';
-import { AssetGroups }  from './game/data/AssetGroups.js';
-import { DEBUG }        from './utils/debug.js';
+import { MonsterPlant } from '../enemies/Enemy.js';
+import { GameObject }   from '../scene/GameObject.js';
+import { LocalDB }      from '../data/LocalDB.js';
+import { AssetGroups }  from '../data/AssetGroups.js';
+import { DEBUG }        from '../../utils/debug.js';
 
 // Codifica espaços e acentos em caminhos de textura
 function enc(p) {
