@@ -141,8 +141,17 @@ async function loadNavigationFactory() {
         import(RECAST_GENERATORS_URL),
       ]);
 
+      // FIX init: recastCore e recastGenerators são bundles CDN SEPARADOS,
+      //  cada um com sua própria instância WASM. Antes só o core era init →
+      //  quando o generator rodava, batia em recast não inicializado:
+      //  '"init" must be called before using any recast-navigation-js APIs'.
+      //  Agora inicializamos AMBOS (e toleramos se um deles não expõe init).
       if (typeof recastCore.init === 'function') {
         await recastCore.init();
+      }
+      if (recastGenerators && typeof recastGenerators.init === 'function'
+          && recastGenerators.init !== recastCore.init) {
+        try { await recastGenerators.init(); } catch (_) {}
       }
 
       if (typeof mod.CreateNavigationPluginAsync === 'function') {
