@@ -632,7 +632,24 @@ async function init() {
 
   const waterSystem = new WaterSystem(scene, level);
   window._waterSystem = waterSystem;
-  waterSystem.build();
+  // PISCINAS REMOVIDAS (pedido do dono): eram os retângulos AZUIS do WaterSystem
+  // (pool_0..pool_3 + _floor/_surface/_vol) espalhados pelo mapa. Não construímos
+  // mais; update() vira no-op (pools vazio).
+  // waterSystem.build();   // ← desativado de propósito
+  // Varredura: descarta QUALQUER malha/nó com "pool" no nome (cena salva, skill
+  // map, etc). Exposto em window.removePoolObjects() pra rodar de novo a qualquer hora.
+  window.removePoolObjects = () => {
+    let n = 0;
+    const kill = (arr) => {
+      for (const o of (arr || []).slice()) {
+        if (o?.name && /pool/i.test(o.name)) { try { o.dispose(); n++; } catch (_) {} }
+      }
+    };
+    kill(scene.meshes); kill(scene.transformNodes); kill(scene.lights);
+    if (n) console.log('[removePoolObjects] removidos:', n);
+    return n;
+  };
+  try { window.removePoolObjects(); } catch (_) {}
 
   const skillExtras = new SkillMapExtras(scene, level);
   skillExtras.build();

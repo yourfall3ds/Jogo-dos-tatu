@@ -148,13 +148,15 @@ export function throwBomb({ player } = {}) {
 //  texture used in submit" → tela quebra). A luz é criada 1x e só tem a
 //  intensidade animada (0 = apagada). Nunca é descartada → light-count estável.
 function _getExplosionLight(scene) {
-  let l = scene._explLightPool;
+  let l = scene._explLightShared;
   if (l && !l.isDisposed?.()) return l;
-  l = new BABYLON.PointLight('explLightPool', BABYLON.Vector3.Zero(), scene);
+  // Nome SEM "pool" de propósito: a varredura removePoolObjects() (que tira os
+  // objetos "pool" da cena) não deve descartar esta luz funcional da explosão.
+  l = new BABYLON.PointLight('explLightShared', BABYLON.Vector3.Zero(), scene);
   l.diffuse  = new BABYLON.Color3(1, 0.6, 0.2);
   l.specular = new BABYLON.Color3(0, 0, 0);
   l.intensity = 0;
-  scene._explLightPool = l;
+  scene._explLightShared = l;
   return l;
 }
 
