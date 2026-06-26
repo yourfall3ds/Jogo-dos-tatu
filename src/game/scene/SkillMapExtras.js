@@ -20,12 +20,16 @@ export class SkillMapExtras {
 
   build() {
     this._buildMaterials();
-    // OPEN_WORLD limpo: SO as torres altas de escalada (wall-jump vertical).
-    // Removidos os 27 objetos pequenos forcados (dash ring, plataformas
-    // suspensas, rampas e pads/flags) — poluiam o mapa aberto.
-    this._buildWallJumpCorridor();  // corredor de paredes (escalada media)
+    // ARENA DE SKILL/ESCALADA (a pedido do dono): muito mais estrutura pra
+    //  subir, escalar, fazer parkour vertical. A mecânica de locomoção É o jogo.
+    this._buildWallJumpCorridor();  // corredor de paredes em zigzag (escalada média)
     this._buildSpeedAlley();        // torres paralelas H=28 (escalada alta)
-    DEBUG.log(`[SkillMap] ${this.created.length} torres de escalada criadas`);
+    this._buildSuspendedPlatforms();// plataformas suspensas (dash aéreo)
+    this._buildDashRing();          // arco de dash de precisão
+    this._buildClimbTower();        // TORRE CENTRAL de vários andares (escalar até o topo)
+    this._buildSpiralAscent();      // plataformas em ESPIRAL subindo (rota alternativa)
+    this._buildWallKickShaft();     // poço estreito de wall-kick vertical
+    DEBUG.log(`[SkillMap] ${this.created.length} elementos de skill/escalada criados`);
   }
 
   _buildMaterials() {
@@ -145,5 +149,58 @@ export class SkillMapExtras {
     this._box('spdAlley_R', W, H, 8, cx + GAP/2, H/2, cz, this.mats.skill1);
     this._box('spdAlley_back', GAP + W*2, H, W, cx, H/2, cz + 4.5, this.mats.wall);
     // (pad 'spdAlley_floor' e bandeira 'spdAlley_flag' removidos — so as torres)
+  }
+
+  // ── TORRE CENTRAL: andares empilhados pra escalar até o topo ──────
+  //  Cada andar é uma plataforma com paredes laterais (wall-jump entre elas
+  //  pra subir pro próximo). Gaps verticais que exigem dash/wall-jump.
+  _buildClimbTower() {
+    const cx = 0, cz = 30;          // perto do centro, atrás do spawn
+    const FLOORS = 6;               // 6 andares
+    const FH = 6;                   // altura entre andares (gap de escalada)
+    const PLAT = 8;                 // tamanho da plataforma
+    for (let f = 0; f < FLOORS; f++) {
+      const y = 2 + f * FH;
+      // plataforma do andar (alterna lado pra forçar wall-jump diagonal)
+      const side = (f % 2 === 0) ? -1 : 1;
+      this._box(`tower_floor_${f}`, PLAT, 0.5, PLAT, cx + side * 3, y, cz, this.mats.skill2);
+      // paredes laterais pra wall-jump subir pro próximo andar
+      this._box(`tower_wallA_${f}`, 0.8, FH, PLAT, cx - PLAT / 2, y + FH / 2, cz, this.mats.skill1);
+      this._box(`tower_wallB_${f}`, 0.8, FH, PLAT, cx + PLAT / 2, y + FH / 2, cz, this.mats.skill1);
+    }
+    // plataforma do TOPO (recompensa: vista alta da arena)
+    this._box('tower_top', PLAT + 2, 0.6, PLAT + 2, cx, 2 + FLOORS * FH, cz, this.mats.accent);
+  }
+
+  // ── ESPIRAL ASCENDENTE: plataformas girando em volta de um eixo, subindo ──
+  //  Rota alternativa de escalada — pula de plataforma em plataforma circulando.
+  _buildSpiralAscent() {
+    const cx = -35, cz = 35;        // canto do mapa
+    const STEPS = 14;               // 14 degraus
+    const R = 7;                    // raio da espiral
+    const RISE = 2.4;               // sobe por degrau
+    for (let i = 0; i < STEPS; i++) {
+      const a = (i / STEPS) * Math.PI * 4;   // 2 voltas completas
+      const x = cx + Math.cos(a) * R;
+      const z = cz + Math.sin(a) * R;
+      const y = 2 + i * RISE;
+      this._box(`spiral_${i}`, 3.2, 0.4, 3.2, x, y, z, i % 2 ? this.mats.skill3 : this.mats.skill1, a);
+    }
+    // pilar central (referência visual + wall-jump de emergência)
+    this._box('spiral_core', 1.5, STEPS * RISE + 4, 1.5, cx, 2 + (STEPS * RISE) / 2, cz, this.mats.wall);
+  }
+
+  // ── POÇO DE WALL-KICK: 4 paredes formando um poço estreito, subir pulando ──
+  //  Wall-jump alternando entre as 4 faces — o desafio vertical mais técnico.
+  _buildWallKickShaft() {
+    const cx = 35, cz = 35;
+    const H = 34, GAP = 3.2, W = 1.0;
+    // 4 paredes formando um quadrado oco (poço)
+    this._box('shaft_N', GAP + W * 2, H, W, cx, H / 2, cz - GAP / 2, this.mats.skill1);
+    this._box('shaft_S', GAP + W * 2, H, W, cx, H / 2, cz + GAP / 2, this.mats.skill1);
+    this._box('shaft_E', W, H, GAP + W * 2, cx + GAP / 2, H / 2, cz, this.mats.skill2);
+    this._box('shaft_W', W, H, GAP + W * 2, cx - GAP / 2, H / 2, cz, this.mats.skill2);
+    // plataforma no topo do poço
+    this._box('shaft_top', GAP + W * 3, 0.6, GAP + W * 3, cx, H + 0.5, cz, this.mats.accent);
   }
 }
