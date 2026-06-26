@@ -2,10 +2,10 @@
 //  Player — controller FPS com moveWithCollisions (sem Havok)
 //  Camera via setTarget() — mais confiável que .rotation direto
 // ─────────────────────────────────────────────────────────────────
-import { WallJumpController } from './WallJumpController.js';
+import { WallJumpController } from './game/player/WallJumpController.js';
 import { WeaponSystem }       from './WeaponSystem.js';
 import { PlayerAnimator }     from './PlayerAnimator.js';
-import { AnimConfigUI }       from './AnimConfigUI.js';
+import { AnimConfigUI }       from './game/ui/AnimConfigUI.js';
 import { physicsReady }       from './game/physics/PhysicsWorld.js';
 
 export class Player {
