@@ -238,8 +238,17 @@ export class PlayerAnimator {
     socket.position.set(0, 0, 0);
     socket.rotation.set(0, 0, 0);
     if (bone) {
-      bone.computeWorldMatrix(true);
-      const bs = bone.absoluteScaling || BABYLON.Vector3.One();
+      // Força o recálculo da matriz mundial da CADEIA inteira (root → osso).
+      // CRÍTICO no swap de personagem em runtime: ler a escala sem isso devolvia
+      // a escala LOCAL (1,1,1) em vez da acumulada (~0.01) → socket.scaling=1 →
+      // arma MINÚSCULA (tpsScale × 0.01). Computando do topo pra baixo + lendo a
+      // escala via decompose da matriz mundial, o valor fica correto em qualquer
+      // rig (rato OU humano), tanto no boot quanto no swap.
+      const chain = [];
+      for (let b = bone; b; b = b.parent) chain.push(b);
+      for (let i = chain.length - 1; i >= 0; i--) { try { chain[i].computeWorldMatrix(true); } catch (_) {} }
+      const bs = new BABYLON.Vector3(1, 1, 1);
+      try { bone.getWorldMatrix().decompose(bs, undefined, undefined); } catch (_) {}
       const inv = new BABYLON.Vector3(
         bs.x ? 1 / bs.x : 1,
         bs.y ? 1 / bs.y : 1,
