@@ -19,6 +19,7 @@ const TABS = [
   { id: 'skills', label: 'Habilidades', icon: '⚡' },
   { id: 'world',  label: 'Mundo',       icon: '🌍' },
   { id: 'char',   label: 'Personagem',  icon: '🐭' },
+  { id: 'edit',   label: 'Editores',    icon: '🧰' },
   { id: 'cfg',    label: 'Config',      icon: '⚙️' },
   { id: 'pvp',    label: 'PvP',         icon: '⚔' },
 ];
@@ -149,6 +150,7 @@ export class PauseMenu {
     const fn = ({
       inv:    () => this._renderInv(),    skills: () => this._renderSkills(),
       world:  () => this._renderWorld(),  char:   () => this._renderChar(),
+      edit:   () => this._renderEditors(),
       cfg:    () => this._renderCfg(),    pvp:    () => this._renderPvp(),
     })[this._active] || (() => '');
     this._content.innerHTML = fn();
@@ -204,6 +206,22 @@ export class PauseMenu {
         <span>Abrir Seleção de Personagem<small>Escolher modelo (rato, lucasmods, etc.)</small></span></button></div>`;
   }
 
+  _renderEditors() {
+    const items = [
+      { id: 'scene',  ic: '🎬', nm: 'Editor de Cena',     key: 'F9', sub: 'Mover/excluir/salvar objetos da cena.' },
+      { id: 'anim',   ic: '🎞', nm: 'Animador',           key: 'F6', sub: 'Editar/mapear animações do personagem.' },
+      { id: 'weapon', ic: '🔫', nm: 'Editor de Arma',      key: 'F4', sub: 'Ajustar posição/escala/rotação das armas.' },
+      { id: 'mobs',   ic: '🐛', nm: 'Debug de Monstros',   key: 'F7', sub: 'Tunar hitbox/dano/alcance dos inimigos.' },
+      { id: 'chibata',ic: '🗺', nm: 'Mapas Chibata',       key: 'N',  sub: 'Trocar/ver os mapas do pacote Chibata.' },
+    ];
+    return `<h2 class="fc-h">🧰 Editores</h2>
+      <p class="fc-sub">Todas as janelas de edição (os atalhos continuam valendo em jogo).</p>
+      <div class="fc-grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));">
+        ${items.map(i => `<button class="fc-btn" data-edit="${i.id}">
+          <span class="bic">${i.ic}</span><span>${i.nm} <span class="fc-key">${i.key}</span><small>${i.sub}</small></span></button>`).join('')}
+      </div>`;
+  }
+
   _renderCfg() {
     return `<h2 class="fc-h">⚙️ Configurações</h2>
       <p class="fc-sub">Gráficos, som e opções.</p>
@@ -233,6 +251,16 @@ export class PauseMenu {
         const o = btn.dataset.open;
         if (o === 'char') openTool(() => (window._charSelectUI?.show?.() ?? window._charSelectScreen?.open?.()));
         else if (o === 'cfg') openTool(() => window._settingsUI?.show?.());
+      };
+    });
+    this._content.querySelectorAll('[data-edit]').forEach(btn => {
+      btn.onclick = () => {
+        const e = btn.dataset.edit;
+        if (e === 'scene')        openTool(() => window.enterEngineMode?.('scene'));
+        else if (e === 'anim')    openTool(() => window.openAnimator?.());
+        else if (e === 'weapon')  openTool(() => window._weaponEditor?.show?.());
+        else if (e === 'mobs')    openTool(() => window.openMonsterDebug?.('monsterPlant'));
+        else if (e === 'chibata') openTool(() => (window._chibataMaps?.show?.() ?? window._chibataMaps?.toggle?.() ?? window._chibataMaps?.open?.()));
       };
     });
     const pvpBtn = this._content.querySelector('#fc-pvp-btn');
