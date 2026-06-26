@@ -304,6 +304,7 @@ export class ColyseusClient {
     this.room.onMessage('match_started', () => this._notify('match_started'));
     this.room.onMessage('died', (m) => this._notify('died', m));
     this.room.onMessage('respawn', (m) => this._notify('respawn', m));
+    this.room.onMessage('zone_change', (m) => this._notify('zone_change', m));
     this.room.onMessage('mob_attack', (m) => this._notify('mob_attack', m));
     this.room.onMessage('mob_killed', (m) => this._notify('mob_killed', m));
     this.room.onMessage('chat', (m) => this._notify('chat', m));
@@ -566,6 +567,13 @@ export class ColyseusClient {
   }
   sendRespawn() {
     this.room?.send('respawn', {});
+  }
+  // ── Mundo de aventura: entrar/sair do mundo selvagem ──
+  sendEnterWild() {
+    this.room?.send('enter_wild', {});
+  }
+  sendEnterArena() {
+    this.room?.send('enter_arena', {});
   }
   sendChat(msg) {
     this.room?.send('chat', { msg });

@@ -1838,18 +1838,22 @@ export class Player {
     // Fallback global (caso algo ainda chame): renasce.
     window.respawnPlayer = () => this.respawn();
 
-    // ── AUTO-RESPAWN (SOLO): contagem regressiva, sem botão ──────────
-    //  No MP o servidor já auto-respawna. No SOLO, antes precisava CLICAR
-    //  "Renascer". Agora conta 3s e renasce SOZINHO — o jogador nunca fica
-    //  preso numa tela esperando clicar.
-    if (!_isMp) {
+    // ── AUTO-RESPAWN: contagem regressiva, SEM botão (sempre) ────────
+    //  Vale no SOLO E no MUNDO SELVAGEM (wild, que é online): conta 3s e
+    //  renasce SOZINHO. O jogador NUNCA fica preso numa tela clicando.
+    //  (Na arena PvP pura o servidor já cuida do respawn via DeathTimer.)
+    const _inWild = window._worldManager?._inBiomeWorld === true;
+    if (!_isMp || _inWild) {
       if (this._autoRespawnT) { try { clearInterval(this._autoRespawnT); } catch (_) {} }
       let secs = 3;
       const updateMsg = () => {
         const m = document.getElementById('death-msg');
         if (m) m.textContent = (type === 'fall'
-          ? 'Você caiu do mapa! '
+          ? 'Você caiu! '
           : 'Você foi derrotado! ') + `Renascendo em ${secs}…`;
+        // some o botão Renascer (auto-respawn não precisa de clique)
+        const btn = document.getElementById('respawn-btn');
+        if (btn) btn.style.display = 'none';
       };
       updateMsg();
       this._autoRespawnT = setInterval(() => {
@@ -2038,9 +2042,9 @@ export class Player {
     // limpa o timer de auto-respawn (se renasceu antes da contagem acabar)
     if (this._autoRespawnT) { try { clearInterval(this._autoRespawnT); } catch (_) {} this._autoRespawnT = null; }
 
-    // MUNDO DE BIOMAS: renasce no spawn seguro (3m acima do chão da clareira),
-    //  NÃO no skydive de (0,200,0) que poderia cair fora. Caso contrário, spawn
-    //  normal do mapa.
+    // MUNDO SELVAGEM (wild): renasce no spawn seguro da clareira. No MP avisa o
+    //  SERVIDOR (enter_wild) pra ele reposicionar de forma autoritativa — assim
+    //  os amigos te veem renascer no lugar certo. Caso contrário, spawn normal.
     const wm = window._worldManager;
     const sp = wm?._inBiomeWorld ? wm?._builder?.spawnPoint : null;
     if (sp) {
@@ -2050,6 +2054,8 @@ export class Player {
       if (this._cc) {
         try { this._cc.setPosition(sp.clone()); this._cc.setVelocity(BABYLON.Vector3.Zero()); } catch (_) {}
       }
+      // online: pede ao servidor pra confirmar a posição na wild
+      try { if (window._cs?.connected) window._cs.sendEnterWild?.(); } catch (_) {}
     } else {
       this.spawn();       // skydive: (0,200,0) caindo (mapa normal)
     }

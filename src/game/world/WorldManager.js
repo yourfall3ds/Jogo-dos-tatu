@@ -38,17 +38,27 @@ export class WorldManager {
       // pequena espera pro overlay pintar antes do trabalho pesado
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
+      // ── ONLINE: avisa o SERVIDOR que entrou no mundo selvagem ──────
+      //  O servidor é autoritativo: seta zone='wild' e teleporta o player pro
+      //  spawn da wild (todos na sala veem). Aqui só pedimos; o servidor manda.
+      const cs = window._cs;
+      if (cs?.connected) {
+        cs.sendEnterWild?.();
+      }
+
       // esconde o mapa atual (não deleta — dá pra voltar depois)
       this._hideCurrentMap(true);
 
-      // constrói o mundo (progresso vai pra barra)
+      // constrói o mundo LOCAL (geometria determinística por seed — leve, igual
+      //  pra todos). Mobs/baús/XP vêm do servidor (próximas ondas).
       this._builder = new BiomeWorldBuilder(this.scene, {
         onProgress: (p, phase) => this.loadScreen.setProgress(p, phase),
       });
       await this._builder.build();
 
-      // teleporta o player pro spawn seguro (clareira central)
-      const sp = this._builder.spawnPoint || new BABYLON.Vector3(0, 2, 0);
+      // posiciona no spawn seguro (clareira central). No MP o servidor também
+      //  manda a posição (zone_change) — aqui garantimos o local até sincronizar.
+      const sp = this._builder.spawnPoint || new BABYLON.Vector3(0, 4, 0);
       this._teleportPlayer(sp);
 
       this._inBiomeWorld = true;
