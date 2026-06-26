@@ -12,7 +12,7 @@
 //  • Controle de velocidade (slow-motion)
 // ─────────────────────────────────────────────────────────────────
 
-import { ASSET_PATHS } from '../../AssetLoader.js';
+import { ASSET_PATHS } from '../core/AssetLoader.js';
 import { MonsterPlant, HopState } from '../enemies/Enemy.js';
 import { EnemyCatalog } from '../data/EnemyCatalog.js';
 import { AssetRegistry } from '../data/AssetRegistry.js';

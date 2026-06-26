@@ -10,7 +10,7 @@
 //  (enter/exit/render + window.openAnimator/closeAnimator) — main.js
 //  e index.html não precisam mudar.
 // ─────────────────────────────────────────────────────────────────
-import { ASSET_PATHS } from '../../AssetLoader.js';
+import { ASSET_PATHS } from '../core/AssetLoader.js';
 import { MOVESETS } from './animationNames.js';
 import { AnimationLibrary } from './AnimationLibrary.js';
 import { EnemyCatalog } from '../data/EnemyCatalog.js';

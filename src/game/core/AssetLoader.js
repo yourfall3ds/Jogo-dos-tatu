@@ -4,7 +4,7 @@
 //  Caminhos relativos ao servidor (http://localhost:5500/)
 //  Espaços em nomes de pasta são tratados via encodeURIComponent.
 // ─────────────────────────────────────────────────────────────────
-import { DEBUG } from './utils/debug.js';
+import { DEBUG } from '../../utils/debug.js';
 
 // Codifica apenas o nome do arquivo (não a barra)
 function enc(p) {

@@ -20,7 +20,7 @@
 //    // troca a anim de uma instância: vat.setAnim(inst, key, idx)
 // ─────────────────────────────────────────────────────────────────
 
-import { ASSET_PATHS }   from '../../AssetLoader.js';
+import { ASSET_PATHS }   from '../core/AssetLoader.js';
 import { EnemyCatalog }  from '../data/EnemyCatalog.js';
 import { AssetRegistry } from '../data/AssetRegistry.js';
 
