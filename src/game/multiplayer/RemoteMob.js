@@ -26,9 +26,13 @@ function _encPath(p) { return p ? p.split('/').map(s => encodeURIComponent(s)).j
 const _containerCache = new Map(); // assetKey → BABYLON.AssetContainer promise
 
 async function _loadContainer(scene, kind) {
-  const assetKey = KIND_TO_ASSET[kind] || 'zombie';
-  if (_containerCache.has(assetKey)) return _containerCache.get(assetKey);
-  const rawPath = AssetRegistry.path('chibataMob', assetKey);
+  // DIGIMON? (kind = 'agumon', 'veemon'…) carrega da categoria 'digimon' (rigada/
+  // animada). Senão, mapeia pro mob chibata. Cache por categoria:chave.
+  let category = 'chibataMob', assetKey = KIND_TO_ASSET[kind] || 'zombie';
+  if (AssetRegistry.path('digimon', kind)) { category = 'digimon'; assetKey = kind; }
+  const cacheKey = `${category}:${assetKey}`;
+  if (_containerCache.has(cacheKey)) return _containerCache.get(cacheKey);
+  const rawPath = AssetRegistry.path(category, assetKey);
   if (!rawPath) return null;
   const lastSlash = rawPath.lastIndexOf('/');
   const folder = _encPath(rawPath.substring(0, lastSlash + 1));
@@ -36,7 +40,7 @@ async function _loadContainer(scene, kind) {
   const p = BABYLON.SceneLoader.LoadAssetContainerAsync(folder, file, scene)
     .then((c) => { console.log(`[RemoteMob] container "${assetKey}" carregado`); return c; })
     .catch((e) => { console.warn(`[RemoteMob] container "${assetKey}" falhou:`, e.message); return null; });
-  _containerCache.set(assetKey, p);
+  _containerCache.set(cacheKey, p);
   return p;
 }
 

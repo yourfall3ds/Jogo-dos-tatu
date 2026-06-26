@@ -420,15 +420,37 @@ export class AssetGroupsUI {
     div.querySelector('.btn-edit').onclick   = () => { this.close(); window._assetEditor?.open?.(asset); };
     const spawnBtn = div.querySelector('.btn-spawn');
     if (spawnBtn) spawnBtn.onclick = () => this._spawn(asset);
-    div.querySelector('.btn-inv').onclick    = (e) => { e.stopPropagation(); this._addToInventory(asset, e.shiftKey ? 10 : 1); };
+    // 📌 e corpo do card → SEGURAR adiciona em MASSA (auto-repete acelerando).
+    //  Clique simples = +1 (Shift = +10); segurar = enche rápido sem ficar clicando.
+    this._holdAdd(div.querySelector('.btn-inv'), asset, true);
+    this._holdAdd(div, asset, false);
     div.querySelector('.btn-move')?.addEventListener('click', () => this._openMoveModal(asset));
     div.querySelector('.btn-delete')?.addEventListener('click', (e) => {
       e.stopPropagation();
       this._deleteAsset(asset);
     });
-    // Clique no corpo do card (fora dos ícones) = ação principal: inventário
-    div.onclick = (e) => { if (e.target.closest('button')) return; this._addToInventory(asset, e.shiftKey ? 10 : 1); };
     return div;
+  }
+
+  /** Clicar-e-SEGURAR pra pegar item em massa: 1º add imediato, depois repete
+   *  com aceleração (220ms → 45ms) enquanto segura. Solta/sai = para.
+   *  @param onlyBtn  true se for o botão 📌 (stopPropagation); false p/ o card. */
+  _holdAdd(el, asset, onlyBtn) {
+    if (!el) return;
+    let startT = null, repT = null;
+    const stop = () => { if (startT) clearTimeout(startT); if (repT) clearTimeout(repT); startT = repT = null; };
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (!onlyBtn && e.target.closest('button')) return;   // no card, ignora cliques nos ícones
+      if (onlyBtn) e.stopPropagation();
+      const big = e.shiftKey;                               // Shift no aperto = +10 por passo
+      this._addToInventory(asset, big ? 10 : 1);            // 1º add já
+      let delay = 220;
+      const tick = () => { this._addToInventory(asset, big ? 10 : 1); delay = Math.max(45, delay * 0.82); repT = setTimeout(tick, delay); };
+      startT = setTimeout(tick, 350);                       // segurou > 350ms → começa a metralhar
+    });
+    ['mouseup', 'mouseleave'].forEach(ev => el.addEventListener(ev, stop));
+    el.addEventListener('contextmenu', stop);
   }
 
   /** Recarrega só as miniaturas (chamado após salvar uma no editor) */

@@ -135,6 +135,13 @@ const MOB_KINDS = [
   { kind: 'cb_orc',           hp: 180, dmg: 24, speed: 4.5, range: 2.8, atkCd: 1.6, tier: 'champion' },
   { kind: 'cb_demon',         hp: 220, dmg: 30, speed: 5.5, range: 2.8, atkCd: 1.4, tier: 'champion' },
   { kind: 'cb_necromancer',   hp: 160, dmg: 26, speed: 4.5, range: 3.0, atkCd: 1.6, tier: 'champion' },
+  // ── DIGIMONS (rigados/animados) — inimigos do MUNDO ABERTO ──
+  { kind: 'agumon',  hp: 75, dmg: 14, speed: 5.0, range: 2.4, atkCd: 1.3, tier: 'rookie', digimon: true },
+  { kind: 'veemon',  hp: 60, dmg: 12, speed: 6.0, range: 2.2, atkCd: 1.1, tier: 'rookie', digimon: true },
+  { kind: 'gabumon', hp: 80, dmg: 13, speed: 4.5, range: 2.4, atkCd: 1.4, tier: 'rookie', digimon: true },
+  { kind: 'dorumon', hp: 65, dmg: 13, speed: 5.5, range: 2.2, atkCd: 1.2, tier: 'rookie', digimon: true },
+  { kind: 'biyomon', hp: 55, dmg: 11, speed: 6.5, range: 2.0, atkCd: 1.0, tier: 'rookie', digimon: true },
+  { kind: 'gatomon', hp: 60, dmg: 13, speed: 6.0, range: 2.2, atkCd: 1.1, tier: 'rookie', digimon: true },
 ];
 
 let _mobUid = 0;
@@ -2056,11 +2063,12 @@ export class ArenaRoom extends Room {
           p.br_state = "SKYDIVE"; p.anim_state = "falling";
         }
       });
-      if (this.state.mobs.size > 0) this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
-      if (this.state.drops.size > 0) this.state.drops.forEach((_, id) => this.state.drops.delete(id));
+      // MOBS no mundo aberto: até 4 DIGIMONS (respawn 30s) + IA. (antes: deletava todos.)
+      this._openWorldMobTick(dt);
       if (this.state.props.size > 0) this.state.props.forEach((_, id) => this.state.props.delete(id));
-      if (this.state.fx.size > 0) this.state.fx.forEach((_, id) => this.state.fx.delete(id));
+      if (this.state.fx.size > 0) { const t = Date.now(); this.state.fx.forEach((f, id) => { if (!f.expires_at || t > f.expires_at) this.state.fx.delete(id); }); }
       if (this.state.boss) this.state.boss = undefined;
+      if (this.state.drops.size > 0) { const t = Date.now(); this.state.drops.forEach((d, id) => { if (d.expires_at && t > d.expires_at) this.state.drops.delete(id); }); }
       return; // SKIP director + brTick + boss
     }
     this._matchDirectorTick();
@@ -2088,6 +2096,12 @@ export class ArenaRoom extends Room {
       toDel.forEach((id) => this.state.fx.delete(id));
     }
 
+    this._tickMobAI(dt);
+  }
+
+  /** IA dos mobs: cada um persegue o player vivo mais próximo (≤25u) e ataca no
+   *  alcance. Usado pelo tick de horda E pelo mundo aberto (os digimons). */
+  _tickMobAI(dt) {
     if (this.state.mobs.size === 0) return;
     const players = [];
     this.state.players.forEach((p) => { if (!p.dead) players.push(p); });
@@ -2098,9 +2112,12 @@ export class ArenaRoom extends Room {
       const cd = this._cooldowns.get(mob.id) || { cdT: 0, lastAttack: 0 };
       if (cd.cdT > 0) cd.cdT = Math.max(0, cd.cdT - dt);
 
-      // Acha player vivo mais próximo
+      // Acha player vivo mais próximo — IGNORA quem está ALTO demais (skydive/
+      // pulo): o mob está no chão (y≈0) e não alcança quem está voando. Sem isto
+      // os mobs acertavam o player durante a queda de 200m ("nascia morto").
       let best = null, bestDist = Infinity;
       for (const p of players) {
+        if (Math.abs((p.y || 0) - (mob.y || 0)) > 4) continue;   // diferença de altura > 4u → fora de alcance
         const dx = p.x - mob.x, dz = p.z - mob.z;
         const d = Math.sqrt(dx * dx + dz * dz);
         if (d < bestDist) { bestDist = d; best = p; }
@@ -2150,10 +2167,51 @@ export class ArenaRoom extends Room {
     });
   }
 
+  // ── MUNDO ABERTO: mantém até 4 DIGIMONS no mapa, respawn 30s ao morrer ──
+  _openWorldMobTick(dt) {
+    const CAP = 4, RESPAWN_MS = 30000, now = Date.now();
+    if (!this._owMobSlots) this._owMobSlots = Array.from({ length: CAP }, () => ({ mobId: null, respawnAt: 0 }));
+    // só nasce DEPOIS que tem player vivo NO CHÃO (não no skydive) — senão você
+    // "nasce morto" com os mobs te atacando durante a queda.
+    let grounded = false;
+    this.state.players.forEach((p) => { if (!p.dead && (p.y || 0) < 6) grounded = true; });
+    for (const slot of this._owMobSlots) {
+      const mob = slot.mobId ? this.state.mobs.get(slot.mobId) : null;
+      if (mob && mob.hp > 0) continue;                 // vivo → ok
+      if (slot.mobId) { slot.mobId = null; slot.respawnAt = now + RESPAWN_MS; }  // morreu → 30s
+      if (!grounded) continue;                          // ninguém no chão → segura
+      if (!slot.respawnAt) slot.respawnAt = now;
+      if (now >= slot.respawnAt) {
+        const id = this._spawnOpenWorldMob();
+        if (id) { slot.mobId = id; slot.respawnAt = 0; }
+      }
+    }
+    this._tickMobAI(dt);   // IA (perseguir/atacar)
+  }
+
+  /** Spawna 1 DIGIMON num anel ao redor do centro do mapa. Retorna o id. */
+  _spawnOpenWorldMob() {
+    if (this.state.mobs.size >= 40) return null;
+    const digis = MOB_KINDS.filter((k) => k.digimon);
+    const def = digis[Math.floor(Math.random() * digis.length)] || MOB_KINDS[0];
+    const ang = Math.random() * Math.PI * 2;
+    const dist = 14 + Math.random() * 16;   // 14–30u do centro
+    const id = `mob_${++_mobUid}`;
+    const m = new MobState();
+    m.id = id; m.kind = def.kind; m.tier = def.tier;
+    m.x = Math.cos(ang) * dist; m.y = 0; m.z = Math.sin(ang) * dist;
+    m.ry = 0; m.hp = def.hp; m.maxHp = def.hp;
+    m.state = 'idle'; m.target_id = '';
+    this.state.mobs.set(id, m);
+    return id;
+  }
+
   _spawnMob(kindReq) {
     if (this.state.mobs.size >= 40) return;
+    // Horda usa os mobs CHIBATA (digimons ficam pro mundo aberto).
+    const chibata = MOB_KINDS.filter((k) => !k.digimon);
     const def = (typeof kindReq === 'string' && MOB_KINDS.find((k) => k.kind === kindReq))
-      || MOB_KINDS[Math.floor(Math.random() * MOB_KINDS.length)];
+      || chibata[Math.floor(Math.random() * chibata.length)];
 
     // Pos: perto de um player random
     let baseX = 0, baseZ = 0;
