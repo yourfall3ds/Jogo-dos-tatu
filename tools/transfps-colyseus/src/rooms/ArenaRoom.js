@@ -2151,9 +2151,12 @@ export class ArenaRoom extends Room {
       const cd = this._cooldowns.get(mob.id) || { cdT: 0, lastAttack: 0 };
       if (cd.cdT > 0) cd.cdT = Math.max(0, cd.cdT - dt);
 
-      // Acha player vivo mais próximo
+      // Acha player vivo mais próximo — IGNORA quem está ALTO demais (skydive/
+      // pulo): o mob está no chão (y≈0) e não alcança quem está voando. Sem isto
+      // os mobs acertavam o player durante a queda de 200m ("nascia morto").
       let best = null, bestDist = Infinity;
       for (const p of players) {
+        if (Math.abs((p.y || 0) - (mob.y || 0)) > 4) continue;   // diferença de altura > 4u → fora de alcance
         const dx = p.x - mob.x, dz = p.z - mob.z;
         const d = Math.sqrt(dx * dx + dz * dz);
         if (d < bestDist) { bestDist = d; best = p; }
@@ -2213,6 +2216,12 @@ export class ArenaRoom extends Room {
     if (!this._owMobSlots) {
       this._owMobSlots = Array.from({ length: CAP }, () => ({ mobId: null, respawnAt: 0 }));
     }
+    // Só nasce mob DEPOIS que existe player vivo NO CHÃO (não no skydive). Sem
+    // isto os 4 mobs já estavam no mapa antes de você cair e te matavam durante a
+    // queda ("nascendo morto"). Player no ar (y>6) ainda não conta.
+    let grounded = false;
+    this.state.players.forEach((p) => { if (!p.dead && (p.y || 0) < 6) grounded = true; });
+
     for (const slot of this._owMobSlots) {
       const mob = slot.mobId ? this.state.mobs.get(slot.mobId) : null;
       if (mob && mob.hp > 0) continue;                 // vivo → ok
@@ -2220,7 +2229,8 @@ export class ArenaRoom extends Room {
         slot.mobId = null;
         slot.respawnAt = now + RESPAWN_MS;
       }
-      if (!slot.respawnAt) slot.respawnAt = now;        // 1º spawn (boot) imediato
+      if (!grounded) continue;                          // ninguém no chão ainda → segura o spawn
+      if (!slot.respawnAt) slot.respawnAt = now;        // 1º spawn imediato (já tem player no chão)
       if (now >= slot.respawnAt) {                      // deu o tempo → nasce
         const id = this._spawnOpenWorldMob();
         if (id) { slot.mobId = id; slot.respawnAt = 0; }
