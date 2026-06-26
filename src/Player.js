@@ -1497,6 +1497,17 @@ export class Player {
   setMouseCharacter(meshes, animGroups, shadowGen) {
     // Se já houver um animator ou root antigo, limpamos para evitar duplicidade (Dois Ratos)
     if (this.animator) {
+      // CRÍTICO: DESTACA as armas TPS do esqueleto ANTIGO antes de descartá-lo.
+      // Elas estavam parentadas na mão (descendentes do root) → o
+      // getDescendants().dispose() abaixo as DESTRUÍA junto → a arma sumia ao
+      // trocar de personagem (lucasmods sem arma). Com parent=null elas
+      // sobrevivem e são re-anexadas ao novo esqueleto em attachCurrentWeapon...
+      try {
+        this.weapon?.weapons?.forEach(w => {
+          const m = this.weapon.getTPSWeaponMesh?.(w.id);
+          if (m && !m.isDisposed?.()) { m.setParent(null); m.setEnabled(false); }
+        });
+      } catch (_) {}
       if (this.animator.root) {
         this.animator.root.getDescendants().forEach(d => d.dispose());
         this.animator.root.dispose();
