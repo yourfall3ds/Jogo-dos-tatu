@@ -42,33 +42,87 @@ export class PvpToggle {
     this._labelEl   = ind.querySelector('#pvp-ind-label');
     this._statusEl  = ind.querySelector('#pvp-ind-status');
 
-    // Re-render quando state muda
+    // Re-render quando state muda. SOU EU = cs.playerId (id estável usado no
+    // join). Em visitante auth.getUserId() é null → o próprio indicador nunca
+    // atualizava → só dava pra ver no adversário. Mesmo motivo dos outros bugs.
+    const myId = () => this.cs.playerId || this.auth.getUserId();
     this.cs.on('player_change', (e) => {
-      if (e?.id === this.auth.getUserId() && e?.field === 'pvp_on') {
-        this._refreshUi(e.value);
-      }
+      if (e?.id === myId() && e?.field === 'pvp_on') this._refreshUi(e.value);
     });
     this.cs.on('player_add', (e) => {
-      if (e?.id === this.auth.getUserId()) {
-        this._refreshUi(!!e.state.pvp_on);
-      }
+      if (e?.id === myId()) this._refreshUi(!!e.state.pvp_on);
     });
+
+    // ── Botão no MENU de PAUSE (ESC) ────────────────────────────────
+    //  O pedido foi "adiciona um botão no pause que já liga o PvP". Injetado
+    //  uma vez no #pause-overlay; clicar alterna o mesmo toggle do Y/HUD.
+    this._installPauseButton();
+  }
+
+  /** Adiciona um botão de toggle PvP no overlay de pause. Tenta agora; se o
+   *  overlay ainda não existe (boot), re-tenta a cada open do menu. */
+  _installPauseButton() {
+    const tryInject = () => {
+      const ov = document.getElementById('pause-overlay');
+      if (!ov || ov.querySelector('#pause-pvp-btn')) return !!ov;
+      const btn = document.createElement('button');
+      btn.id = 'pause-pvp-btn';
+      btn.className = 'pbtn';   // usa o mesmo estilo dos outros botoes do pause
+      btn.innerHTML = `<span class="pico">⚔</span><span class="ptxt">ATIVAR PVP</span><span class="pkey">Y</span>`;
+      btn.onclick = () => {
+        if (!this.cs?.connected) return;
+        const myId = this.cs.playerId || this.auth.getUserId();
+        const me = myId ? this.cs.state?.players?.get(myId) : null;
+        if (me) this._sendToggle(!me.pvp_on);
+      };
+      // coluna central do menu (botoes "Voltar/Sair"); fallback no overlay
+      const main = ov.querySelector('#pause-main') || ov.querySelector('.pause-panel') || ov;
+      main.appendChild(btn);
+      this._pauseBtn = btn;
+      this._refreshUi(this.isOn());
+      return true;
+    };
+    if (tryInject()) return;
+    // Overlay ainda não montado → tenta no MutationObserver (1 vez).
+    const obs = new MutationObserver(() => {
+      if (tryInject()) { try { obs.disconnect(); } catch (_) {} }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    // safety: força tentativa de novo em 2s
+    setTimeout(() => { tryInject(); try { obs.disconnect(); } catch (_) {} }, 2500);
   }
 
   _refreshUi(on) {
-    if (!this._ind) return;
-    if (on) {
-      this._ind.style.borderColor = '#cc4040';
-      this._ind.style.boxShadow   = '0 0 16px rgba(255,70,70,0.5)';
-      this._labelEl.style.color   = '#ff6a6a';
-      this._statusEl.textContent  = 'ON';
-      this._statusEl.style.color  = '#ff8080';
-    } else {
-      this._ind.style.borderColor = '#1f6a5c';
-      this._ind.style.boxShadow   = '0 3px 14px rgba(0,0,0,0.45)';
-      this._labelEl.style.color   = '#3effc8';
-      this._statusEl.textContent  = 'OFF';
-      this._statusEl.style.color  = '#7be3c8';
+    if (this._ind) {
+      if (on) {
+        this._ind.style.borderColor = '#cc4040';
+        this._ind.style.boxShadow   = '0 0 16px rgba(255,70,70,0.5)';
+        this._labelEl.style.color   = '#ff6a6a';
+        this._statusEl.textContent  = 'ON';
+        this._statusEl.style.color  = '#ff8080';
+      } else {
+        this._ind.style.borderColor = '#1f6a5c';
+        this._ind.style.boxShadow   = '0 3px 14px rgba(0,0,0,0.45)';
+        this._labelEl.style.color   = '#3effc8';
+        this._statusEl.textContent  = 'OFF';
+        this._statusEl.style.color  = '#7be3c8';
+      }
+    }
+    if (this._pauseBtn) {
+      const txt = this._pauseBtn.querySelector('.ptxt');
+      if (on) {
+        if (txt) txt.textContent = 'PVP ATIVADO';
+        this._pauseBtn.style.borderColor = 'rgba(255,90,90,0.55)';
+        this._pauseBtn.style.color = '#ff8a8a';
+        this._pauseBtn.style.background = 'rgba(60,10,10,0.45)';
+        this._pauseBtn.style.boxShadow = '0 0 14px rgba(255,70,70,0.35)';
+      } else {
+        if (txt) txt.textContent = 'ATIVAR PVP';
+        this._pauseBtn.style.borderColor = '';
+        this._pauseBtn.style.color = '';
+        this._pauseBtn.style.background = '';
+        this._pauseBtn.style.boxShadow = '';
+      }
     }
   }
 
