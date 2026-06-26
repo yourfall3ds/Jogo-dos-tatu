@@ -156,6 +156,18 @@
     body.game-active * { cursor: none !important; }
     body.game-active.game-fallback-look,
     body.game-active.game-fallback-look * { cursor: crosshair !important; }
+    /* MENU DE PAUSA aberto → cursor VOLTA (em MP gameActive continua true pra
+       o player ficar vulnerável; sem isso o jogador não enxergava onde clicar
+       nos botões "Voltar / Ativar PvP" etc). Mais específico que game-active
+       (.visible vence) e vale pra tudo dentro do overlay. */
+    body #pause-overlay.visible,
+    body #pause-overlay.visible *,
+    body.game-active #pause-overlay.visible,
+    body.game-active #pause-overlay.visible * { cursor: auto !important; }
+    body #pause-overlay.visible button,
+    body #pause-overlay.visible .pbtn,
+    body.game-active #pause-overlay.visible button,
+    body.game-active #pause-overlay.visible .pbtn { cursor: pointer !important; }
 
     /* ── Crosshair ── */
     #crosshair {
