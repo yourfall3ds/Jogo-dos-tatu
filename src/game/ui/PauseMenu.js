@@ -86,8 +86,10 @@ export class PauseMenu {
   }
 
   show() {
+    if (this._open) return;             // idempotente (dois caminhos podem chamar)
     this._ov.style.display = 'flex';
     this._open = true;
+    this._openedAt = performance.now();
   }
 
   hide() {
@@ -96,4 +98,11 @@ export class PauseMenu {
   }
 
   get isOpen() { return this._open; }
+
+  /** true se acabou de abrir (< 200ms). Evita o ESC fechar o que acabou de
+   *  abrir quando os DOIS caminhos (keydown + pointerlockchange) disparam no
+   *  mesmo press — era a causa do "tem que apertar ESC 2x". */
+  get justOpened() {
+    return this._open && (performance.now() - (this._openedAt || 0) < 200);
+  }
 }

@@ -2187,10 +2187,20 @@ async function init() {
     // aberto via ESC) é puramente VISUAL por cima — não para a lógica.
     if (window._cs?.connected) {
       window._gameInput && (window._gameInput.gameActive = true);
+      // CONVERGÊNCIA: a perda de lock (ESC) abre o MESMO menu que o handler
+      //  de ESC abriria. Antes este caminho só retornava → o menu dependia de
+      //  uma 2ª tecla. Agora qualquer caminho que solte o lock mostra o menu
+      //  UMA vez, e o ScreenFocusManager fica em 'menu' (cursor + input da UI).
+      if (window._screenFocus && window._screenFocus.state === 'playing') {
+        window._screenFocus.enterMenu();
+        window._pauseMenu?.show();
+      }
       _updateGameFocusHint();
       return;
     }
     // ── SOLO/OFFLINE: pausa de verdade (overlay + congela input local) ─
+    if (window._screenFocus) window._screenFocus.enterMenu();
+    window._pauseMenu?.show();
     _showGamePause();
   };
 
@@ -2233,6 +2243,9 @@ async function init() {
         e.preventDefault();
         const fm = window._screenFocus;
         const isOpen = window._pauseMenu?.isOpen || fm?.state === 'menu';
+        // Se o menu ACABOU de abrir (pointerlockchange já disparou neste mesmo
+        //  press), NÃO fecha — senão exigiria 2 toques. Ignora este ESC.
+        if (isOpen && window._pauseMenu?.justOpened) { e.preventDefault(); return; }
         if (isOpen) {
           // Pause aberto → ESC retoma (re-captura pointer lock, esconde menu).
           window._pauseMenu?.hide();

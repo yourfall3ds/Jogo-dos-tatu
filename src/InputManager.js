@@ -62,6 +62,14 @@ export class InputManager {
       // Sem isso, segurar W gerava "double-tap" falso o tempo todo.
       if (e.repeat) { this.keys[e.code] = true; return; }
 
+      // Se a UI tem o comando (menu/modal aberto), NÃO registra teclas de
+      //  gameplay (WASD/skills/etc.) — senão o personagem anda/usa skill com o
+      //  menu aberto. ESC não passa por aqui (tem listener próprio no main.js),
+      //  então fechar o menu segue funcionando. Vale no MP (gameActive=true).
+      if (window._screenFocus && window._screenFocus.state !== 'playing') {
+        this.keys[e.code] = false;
+        return;
+      }
       const wasDown = this.keys[e.code];
       this.keys[e.code] = true;
       // Só engole as teclas de scroll/foco do browser DURANTE o jogo (gameActive).
@@ -127,6 +135,9 @@ export class InputManager {
     // ── Mouse movement ───────────────────────────────────────────────
     document.addEventListener('mousemove', e => {
       if (!this.gameActive) return;
+      // Se a UI tem o comando (menu/modal aberto), o mouse é pra clicar em
+      //  botões — não pra girar a câmera. Vale no MP (gameActive segue true).
+      if (window._screenFocus && window._screenFocus.state !== 'playing') return;
       // SÓ acumula movimento quando o pointer lock está ATIVO (raw input).
       //  Sem o lock, e.movementX/Y vêm do cursor LIVRE andando pela tela — se
       //  acumulássemos isso, a câmera giraria com o mouse solto E o cursor
@@ -168,7 +179,13 @@ export class InputManager {
       //   - menu de pause (ESC) aberto → clica "Retomar", não re-trava sozinho;
       //   - Biblioteca de Assets / modo construção abertos → precisa do cursor;
       //   - clique fora do canvas (botão/UI) → deixa a UI tratar.
+      // FONTE DE VERDADE: o ScreenFocusManager sabe se a UI está no comando.
+      //  Se NÃO estamos em 'playing' (menu/modal aberto), o clique é da UI —
+      //  não re-trava o cursor nem atira. Inclui o menu de pause novo (#fn-pause).
+      const _uiOwnsScreen = window._screenFocus && window._screenFocus.state !== 'playing';
       const _menuOpen =
+        _uiOwnsScreen ||
+        document.getElementById('fn-pause')?.style.display === 'flex' ||
         document.getElementById('pause-overlay')?.classList.contains('visible') ||
         window._assetGroupsUI?._visible ||
         (window._buildMode && window._buildMode._state !== 'inactive');
@@ -186,6 +203,9 @@ export class InputManager {
         else this._requestLock(true);
       }
       // Cliques de tiro/ação só contam jogando (ou posicionando peça no build).
+      //  CRÍTICO: no MP gameActive segue true (player não some do servidor), mas
+      //  se a UI tem o comando (menu/modal aberto) o clique é da UI — NÃO atira.
+      if (_uiOwnsScreen && !_placing) return;
       if (!this.gameActive && !_placing) return;
       // Conta os cliques (não só um boolean) → mashing rápido não perde
       // cliques no mesmo frame; o combo encadeia todos.
