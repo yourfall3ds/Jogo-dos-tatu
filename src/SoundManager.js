@@ -112,6 +112,8 @@ export class SoundManager {
       pickup_item     : 'assets/Sound FX/senzu/mordendo uma fruta.wav',
       // CHIBATADA — som de impacto da arma Chibata (whip)
       chibatada       : 'assets/Sound FX/CHIBATADA.mp3',
+      // explosion — estouro da bomba arremessável (slot 4)
+      explosion       : 'assets/Sound FX/explosoes/big explosao.wav',
       // ── Tela de seleção de personagem ──
       //  spray_bnookker fala o nome do personagem (.m4a). ui_select = whoosh
       //  genérico (reusa swing) tocado ao escolher os demais personagens.
@@ -155,6 +157,7 @@ export class SoundManager {
         'chibatada', // som de impacto da Chibata — precarrega pra nao engolir o 1o golpe
         'jump', 'dash', 'walljump', // movimento: precarrega pra o 1o pulo/dash tocar na hora
         'hurt', 'bullet_impact', // dano recebido: precarrega pra o 1o tiro NÃO travar o jogo
+        'explosion', // bomba (slot 4): precarrega pra o 1o estouro não engasgar
       ]);
       this._getSpatialSound('flyby', 45);   // pré-carrega o som de voar
       this._getSpatialSound("bullet_whiz", 60);

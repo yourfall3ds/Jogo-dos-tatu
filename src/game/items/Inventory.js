@@ -117,6 +117,14 @@ export class Inventory {
     const def = getItemDef(id);
     if (!def || def.type !== 'consumable') return false;
     if (this.count(id) <= 0) return false;
+    // ── Arremessável (bomba): o effect ARREMESSA. Só consome se deu certo
+    //  (false = sem cena/morto). NÃO toca item_use nem manda sendUseItem
+    //  (é client-side; sendUseItem é só pra cura server-auth). ───────────
+    if (def.thrown) {
+      if (def.effect?.({ player: this.player, stats: this.stats }) === false) return false;
+      this.remove(id, 1);
+      return true;
+    }
     def.effect?.({ player: this.player, stats: this.stats });
     this.remove(id, 1);
     this.player?.sounds?.playNow?.('item_use');
@@ -193,6 +201,16 @@ export class Inventory {
         }
       }
     }
+
+    // ── Bomba arremessável: kit inicial no SLOT 4 (hotbar index 3) ─────
+    if (getItemDef('bomb')) {
+      if (!this.bag.some(s => s.id === 'bomb')) this.bag.push({ id: 'bomb', qty: 5 });
+      if (!this.hotbar.includes('bomb')) {
+        if (this.hotbar[3] == null) this.hotbar[3] = 'bomb';
+        else { const free = this.hotbar.indexOf(null); if (free >= 0) this.hotbar[free] = 'bomb'; }
+      }
+    }
+
     this._notify();
   }
 

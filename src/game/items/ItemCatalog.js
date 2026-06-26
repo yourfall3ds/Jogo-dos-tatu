@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────
 
 import { LocalDB } from '../data/LocalDB.js';
+import { throwBomb } from './Bomb.js';
 
 // ─────────────────────────────────────────────────────────────────
 //  ItemCatalog — definição data-driven de consumíveis e equipamentos
@@ -29,11 +30,23 @@ export async function initItemCatalog() {
     await LocalDB.save('items', ItemCatalog);
   }
 
-  // Armas + drops (moeda/materiais) SEMPRE injetados (mesmo em DB antigo)
-  Object.assign(ItemCatalog, WEAPON_ITEMS, DROP_ITEMS);
+  // Armas + drops + arremessáveis SEMPRE injetados (mesmo em DB antigo)
+  Object.assign(ItemCatalog, WEAPON_ITEMS, DROP_ITEMS, THROWABLE_ITEMS);
   _injectEffects();
   _injectIcons();
 }
+
+// ── Arremessáveis (consumíveis com `thrown: true`) ──────────────────
+//  type 'consumable' → entra na hotbar e some ao acabar; `thrown` faz o
+//  Inventory.use() ARREMESSAR (via effect) em vez de tratar como poção
+//  (sem o sync de cura do MP). defaultHotbar: 3 = slot 4 (tecla 4).
+export const THROWABLE_ITEMS = {
+  bomb: {
+    name: 'Bomba', type: 'consumable', thrown: true, defaultHotbar: 3,
+    icon: '💣', rarity: 'uncommon', stack: 9, color: [0.1, 0.1, 0.12],
+    desc: 'Arremessa. Bipa e explode em área após um tempinho.',
+  },
+};
 
 // ── Moeda + materiais (drops dos inimigos) ──────────────────────────
 //  color = cor do placeholder no chão · wishlist = id na árvore de assets
@@ -108,6 +121,8 @@ function _injectEffects() {
       stats?.addBuff('attackSpeed', { mult: 1.4, duration: 20 });
       stats?.addBuff('moveSpeed', { mult: 1.4, duration: 20 });
     },
+    // Bomba: arremessa (retorna false se não deu → não consome a unidade).
+    bomb: (ctx) => throwBomb(ctx),
   };
 
   for (const [id, effect] of Object.entries(effects)) {

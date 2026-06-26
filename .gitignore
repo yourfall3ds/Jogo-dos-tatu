@@ -20,3 +20,9 @@ assets/animations/.orig-backup/
 tools/deploy-trans-fps.py
 deploy-trans-fps.py
 .deploy-tmp-transfps/
+deploy-transfps-logs/
+
+# ferramentas locais de git (uso pessoal)
+git-push.py
+git-pull-rebase.py
+.git-logs/
