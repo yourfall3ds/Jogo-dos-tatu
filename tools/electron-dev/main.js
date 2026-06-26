@@ -28,14 +28,12 @@ const GAME_URL = process.env.TRANSFPS_URL || 'https://app.overpixel.online/trans
 //  avisos de dev, não erros, e poluíam o terminal de logs do jogo.
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 
-// ── Otimização de GPU pra jogo (antes do app-ready) ─────────────────────
-//  Força aceleração de hardware e libera o WebGPU/WebGL pra rodar liso.
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('enable-zero-copy');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');     // não barra GPU por lista
-app.commandLine.appendSwitch('enable-unsafe-webgpu');     // WebGPU sem flag manual
-app.commandLine.appendSwitch('disable-frame-rate-limit'); // sem teto de FPS artificial
-app.disableDomainBlockingFor3DAPIs();                     // 3D não trava por "domínio"
+// ── GPU: só o que é seguro e comprovadamente ajuda ──────────────────────
+//  REMOVIDAS as flags agressivas (disable-frame-rate-limit tirava o vsync e
+//  sobrecarregava a GPU; enable-unsafe-webgpu forçava caminho instável) que
+//  podiam fazer o jogo LAGAR só de abrir. Mantido o essencial e seguro:
+app.commandLine.appendSwitch('ignore-gpu-blocklist');  // usa a GPU mesmo se a lista barra
+app.disableDomainBlockingFor3DAPIs();                  // 3D não trava por "domínio"
 
 let win = null;
 

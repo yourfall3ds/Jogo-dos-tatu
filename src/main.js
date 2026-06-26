@@ -143,6 +143,30 @@ import { TerrainEditorUI }     from './game/terrain/TerrainEditorUI.js';
 import { TextureMachineUI }    from './game/terrain/TextureMachine.js';
 import { InteractableManager } from './game/interactive/InteractableManager.js';
 
+// ── KILL-SWITCH: telemetria de DEBUG morta (anti-freeze) ───────────────
+//  Vários arquivos (NavMeshManager/BuildMode/WorldObjects/SceneEditor/
+//  AnimatedEnemy) têm fetch("http://127.0.0.1:7778|7780/event") de uma
+//  sessão de debug ANTIGA. Esses servidores NÃO existem → cada fetch falha
+//  com ERR_CONNECTION_REFUSED, e em massa (ex: navmesh em loop) TRAVAM o
+//  jogo. Aqui interceptamos QUALQUER fetch pra essas portas e devolvemos na
+//  hora, sem tocar a rede. Zero requisições mortas → fim do freeze.
+(function killDeadDebugTelemetry() {
+  try {
+    const _origFetch = window.fetch?.bind(window);
+    if (!_origFetch) return;
+    window.fetch = function (input, init) {
+      try {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (url.includes('127.0.0.1:7778') || url.includes('127.0.0.1:7780') ||
+            url.includes('localhost:7778') || url.includes('localhost:7780')) {
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+      } catch (_) {}
+      return _origFetch(input, init);
+    };
+  } catch (_) {}
+})();
+
 // Colyseus LOCAL (ws://<host>:2567) quando a página é servida em localhost OU
 // num IP de LAN (jogar em rede com o amigo) — assim o amigo abre http://SEU_IP:5500
 // e o cliente conecta no Colyseus do MESMO host. Em produção (domínio) → VPS/nginx.
