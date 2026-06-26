@@ -19,10 +19,14 @@
 //    TRANSFPS_URL=<url> npm start                              (url custom)
 // ─────────────────────────────────────────────────────────────────
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard } = require('electron');
 const path = require('path');
 
 const GAME_URL = process.env.TRANSFPS_URL || 'https://app.overpixel.online/transfps/';
+
+// Buffer de TODOS os logs do jogo — pra "Copiar Console" (Ctrl+Shift+C),
+//  já que o DevTools do Electron não tem a opção "Copy" no menu.
+const _logBuffer = [];
 
 // Silencia os "Electron Security Warning" (enableBlinkFeatures/CSP) — são só
 //  avisos de dev, não erros, e poluíam o terminal de logs do jogo.
@@ -81,6 +85,10 @@ function createWindow() {
     const color = LEVEL_COLOR[lvlName] || C.gray;
     const src = sourceId ? `${C.dim}${shortSrc(sourceId)}:${line}${C.reset}` : '';
     process.stdout.write(`${color}[${lvlName}]${C.reset} ${message} ${src}\n`);
+    // BUFFER: guarda TODOS os logs (sem cor) pra "Copiar Console" (Ctrl+Shift+C).
+    //  O DevTools do Electron não tem "Copy" no menu — então copiamos daqui.
+    _logBuffer.push(`[${lvlName}] ${message}${sourceId ? ` (${shortSrc(sourceId)}:${line})` : ''}`);
+    if (_logBuffer.length > 5000) _logBuffer.splice(0, _logBuffer.length - 5000);
   });
 
   // Erros não tratados da página também vão pro terminal.
@@ -105,7 +113,7 @@ function createWindow() {
   win.webContents.session.setPermissionCheckHandler(() => true);
 
   console.log(`${C.green}▶ TransFPS DEV${C.reset} carregando: ${C.cyan}${GAME_URL}${C.reset}`);
-  console.log(`${C.dim}  F5/Ctrl+R = reload · F12/Ctrl+Shift+I = DevTools · F11 = fullscreen · Ctrl+W BLOQUEADO${C.reset}`);
+  console.log(`${C.dim}  F5/Ctrl+R = reload · F12/Ctrl+Shift+I = DevTools · Ctrl+Shift+C = copiar console · F11 = fullscreen${C.reset}`);
   win.loadURL(GAME_URL);
 
   win.on('closed', () => { win = null; });
@@ -152,6 +160,22 @@ function installShortcuts() {
     }
     if (key === 'f11') {
       event.preventDefault(); win.setFullScreen(!win.isFullScreen()); return;
+    }
+    // COPIAR CONSOLE: Ctrl+Shift+C copia TODOS os logs do jogo pra área de
+    //  transferência (o DevTools do Electron não tem "Copy" no menu).
+    if (ctrl && shift && key === 'c') {
+      event.preventDefault();
+      try {
+        clipboard.writeText(_logBuffer.join('\n'));
+        process.stdout.write(`${C.green}[copiar] ${_logBuffer.length} linhas do console -> área de transferência${C.reset}\n`);
+        // feedback visual rápido no título
+        const t0 = win.getTitle();
+        win.setTitle('TransFPS — console copiado ✓');
+        setTimeout(() => { try { win.setTitle(t0); } catch (_) {} }, 1500);
+      } catch (e) {
+        process.stderr.write(`${C.red}[copiar] falhou: ${e.message}${C.reset}\n`);
+      }
+      return;
     }
 
     // ── BLOQUEADOS: atalhos de browser que atrapalham o jogo ──
