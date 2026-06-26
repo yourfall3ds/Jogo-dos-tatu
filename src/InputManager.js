@@ -258,6 +258,11 @@ export class InputManager {
         this._gameFullyStarted = true;
         this.gameActive = true;
         document.body.classList.add('game-active');
+        // SINCRONIZA o ScreenFocusManager: o lock travou de verdade → estamos
+        //  JOGANDO. Sem isto o manager ficava em 'menu' e os guards de
+        //  mousemove/keydown BLOQUEAVAM o input mesmo com o lock ativo —
+        //  era o bug "mouse some mas a câmera não mexe" (tinha que ESC+Retomar).
+        try { window._screenFocus?.enterPlaying?.(); } catch (_) {}
       } else if (!document.pointerLockElement && this.gameActive && this._gameFullyStarted) {
         // Lock foi liberado pelo browser.
         this._lockConfirmed = false;
