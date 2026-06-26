@@ -60,32 +60,44 @@ export class FortniteHUD {
 
   /** Chamado no render loop. Lê dados reais; tolera ausência (boot). */
   update() {
-    // Vitais (vida sempre existe; escudo só quando o sistema ligar)
+    // PERF: roda todo frame, mas SÓ escreve no DOM quando o valor MUDA.
+    //  Escrever .style.width / .textContent força reflow do layout; fazer isso
+    //  todo frame (mesmo sem mudança) engasga o jogo. Cache em this._last*.
+    const L = this._last || (this._last = {});
+
+    // Vitais
     const p = window._gamePlayer;
     if (p && this._healthFill) {
       const hp  = Math.max(0, Math.round(p.hp ?? 0));
       const mhp = Math.max(1, Math.round(p.maxHp ?? 100));
-      this._healthFill.style.width = (100 * hp / mhp) + '%';
-      this._healthN.textContent = hp;
+      const hpPct = Math.round(100 * hp / mhp);
+      if (hpPct !== L.hpPct) { this._healthFill.style.width = hpPct + '%'; L.hpPct = hpPct; }
+      if (hp !== L.hp) { this._healthN.textContent = hp; L.hp = hp; }
       const sh  = Math.max(0, Math.round(p.shield ?? 0));
       const msh = Math.max(1, Math.round(p.maxShield ?? 100));
-      this._shieldFill.style.width = (100 * sh / msh) + '%';
-      this._shieldN.textContent = sh;
+      const shPct = Math.round(100 * sh / msh);
+      if (shPct !== L.shPct) { this._shieldFill.style.width = shPct + '%'; L.shPct = shPct; }
+      if (sh !== L.sh) { this._shieldN.textContent = sh; L.sh = sh; }
     }
 
-    // Kills / wave: do CombatDirector (modo horda)
+    // Kills / wave (CombatDirector)
     const cd = window._combatDirector;
     if (cd && this._waveN) {
-      if (Number.isFinite(cd.wave))    this._waveN.textContent = cd.wave;
-      if (Number.isFinite(cd._kills))  this._killsN.textContent = cd._kills;
+      if (Number.isFinite(cd.wave) && cd.wave !== L.wave) { this._waveN.textContent = cd.wave; L.wave = cd.wave; }
+      if (Number.isFinite(cd._kills) && cd._kills !== L.kills) { this._killsN.textContent = cd._kills; L.kills = cd._kills; }
     }
 
-    // Vivos: jogadores não-mortos na sala (MP). Solo = 1.
-    const cs = window._cs;
-    if (cs?.state?.players && this._aliveN) {
-      let alive = 0;
-      cs.state.players.forEach((pl) => { if (!pl.dead) alive++; });
-      this._aliveN.textContent = Math.max(1, alive);
+    // Vivos (MP) — throttle: só recalcula a cada ~0.5s (não todo frame).
+    const now = (typeof performance !== 'undefined') ? performance.now() : 0;
+    if (now - (L.aliveAt || 0) > 500) {
+      L.aliveAt = now;
+      const cs = window._cs;
+      if (cs?.state?.players && this._aliveN) {
+        let alive = 0;
+        cs.state.players.forEach((pl) => { if (!pl.dead) alive++; });
+        alive = Math.max(1, alive);
+        if (alive !== L.alive) { this._aliveN.textContent = alive; L.alive = alive; }
+      }
     }
   }
 }
