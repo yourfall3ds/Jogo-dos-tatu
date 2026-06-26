@@ -5,7 +5,7 @@ import './utils/quietConsole.js';  // PRIMEIRO: silencia ruído de boot/assets n
 import { InputManager }  from './InputManager.js';
 import { Player }        from './Player.js';
 import { Level }         from './Level.js';
-import { HUD }           from './HUD.js';
+import { HUD }           from './game/ui/HUD.js';
 import { AssetLoader }   from './AssetLoader.js';
 import { SoundManager }  from './game/audio/SoundManager.js';
 

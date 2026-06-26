@@ -4,7 +4,7 @@
 //  Objetos dinâmicos (barris / caixas) têm física simples manual:
 //  DynamicObject rastreia velocidade e usa moveWithCollisions.
 // ─────────────────────────────────────────────────────────────────
-import { MonsterPlant } from './Enemy.js';
+import { MonsterPlant } from './game/enemies/Enemy.js';
 import { GameObject }   from './game/scene/GameObject.js';
 import { LocalDB }      from './game/data/LocalDB.js';
 import { AssetGroups }  from './game/data/AssetGroups.js';
