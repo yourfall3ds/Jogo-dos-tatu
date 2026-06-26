@@ -1,0 +1,72 @@
+/* ─────────────────────────────────────────────────────────────────
+   fortnite-hud.css — design system do HUD in-game (ARTE ORIGINAL).
+   Recria o LOOK e o FEEL de um battle royale de construção: paleta de
+   raridade, barras de vida/escudo, painéis chanfrados, slots com glow.
+   Nada de assets proprietários — fonte condensada livre (Oswald).
+   ───────────────────────────────────────────────────────────────── */
+:root {
+  /* Raridade (escala clássica de BR) */
+  --fn-rar-common:    #D1D5D8;
+  --fn-rar-uncommon:  #41A85F;
+  --fn-rar-rare:      #2C82C9;
+  --fn-rar-epic:      #9365B8;
+  --fn-rar-legendary: #FAC51C;
+  --fn-rar-mythic:    #FFAA00;
+  /* Vitais */
+  --fn-health: #76ff5a;
+  --fn-shield: #3aa8ff;
+  /* Painéis */
+  --fn-panel-bg: rgba(8, 12, 22, 0.82);
+  --fn-stroke:   rgba(255, 255, 255, 0.16);
+  --fn-text:     #eef4ff;
+}
+
+/* ── DOMÍNIO DE TELA: cursor só aparece quando a UI manda ──────────
+   As classes 'game-active' / 'ui-cursor' são setadas pelo
+   ScreenFocusManager. 'ui-cursor' SEMPRE vence (evita o limbo do ESC). */
+body.game-active { cursor: none; }
+body.ui-cursor,
+body.ui-cursor.game-active { cursor: auto; }
+
+/* ── Util: painel escuro translúcido ─────────────────────────────── */
+.fn-panel {
+  background: var(--fn-panel-bg);
+  border: 1px solid var(--fn-stroke);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Util: botão estilo BR (gradiente azul, hover glow) ──────────── */
+.fn-btn {
+  font: 700 15px 'Oswald', 'Segoe UI', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #06121f;
+  background: linear-gradient(180deg, #5cc8ff, #2c82c9);
+  border: none;
+  border-radius: 8px;
+  padding: 14px;
+  cursor: pointer;
+  transition: filter .12s ease, transform .12s ease;
+}
+.fn-btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
+.fn-btn:active { transform: translateY(0); filter: brightness(0.95); }
+
+/* ── Slot de hotbar com borda por raridade + hover glow ──────────── */
+.fn-slot {
+  position: relative;
+  width: 56px; height: 56px;
+  border-radius: 8px;
+  background: rgba(10, 14, 26, 0.8);
+  border: 2px solid var(--fn-rar-common);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  transition: box-shadow .12s ease, transform .12s ease;
+}
+.fn-slot:hover { transform: translateY(-3px); }
+.fn-slot[data-rar="uncommon"]  { border-color: var(--fn-rar-uncommon); }
+.fn-slot[data-rar="rare"]      { border-color: var(--fn-rar-rare); }
+.fn-slot[data-rar="epic"]      { border-color: var(--fn-rar-epic); }
+.fn-slot[data-rar="legendary"] { border-color: var(--fn-rar-legendary); }
+.fn-slot[data-rar="mythic"]    { border-color: var(--fn-rar-mythic); }
+.fn-slot:hover { box-shadow: 0 0 14px currentColor; }
