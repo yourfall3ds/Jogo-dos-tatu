@@ -6,11 +6,12 @@
 //     tela nem clica em coisas do Windows (era o maior problema no Chrome).
 //   • ESC PAUSA: o ESC não some com o lock de forma traiçoeira — o jogo
 //     decide o pause; o Electron só repassa o ESC pro jogo.
-//   • SEM ATALHOS DE BROWSER: Ctrl+W (fechar), Ctrl+R (reload acidental),
-//     Ctrl+Q, F5, etc são BLOQUEADOS durante o jogo. Ctrl+W não fecha mais.
+//   • SEM ATALHOS QUE ATRAPALHAM: Ctrl+W (fechar — o vilão do agachar+correr),
+//     Ctrl+Q/N/T/P/F/G, zoom e Alt+setas são BLOQUEADOS. Ctrl+W NÃO fecha.
 //   • LOGS NO TERMINAL: todo console.log/erro do jogo é cuspido no terminal
 //     onde você rodou `npm start` — fácil de ler e copiar.
-//   • DevTools: F12 abre/fecha (dev). Recarregar de propósito: Ctrl+Shift+R.
+//   • DEV (habilitados): F5 / Ctrl+R = reload · Ctrl+Shift+R = hard reload ·
+//     F12 / Ctrl+Shift+I = DevTools · F11 = fullscreen.
 //
 //  Uso:
 //    cd tools/electron-dev && npm install && npm start         (prod)
@@ -18,10 +19,23 @@
 //    TRANSFPS_URL=<url> npm start                              (url custom)
 // ─────────────────────────────────────────────────────────────────
 
-const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 
 const GAME_URL = process.env.TRANSFPS_URL || 'https://app.overpixel.online/transfps/';
+
+// Silencia os "Electron Security Warning" (enableBlinkFeatures/CSP) — são só
+//  avisos de dev, não erros, e poluíam o terminal de logs do jogo.
+process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
+
+// ── Otimização de GPU pra jogo (antes do app-ready) ─────────────────────
+//  Força aceleração de hardware e libera o WebGPU/WebGL pra rodar liso.
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');     // não barra GPU por lista
+app.commandLine.appendSwitch('enable-unsafe-webgpu');     // WebGPU sem flag manual
+app.commandLine.appendSwitch('disable-frame-rate-limit'); // sem teto de FPS artificial
+app.disableDomainBlockingFor3DAPIs();                     // 3D não trava por "domínio"
 
 let win = null;
 
@@ -36,16 +50,26 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1600,
     height: 900,
+    minWidth: 1024,
+    minHeight: 576,
     backgroundColor: '#05070d',
-    title: 'TransFPS — DEV',
+    title: 'TransFPS',
+    show: false,                      // só mostra quando pronto (sem flash branco)
     autoHideMenuBar: true,            // sem barra de menu (File/Edit/etc)
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      // pointer lock e fullscreen sem pedir permissão (é um app de jogo dev)
-      backgroundThrottling: false,    // NÃO desacelera quando perde foco (dev)
+      backgroundThrottling: false,    // NÃO desacelera quando perde foco
+      // ── otimizações de jogo ──
+      enableBlinkFeatures: 'PointerLock', // pointer lock direto, sem fricção
+      v8CacheOptions: 'code',         // cacheia o JS compilado → boot mais rápido
+      spellcheck: false,              // jogo não precisa de corretor
     },
   });
+
+  // Sobe maximizado e só aparece quando o conteúdo está pronto (sem tela branca).
+  win.maximize();
+  win.once('ready-to-show', () => win.show());
 
   // Sem menu nativo → Alt não abre menu, e atalhos de menu não existem.
   win.setMenu(null);
@@ -83,7 +107,7 @@ function createWindow() {
   win.webContents.session.setPermissionCheckHandler(() => true);
 
   console.log(`${C.green}▶ TransFPS DEV${C.reset} carregando: ${C.cyan}${GAME_URL}${C.reset}`);
-  console.log(`${C.dim}  F12 = DevTools · Ctrl+Shift+R = reload de propósito · Ctrl+W BLOQUEADO durante o jogo${C.reset}`);
+  console.log(`${C.dim}  F5/Ctrl+R = reload · F12/Ctrl+Shift+I = DevTools · F11 = fullscreen · Ctrl+W BLOQUEADO${C.reset}`);
   win.loadURL(GAME_URL);
 
   win.on('closed', () => { win = null; });
@@ -97,52 +121,60 @@ function shortSrc(s) {
   } catch (_) { return s; }
 }
 
-// ── BLOQUEIO DE ATALHOS DO BROWSER ──────────────────────────────────
-//  Registrados como globalShortcut: enquanto a janela do jogo tem foco,
-//  estes atalhos NÃO chegam ao Chromium → Ctrl+W não fecha, F5 não
-//  recarrega à toa, etc. O jogo recebe as teclas normais (WASD, ESC...).
-function registerBlocks() {
-  const swallow = () => { /* engole: não faz nada → atalho do browser morto */ };
-  const blocked = [
-    'CommandOrControl+W',   // fechar aba/janela (o vilão do Ctrl+W ao agachar+andar)
-    'CommandOrControl+R',   // reload acidental
-    'CommandOrControl+Shift+W',
-    'CommandOrControl+Q',   // quit
-    'CommandOrControl+N',   // nova janela
-    'CommandOrControl+T',   // nova aba
-    'CommandOrControl+P',   // print
-    'CommandOrControl+F',   // find
-    'CommandOrControl+G',
-    'CommandOrControl+Plus', 'CommandOrControl+-', 'CommandOrControl+0', // zoom
-    'F5',                   // reload
-    'F7',                   // (caret browsing) — F7 do jogo é tratado pela página, não aqui
-    'Alt+Left', 'Alt+Right', // voltar/avançar histórico
-    'Alt+F4 ',              // (deixar o usuário fechar pela barra; espaço evita registro real)
-  ];
-  for (const acc of blocked) {
-    try { globalShortcut.register(acc.trim(), swallow); } catch (_) {}
-  }
+// ── ATALHOS — via before-input-event (LOCAL da janela, confiável) ───────
+//  ANTES era globalShortcut (registra no SISTEMA todo): falhava silencioso
+//  se outro app/o Trae já tivesse Ctrl+R/F12 → F12 e reload não respondiam.
+//  Agora interceptamos as teclas DENTRO da janela: funciona sempre que o
+//  jogo tem foco, sem conflitar com nada de fora.
+//
+//  ATIVOS (dev):
+//    F5 / Ctrl+R          → recarrega o jogo
+//    F12 / Ctrl+Shift+I   → abre/fecha o DevTools
+//    Ctrl+Shift+R         → recarrega ignorando cache (hard reload)
+//    F11                  → fullscreen
+//  BLOQUEADOS (não atrapalham o jogo):
+//    Ctrl+W/Q/N/T/P/F/G, zoom, Alt+setas
+function installShortcuts() {
+  if (!win) return;
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const ctrl  = input.control || input.meta;
+    const shift = input.shift;
+    const key   = (input.key || '').toLowerCase();
 
-  // Atalhos DEV que CONTINUAM funcionando (úteis):
-  try { globalShortcut.register('F12', () => win?.webContents.toggleDevTools()); } catch (_) {}
-  try { globalShortcut.register('CommandOrControl+Shift+R', () => win?.reload()); } catch (_) {}
-  try { globalShortcut.register('F11', () => win?.setFullScreen(!win.isFullScreen())); } catch (_) {}
+    // ── DEV: reload / devtools / fullscreen ──
+    if (key === 'f5' || (ctrl && key === 'r' && !shift)) {
+      event.preventDefault(); win.webContents.reload(); return;
+    }
+    if (ctrl && shift && key === 'r') {
+      event.preventDefault(); win.webContents.reloadIgnoringCache(); return;
+    }
+    if (key === 'f12' || (ctrl && shift && key === 'i')) {
+      event.preventDefault(); win.webContents.toggleDevTools(); return;
+    }
+    if (key === 'f11') {
+      event.preventDefault(); win.setFullScreen(!win.isFullScreen()); return;
+    }
+
+    // ── BLOQUEADOS: atalhos de browser que atrapalham o jogo ──
+    if (ctrl && ['w', 'q', 'n', 't', 'p', 'f', 'g', '+', '-', '=', '0'].includes(key)) {
+      event.preventDefault(); return;
+    }
+    if (input.alt && (key === 'arrowleft' || key === 'arrowright')) {
+      event.preventDefault(); return;
+    }
+    // resto (WASD, ESC, números, etc.) → passa direto pro jogo.
+  });
 }
 
 app.whenReady().then(() => {
   createWindow();
-  registerBlocks();
+  installShortcuts();          // before-input-event é por-janela e persiste
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) { createWindow(); installShortcuts(); }
   });
 });
-
-// Re-bloqueia ao focar (alguns atalhos podem ser liberados ao perder foco).
-app.on('browser-window-focus', registerBlocks);
-app.on('browser-window-blur', () => { try { globalShortcut.unregisterAll(); } catch (_) {} });
-
-app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch (_) {} });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
