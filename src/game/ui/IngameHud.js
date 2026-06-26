@@ -264,14 +264,18 @@ export class PingDisplay {
   }
 
   update() {
-    if (!this.cs?.connected) { this._el.style.display = 'none'; return; }
-    this._el.style.display = 'block';
+    if (!this.cs?.connected) {
+      if (this._lastDisp !== 'none') { this._el.style.display = 'none'; this._lastDisp = 'none'; }
+      return;
+    }
+    // PERF: só escreve no DOM quando o valor MUDA (rodava todo frame e
+    //  forçava reflow à toa — mesmo padrão que travava o FortniteHUD).
+    if (this._lastDisp !== 'block') { this._el.style.display = 'block'; this._lastDisp = 'block'; }
     const ms = this.cs.getPing?.() || 0;
+    if (ms === this._lastMs) return;
+    this._lastMs = ms;
     this._val.textContent = ms + ' ms';
-    let color;
-    if (ms < 80)       color = '#7efa9a';
-    else if (ms < 200) color = '#ffcc44';
-    else               color = '#ff7a8a';
+    const color = ms < 80 ? '#7efa9a' : ms < 200 ? '#ffcc44' : '#ff7a8a';
     this._dot.style.background = color;
     this._dot.style.boxShadow = `0 0 4px ${color}`;
     this._val.style.color = color;
