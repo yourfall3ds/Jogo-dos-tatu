@@ -577,6 +577,7 @@ export class AnimatedEnemy {
     const dist = Math.sqrt(dx * dx + dz * dz);
     const nx = dist > 0.01 ? dx / dist : 0, nz = dist > 0.01 ? dz / dist : 0;
     const hasThreatInterest = this._hasThreatInterest();
+    this._lastDist = dist;
     const rotOff = this.def.rotOffset ?? 0;
     // Encara o movimento quando esta patrulhando/perseguindo. Se estiver em
     // idle sem aggro, preserva a orientacao atual em vez de "sentir" o player.
@@ -636,7 +637,9 @@ export class AnimatedEnemy {
         if (this._stateT <= 0) {
           this._state = State.STRIKE; this._stateT = 0.25;
           this._hitDone = false;
-          this._vx = nx * 4; this._vz = nz * 4;
+          // #14 o avanço (lunge) varia por golpe: jab/heavy curtos, lunge longo.
+          this._vx = nx * (this._curMove?.lunge ?? 4);
+          this._vz = nz * (this._curMove?.lunge ?? 4);
         }
         break;
       case State.STRIKE:
@@ -646,7 +649,14 @@ export class AnimatedEnemy {
         // Hitbox REAL: esfera do golpe à frente vs cápsula do player
         if (!this._hitDone && target.canBeHit !== false && this._meleeHitsPlayer(pos, targetPos, nx, nz)) {
           this._hitDone = true;
-          this.onAttack?.(this.DAMAGE, this.behavior === 'brute' ? 'slam' : 'melee', pos.clone(), this.KB, target);
+          // #14 dano/knockback/tipo do golpe variam pelo move escolhido.
+          this.onAttack?.(
+            this.DAMAGE * (this._curMove?.dmgMul ?? 1),
+            this._curMove?.type || (this.behavior === 'brute' ? 'slam' : 'melee'),
+            pos.clone(),
+            this.KB * (this._curMove?.kbMul ?? 1),
+            target
+          );
         }
         if (this._stateT <= 0) { this._state = State.RECOVER; this._stateT = 0.3; }
         break;
@@ -658,13 +668,24 @@ export class AnimatedEnemy {
         // ── AGGRO: só persegue se o player está no raio de detecção ─────
         //  Entra em aggro ao chegar perto (AGGRO_RANGE); só desiste se o
         //  player se afastar além do LEASH. Sem aggro → fica parado (idle).
+        // #13 LINE-OF-SIGHT: só acorda por PROXIMIDADE se realmente ENXERGA o
+        //  player (sem parede no meio). Levar dano/ameaça acorda mesmo sem ver
+        //  (hit pelas costas). Raycast throttled (200ms) → barato.
+        const losClear = this._losTo(pos, targetPos);
         if (!this._aggro) {
-          if (dist <= this.AGGRO_RANGE || hasThreatInterest) this._aggro = true;
+          if ((dist <= this.AGGRO_RANGE && losClear) || hasThreatInterest) {
+            this._aggro = true; this._searching = false;
+          }
         } else if (dist > this.LEASH_RANGE && !hasThreatInterest) {
-          this._aggro = false; this._wp = null; this._targetId = null;
+          // #13 perdeu o alvo: NÃO esquece na hora. Vai investigar o último
+          //  lugar visto, dá uma olhada, e só então volta a patrulhar/dormir.
+          this._aggro = false; this._wp = null; this._crowdState = null;
+          this._beginSearch(targetPos);
         }
 
         if (!this._aggro) {
+          // #13 fase de BUSCA: caminha alerta até o último lugar visto.
+          if (this._searching) { this._searchTick(dt, pos); break; }
           this._holdCrowdPosition(dt);
           this._updateNavDebug(pos, null, null);
           // ── PATRULHA (wander): vagueia devagar perto do spawn ──────────
@@ -764,9 +785,11 @@ export class AnimatedEnemy {
         } else if (this._attackT <= 0) {
           this._holdCrowdPosition(dt, true);
           this._updateNavDebug(pos, null, targetPos);
-          // Windup mais longo = telegraph: dá tempo do player reagir/desviar
-          this._state = State.WINDUP; this._stateT = 0.45;
-          this._play(this._pickAttack(), false);
+          // #14 escolhe o golpe (define this._curMove) e usa o WINDUP dele:
+          //  jab = rápido/fraco · heavy = telegraph longo/forte · lunge = avança.
+          const atkAnim = this._pickAttack();
+          this._state = State.WINDUP; this._stateT = this._curMove?.windup ?? 0.45;
+          this._play(atkAnim, false);
           this.onPlaySound?.('enemy_attack');
         } else {
           this._holdCrowdPosition(dt);
@@ -954,9 +977,101 @@ export class AnimatedEnemy {
     return bestY;
   }
 
+  // #14 catálogo de golpes com PARÂMETROS distintos (não só animação). Mapeia
+  //  as animações de ataque disponíveis em 4 arquétipos. Mesmo com 1 anim só,
+  //  o feel muda (windup/dano/kb/avanço diferentes).
+  _getMoves() {
+    if (this._moves) return this._moves;
+    const A = this.rAttacks || [];
+    const at = (i) => (A.length ? A[i % A.length] : this.rIdle);
+    const brute = this.behavior === 'brute';
+    this._moves = [
+      { kind: 'jab',   anim: at(0), windup: 0.30, dmgMul: 0.65, kbMul: 0.55, lunge: 3, reachMul: 0.90, radiusMul: 0.95, type: 'melee' },
+      { kind: 'swipe', anim: at(1), windup: 0.45, dmgMul: 1.00, kbMul: 1.00, lunge: 4, reachMul: 1.00, radiusMul: 1.00, type: brute ? 'slam' : 'melee' },
+      { kind: 'heavy', anim: at(2), windup: brute ? 0.80 : 0.62, dmgMul: 1.60, kbMul: 1.70, lunge: 2, reachMul: 1.15, radiusMul: 1.15, type: 'slam' },
+      { kind: 'lunge', anim: at(3), windup: 0.50, dmgMul: 1.10, kbMul: 1.20, lunge: 9, reachMul: 1.10, radiusMul: 1.00, type: 'melee' },
+    ];
+    return this._moves;
+  }
+
   _pickAttack() {
-    if (!this.rAttacks?.length) return this.rIdle;
-    return this.rAttacks[(Math.random() * this.rAttacks.length) | 0];
+    if (!this.rAttacks?.length) { this._curMove = null; return this.rIdle; }
+    const moves = this._getMoves();
+    const dist = this._lastDist ?? 99;
+    const reach = this.ATTACK_RANGE || 2.5;
+    // alvo na BORDA do alcance → lunge pra fechar a distância
+    if (dist > reach * 0.8 && Math.random() < 0.6) {
+      this._curMove = moves[3];
+      return this._curMove.anim;
+    }
+    // brutes batem mais pesado (sem jab); resto mistura, swipe mais comum
+    const pool = this.behavior === 'brute'
+      ? [moves[1], moves[2], moves[2]]
+      : [moves[0], moves[1], moves[1], moves[2]];
+    this._curMove = pool[(Math.random() * pool.length) | 0];
+    return this._curMove.anim;
+  }
+
+  // #13 linha de visão (throttled 200ms): há parede entre o inimigo e o alvo?
+  _losTo(pos, targetPos) {
+    const now = performance.now();
+    if (this._losCacheT && now - this._losCacheT < 200) return this._losClear;
+    this._losCacheT = now;
+    this._losClear = this._computeLOS(pos, targetPos);
+    return this._losClear;
+  }
+
+  _computeLOS(pos, targetPos) {
+    const ex = targetPos.x - pos.x, ez = targetPos.z - pos.z;
+    const flat = Math.hypot(ex, ez);
+    if (flat < 1.0) return true;
+    const dir = new BABYLON.Vector3(ex / flat, 0, ez / flat);
+    const origin = new BABYLON.Vector3(pos.x, this._groundY + 1.2, pos.z);
+    const len = flat - 0.5;   // não conta a própria cápsula do player
+    const ray = new BABYLON.Ray(origin, dir, len);
+    const obstacles = window._navMesh?.obstacles;
+    if (obstacles && obstacles.length) {
+      for (const m of obstacles) {
+        if (!m || m.isDisposed?.() || m === this.root) continue;
+        const pick = ray.intersectsMesh(m);
+        if (pick?.hit && pick.distance < len) return false;
+      }
+      return true;
+    }
+    const hit = this.scene.pickWithRay(ray, (m) => this._isSolidBlocker(m));
+    return !(hit?.hit && hit.distance < len);
+  }
+
+  // #13 começa a investigar o último lugar onde o alvo foi visto.
+  _beginSearch(lastPos) {
+    this._searching = true;
+    this._searchT = 5.0;   // procura por até 5s
+    const src = lastPos?.clone?.() ? lastPos : (this._spawnPos || this.root.position);
+    this._searchPos = src.clone ? src.clone() : new BABYLON.Vector3(src.x, src.y, src.z);
+  }
+
+  // #13 caminha alerta até o _searchPos; ao chegar/cansar, para de procurar.
+  _searchTick(dt, pos) {
+    this._searchT -= dt;
+    const sp = this._searchPos;
+    if (!sp) { this._searching = false; return; }
+    const dx = sp.x - pos.x, dz = sp.z - pos.z;
+    const d = Math.hypot(dx, dz);
+    if (this._searchT <= 0 || d < 1.2) {
+      this._searching = false;
+      this._faceX = null; this._faceZ = null;
+      this._play(this.rIdle, true);
+      return;
+    }
+    const mx = dx / d, mz = dz / d;
+    const step = this.MOVE_SPEED * 0.7 * dt;   // alerta: mais rápido que patrulha
+    if (!this._blockedAhead(pos, mx, mz, step)) {
+      pos.x += mx * step; pos.z += mz * step;
+      this._faceX = mx; this._faceZ = mz;
+      this._play(this.rMove, true);
+    } else {
+      this._searching = false;   // parede no caminho → desiste da busca
+    }
   }
 
   _getCrowdAgentParams() {
@@ -1010,8 +1125,9 @@ export class AnimatedEnemy {
   //  meio do corpo. Só acerta se a esfera encostar na cápsula do player
   //  → permite pular/sair de lado para escapar, igual ao seu hitbox.
   _meleeHitsPlayer(pos, playerPos, nx, nz) {
-    const hx = pos.x + nx * this.HIT_REACH;
-    const hz = pos.z + nz * this.HIT_REACH;
+    const reach = this.HIT_REACH * (this._curMove?.reachMul ?? 1);   // #14 varia por golpe
+    const hx = pos.x + nx * reach;
+    const hz = pos.z + nz * reach;
     const hy = pos.y + (this.def.targetHeight || 1.6) * 0.45;
     // Cápsula do player: eixo vertical, meia-altura ~0.9 em torno do centro
     const cy = Math.max(playerPos.y - 0.9, Math.min(playerPos.y + 0.9, hy));
@@ -1019,7 +1135,7 @@ export class AnimatedEnemy {
     const ddy = hy - cy;
     const ddz = hz - playerPos.z;
     const d = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
-    return d <= (this.HIT_RADIUS + this.PLAYER_RADIUS);
+    return d <= (this.HIT_RADIUS * (this._curMove?.radiusMul ?? 1) + this.PLAYER_RADIUS);
   }
 
   _proceduralTick(dt, dist) {
