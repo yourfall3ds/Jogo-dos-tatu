@@ -992,6 +992,14 @@ export class BuildMode {
   // ══════════════════════════════════════════════════════════════════
   _consumePlaceClick() { if (this._pendingClick) { this._pendingClick = false; return true; } return false; }
   _snapVec(v, step) { return new BABYLON.Vector3(Math.round(v.x / step) * step, v.y, Math.round(v.z / step) * step); }
+  // Snap com OFFSET: cai em n*step + off. Usado pela PAREDE (off = step/2) pra
+  // ela ficar nas BORDAS das células do piso (que são centradas no grid), e não
+  // na linha central — assim parede e piso ENCAIXAM formando o contorno.
+  _snapVecOff(v, step, off) {
+    return new BABYLON.Vector3(
+      Math.round((v.x - off) / step) * step + off, v.y,
+      Math.round((v.z - off) / step) * step + off);
+  }
   _buildableStock(assetId) { return window._gameInventory?.getBuildables?.().find(s => s.data?.assetId === assetId)?.qty || 0; }
 
   _updateDrag() {
@@ -1019,8 +1027,10 @@ export class BuildMode {
     this._setHUDMode(this._dragTool === 'wall' ? 'WALL' : (this._floorRemove ? 'FLOORDEL' : 'FLOOR'));
 
     if (this._dragTool === 'wall') {
-      // Grid 4 (igual ao piso) → parede e piso CASAM nos mesmos cantos de célula.
-      const gp = this._snapVec(raw, PW);
+      // Grid 4 com OFFSET +2 (bordas das células do piso) → a parede assenta no
+      // CONTORNO das lajes (centradas no grid), encaixando certinho, em vez de
+      // cortar pela linha central. (A ponta B segue o mesmo lattice via _wallEndSnap.)
+      const gp = this._snapVecOff(raw, PW, PW / 2);
       if (!this._dragA) {
         this._previewWall(gp, gp);
         if (this._consumePlaceClick()) this._dragA = gp.clone();
