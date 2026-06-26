@@ -2,7 +2,7 @@
 //  main.js — TransFPS
 // ─────────────────────────────────────────────────────────────────
 import './utils/quietConsole.js';  // PRIMEIRO: silencia ruído de boot/assets no console
-import { InputManager }  from './InputManager.js';
+import { InputManager }  from './game/core/InputManager.js';
 import { Player }        from './Player.js';
 import { Level }         from './Level.js';
 import { HUD }           from './game/ui/HUD.js';
