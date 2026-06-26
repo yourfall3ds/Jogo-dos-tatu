@@ -1838,6 +1838,31 @@ export class Player {
     // Fallback global (caso algo ainda chame): renasce.
     window.respawnPlayer = () => this.respawn();
 
+    // ── AUTO-RESPAWN (SOLO): contagem regressiva, sem botão ──────────
+    //  No MP o servidor já auto-respawna. No SOLO, antes precisava CLICAR
+    //  "Renascer". Agora conta 3s e renasce SOZINHO — o jogador nunca fica
+    //  preso numa tela esperando clicar.
+    if (!_isMp) {
+      if (this._autoRespawnT) { try { clearInterval(this._autoRespawnT); } catch (_) {} }
+      let secs = 3;
+      const updateMsg = () => {
+        const m = document.getElementById('death-msg');
+        if (m) m.textContent = (type === 'fall'
+          ? 'Você caiu do mapa! '
+          : 'Você foi derrotado! ') + `Renascendo em ${secs}…`;
+      };
+      updateMsg();
+      this._autoRespawnT = setInterval(() => {
+        secs--;
+        if (secs <= 0) {
+          clearInterval(this._autoRespawnT); this._autoRespawnT = null;
+          if (this._dead) this.respawn();
+        } else {
+          updateMsg();
+        }
+      }, 1000);
+    }
+
     // REGRA DO DONO #2/#3: CADÁVER estilo Fortnite. O corpo cai/fica ~1.4s,
     // depois SOME em ~0.6s (fade cyan + partículas + encolhe) = ~2s total.
     // Nome/vida (nameplate + HUD) somem JUNTO no mesmo instante do vanish.
@@ -2010,7 +2035,24 @@ export class Player {
     if (this.stateMachine) {
       this.stateMachine.setState(this.stateMachine.isArmedFlag ? 'armed' : 'unarmed');
     }
-    this.spawn({ sky: false });   // TESTE: respawn BÁSICO no chão (sem skydive) p/ isolar o facing
+    // limpa o timer de auto-respawn (se renasceu antes da contagem acabar)
+    if (this._autoRespawnT) { try { clearInterval(this._autoRespawnT); } catch (_) {} this._autoRespawnT = null; }
+
+    // MUNDO DE BIOMAS: renasce no spawn seguro (3m acima do chão da clareira),
+    //  NÃO no skydive de (0,200,0) que poderia cair fora. Caso contrário, spawn
+    //  normal do mapa.
+    const wm = window._worldManager;
+    const sp = wm?._inBiomeWorld ? wm?._builder?.spawnPoint : null;
+    if (sp) {
+      this.mesh.position.copyFrom(sp);
+      this._vx = 0; this._vz = 0; this.velY = 0;
+      this._isFalling = false; this._prevY = sp.y;
+      if (this._cc) {
+        try { this._cc.setPosition(sp.clone()); this._cc.setVelocity(BABYLON.Vector3.Zero()); } catch (_) {}
+      }
+    } else {
+      this.spawn();       // skydive: (0,200,0) caindo (mapa normal)
+    }
     this.onRespawn?.();   // reseta inimigos
     // Re-trava o cursor e volta o jogo ao normal (reativa input — regra #4).
     try { this.input.activate?.(); } catch (_) {}

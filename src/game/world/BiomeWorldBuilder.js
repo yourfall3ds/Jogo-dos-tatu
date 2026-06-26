@@ -28,19 +28,23 @@ export class BiomeWorldBuilder {
   /** Constrói tudo. Reporta progresso 0..1 via onProgress. */
   async build() {
     this.onProgress(0.05, 'gerando terreno…');
-    this._buildTerrain();
+    await this._buildTerrain();          // AWAIT: o corpo físico do chão tem
+                                          //  que existir ANTES do teleporte,
+                                          //  senão o player cai no vazio.
     this.onProgress(0.45, 'carregando vegetação…');
     await this._loadTreeTemplates();
     this.onProgress(0.65, 'plantando o mundo…');
     this._scatterTrees();
     this.onProgress(0.95, 'finalizando…');
     this._buildSafeZone();
+    // garante 1 frame de física assentar antes de devolver (chão pronto)
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     this.onProgress(1.0, 'pronto!');
     return this.root;
   }
 
   // ── Terreno: grade com altura + cor por bioma ──────────────────
-  _buildTerrain() {
+  async _buildTerrain() {
     const N = TERRAIN_SUBDIV;
     const size = WORLD_HALF * 2;
     const step = size / N;
@@ -82,7 +86,8 @@ export class BiomeWorldBuilder {
     mesh.checkCollisions = true;
     mesh.isPickable = true;
     this._terrain = mesh;
-    this._tryStaticBody(mesh);
+    // AWAIT o corpo estático: o chão precisa colidir ANTES do teleporte.
+    await this._tryStaticBody(mesh, 'mesh');
   }
 
   // ── Carrega 1 template por tipo de árvore, normalizando a ESCALA ─
@@ -159,9 +164,12 @@ export class BiomeWorldBuilder {
 
   // ── Clareira de spawn: achata o centro e marca como zona segura ──
   _buildSafeZone() {
-    // já é plano-ish no centro (ruínas baseH=0); aqui só garantimos um disco
-    // de chão visível e sem obstáculos. (mobs/NPCs entram nas próximas ondas.)
-    this.spawnPoint = new BABYLON.Vector3(0, heightAt(0, 0, this.seed) + 1.0, 0);
+    // já é plano-ish no centro (ruínas baseH=0). Spawn 3m ACIMA do chão: se a
+    // física ainda assenta no 1º frame, o player cai esses 3m e POUSA no chão
+    // — em vez de cair no vazio (bug do "caiu do mapa e morreu").
+    const groundY = heightAt(0, 0, this.seed);
+    this.spawnPoint = new BABYLON.Vector3(0, groundY + 3.0, 0);
+    this.groundY = groundY;
   }
 
   // ── Corpo estático Havok (se a física estiver pronta) ───────────

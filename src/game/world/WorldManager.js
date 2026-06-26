@@ -54,6 +54,15 @@ export class WorldManager {
       this._inBiomeWorld = true;
       await new Promise(r => setTimeout(r, 400)); // respiro visual
       this.loadScreen.hide();
+
+      // RE-ENGATA o foco do jogo: a load screen soltou o pointer lock; sem
+      //  isto o cursor fica como "cruz" (crosshair) e a câmera não responde
+      //  até apertar ESC+Retomar. Volta pro estado 'playing' e re-pede o lock.
+      try {
+        window._screenFocus?.enterPlaying();
+        window._gameInput?.activate?.(true);
+        document.body.classList.add('in-game');
+      } catch (_) {}
     } catch (e) {
       console.error('[WorldManager] enterBiomeWorld falhou:', e);
       this.loadScreen.setProgress(1, 'erro ao carregar o mundo');
