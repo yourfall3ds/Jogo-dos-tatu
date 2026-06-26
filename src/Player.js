@@ -1687,7 +1687,12 @@ export class Player {
       }
     }
     if (this.hp <= 0 && !this._dead)      this._startDeath('enemy');  // servidor me matou
-    else if (this.hp > 0 && this._dead)   this.respawn();             // servidor me reviveu
+    // RESPAWN em MP é orquestrado pelo main.js (detecta transição dead:true→false
+    // e chama respawn() já com a posição correta sx/sz do server + altura 200m
+    // skydive). Se chamar aqui também, o respawn limpa _dead ANTES do main.js
+    // checar — e o trecho que posiciona em (sx, 200, sz) com _isFalling=true é
+    // pulado → personagem nasce no chão estático em vez de cair tipo Fortnite.
+    else if (this.hp > 0 && this._dead && !window._cs?.connected) this.respawn();
   }
 
   /**
