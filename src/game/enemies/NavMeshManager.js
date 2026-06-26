@@ -1,8 +1,15 @@
 import { DEBUG } from '../../utils/debug.js';
 
 const DEFAULT_BABYLON_VERSION = '8.36.0';
-const RECAST_CORE_URL = 'https://esm.sh/@recast-navigation/core?bundle';
-const RECAST_GENERATORS_URL = 'https://esm.sh/@recast-navigation/generators?bundle';
+// SEM ?bundle e com versão FIXA: o ?bundle do esm.sh fazia o generators
+//  empacotar uma cópia ISOLADA do Wasm do recast, separada do core. Resultado:
+//  init() rodava só no Wasm do core, e generateTileCache (do generators) batia
+//  num Wasm NÃO-inicializado → '"init" must be called'. Sem ?bundle e fixando a
+//  MESMA versão, o generators importa o MESMO core que a gente inicializa → um
+//  único init() cobre os dois (jeito documentado da recast-navigation-js).
+const RECAST_VERSION = '0.43.1';
+const RECAST_CORE_URL = `https://esm.sh/@recast-navigation/core@${RECAST_VERSION}`;
+const RECAST_GENERATORS_URL = `https://esm.sh/@recast-navigation/generators@${RECAST_VERSION}`;
 const NAV_CACHE_KEY = 'transfps_nav_v2_cache';
 const NAV_CACHE_VERSION = '2026-06-08-v6-clean-arena-layout';
 const CROWD_MAX_AGENTS = 96;
@@ -146,12 +153,13 @@ async function loadNavigationFactory() {
       //  quando o generator rodava, batia em recast não inicializado:
       //  '"init" must be called before using any recast-navigation-js APIs'.
       //  Agora inicializamos AMBOS (e toleramos se um deles não expõe init).
+      // init() único: como core e generators agora compartilham o MESMO módulo
+      //  core (sem ?bundle, versão fixa), inicializar o core inicializa o Wasm
+      //  que o generators também usa. O generators NÃO exporta init() próprio —
+      //  e não precisa. (Antes, com ?bundle, eram 2 Wasm isolados e o generators
+      //  ficava morto → '"init" must be called' no generateTileCache.)
       if (typeof recastCore.init === 'function') {
         await recastCore.init();
-      }
-      if (recastGenerators && typeof recastGenerators.init === 'function'
-          && recastGenerators.init !== recastCore.init) {
-        try { await recastGenerators.init(); } catch (_) {}
       }
 
       if (typeof mod.CreateNavigationPluginAsync === 'function') {
