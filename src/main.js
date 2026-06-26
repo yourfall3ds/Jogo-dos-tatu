@@ -41,6 +41,7 @@ import { PlayerStats }          from './game/stats/PlayerStats.js';
 import { SkillSystem }          from './game/skills/SkillSystem.js';
 import { Inventory }            from './game/items/Inventory.js';
 import { RpgHUD }               from './game/ui/RpgHUD.js';
+import { ScreenFocusManager }   from './game/ui/ScreenFocusManager.js';
 import { LocalDB }              from './game/data/LocalDB.js';
 import { AssetGroupsUI }        from './game/ui/AssetGroupsUI.js';
 import { initItemCatalog }      from './game/items/ItemCatalog.js';
@@ -574,6 +575,18 @@ async function init() {
 
   // ── Sistemas base ────────────────────────────────────────────────
   const input  = new InputManager(canvas);
+  // ── Domínio de tela: dono único do cursor/lock (desbuga o ESC no MP) ──
+  const screenFocus = new ScreenFocusManager(canvas);
+  window._screenFocus = screenFocus;
+  screenFocus.onChange = (state) => {
+    if (state === 'playing') {
+      window._gameInput?.activate?.();
+    } else {
+      // UI assumiu: no MP o player segue ativo no servidor (gameActive=true),
+      // mas o cursor fica visível. No solo, o input do jogo trava de fato.
+      window._gameInput && (window._gameInput.gameActive = !!window._cs?.connected);
+    }
+  };
   try { window.transfpsPhase?.('criando Level (texturas do mapa)'); } catch (_) {}
   setLoadingUI(24, 'mapa + texturas…');
   const level  = new Level(scene, shadowGen, { clean: true });   // mapa limpo c/ sombra
@@ -2190,19 +2203,22 @@ async function init() {
       //   só liberamos o cursor e mostramos o overlay por cima.
       if (window._cs?.connected) {
         e.preventDefault();
+        const fm = window._screenFocus;
         const ovMp = $('pause-overlay');
-        if (ovMp?.classList.contains('visible')) {
+        const isOpen = ovMp?.classList.contains('visible') || fm?.state === 'menu';
+        if (isOpen) {
           // Pause aberto → ESC retoma (re-captura pointer lock, esconde overlay).
+          fm?.enterPlaying();
           _resumeFromPause();
         } else {
-          // Abre o overlay de pause SEM congelar o player (segue vulnerável).
-          try { document.exitPointerLock?.(); } catch (_) {}
-          // gameActive CONTINUA true → update do player roda, dano chega.
+          // Abre o pause SEM congelar o player (segue vulnerável no servidor).
+          // O ScreenFocusManager é o DONO do cursor agora: enterMenu() solta o
+          // lock e mostra o cursor de forma consistente (fim do limbo do ESC).
+          fm?.enterMenu();
+          // gameActive CONTINUA true no MP → update do player roda, dano chega.
           window._gameInput && (window._gameInput.gameActive = true);
           ovMp?.classList.add('visible');
           try { document.body.classList.remove('in-game'); } catch (_) {}
-          // mostra o cursor pra clicar nos botões do menu
-          try { if (canvas) canvas.style.cursor = 'default'; } catch (_) {}
           _updateGameFocusHint();
         }
         return;
@@ -2248,7 +2264,7 @@ async function init() {
     //  re-capturar o mouse na hora, sem cair no cooldown.
     ov.classList.remove('visible');
     try { document.body.classList.add('in-game'); } catch (_) {}
-    try { if (canvas) canvas.style.cursor = 'none'; } catch (_) {}
+    try { window._screenFocus?.enterPlaying(); } catch (_) {}
     _engageGameFocus(true);
     _updateGameFocusHint();
   }
