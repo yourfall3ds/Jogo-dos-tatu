@@ -1947,8 +1947,21 @@ export class ArenaRoom extends Room {
     p.hp = p.maxHp;
     p.dead = false;
     p.respawn_at = 0;
-    const sp = this._pickSpawnPoint();
-    p.x = sp.x; p.y = sp.y; p.z = sp.z;
+    if (this._isOpenWorld) {
+      // RESPAWN no CÉU (skydive) — IGUAL ao onJoin (517) e ao auto-respawn do
+      // _tick (2036). ESTE é o caminho que o cliente realmente dispara: o
+      // DeathTimer chama sendRespawn() ao zerar respawn_at. Spawnar no CHÃO aqui
+      // (o bug) deixava p.y baixo → o anti-fly-hack do _onInput (MAX_RISE_PER_TICK)
+      // REJEITAVA o cliente subindo pra y=200 → os outros te viam PARADO no chão
+      // durante toda a queda. No céu a descida é livre → todos veem o skydive.
+      const sp = this._pickSpawnPointOpenWorld();
+      p.x = sp.x; p.y = 200; p.z = sp.z;
+      p.vy = -15; p.altitude = 200;
+      p.br_state = "SKYDIVE"; p.anim_state = "falling";
+    } else {
+      const sp = this._pickSpawnPoint();
+      p.x = sp.x; p.y = sp.y; p.z = sp.z;
+    }
     this.broadcast('respawn', { player_id: p.id });
   }
 

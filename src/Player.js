@@ -1253,9 +1253,15 @@ export class Player {
         // MORTO: FORÇA o corpo de costas pra câmera todo frame (override do root
         // motion do clipe 'dead' + do freeze do facing). Trava no yaw da morte —
         // se a câmera não mexer, vê as costas; sem auto-inverter pro rosto.
+        //  SEM +π: o facing block VIVO logo abaixo (1275) usa rotation.y = yawRad
+        //  PURO (sem offset) pra ficar de costas — é a convenção REAL do modelo
+        //  animLib ativo. O +π aqui somava 180° → no instante da morte o corpo
+        //  girava de costas→frente e o rosto encarava a câmera ("morre de frente").
+        //  Travar no MESMO ângulo do último frame vivo (deathYaw, sem offset)
+        //  mantém as costas pra câmera sem o flip.
         if (this._dead && this.animator?.root) {
           if (this.animator.root.rotationQuaternion) this.animator.root.rotationQuaternion = null;
-          this.animator.root.rotation.y = BABYLON.Tools.ToRadians(this._deathYaw ?? this.yaw) + Math.PI;
+          this.animator.root.rotation.y = BABYLON.Tools.ToRadians(this._deathYaw ?? this.yaw);
         }
 
         // Rotação manual do mesh root (já que o novo controlador não faz isso sozinho)
