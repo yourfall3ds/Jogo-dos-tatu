@@ -316,10 +316,10 @@ export class VRSystem {
         });
       } else if (hand === "left") {
         if (aOrX) aOrX.onButtonStateChangedObservable.add(() => {
-          if (aOrX.changes.pressed && aOrX.pressed) this._switchWeapon(-1); // X → arma anterior
+          if (aOrX.changes.pressed && aOrX.pressed) this._switchWeapon(+1); // X → troca de arma (ciclo)
         });
         if (bOrY) bOrY.onButtonStateChangedObservable.add(() => {
-          if (bOrY.changes.pressed && bOrY.pressed) this._switchWeapon(+1); // Y → próxima arma
+          if (bOrY.changes.pressed && bOrY.pressed) this._vrTogglePvp();     // Y → liga/desliga PvP
         });
         // ── Botão MENU (esquerdo) → abre/fecha o menu de pausa VR ──────
         //  O "menu" pode não existir no mapping padrão (reservado no Quest);

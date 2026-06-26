@@ -82,25 +82,34 @@ export class RpgHUD {
       this._skillEls[id] = el;
     }
 
-    // Hotbar 1-9 (consumíveis + imagens guardadas)
+    document.body.appendChild(bar);
+    this._bar = bar;
+
+    // ── HOTBAR 1-9 estilo Minecraft (fileira de slots no rodapé central) ──
+    //  IMPORTANTE: fica FORA do #rpg-hud. O FortniteHUD esconde o #rpg-hud
+    //  inteiro (display:none via body.fn-hud-active) — se a hotbar estivesse
+    //  dentro, sumia junto (foi o que aconteceu). Como elemento próprio no body,
+    //  ela sempre aparece, com os ícones dos itens equipados.
     this._hotbarRow = document.createElement('div');
-    this._hotbarRow.style.cssText = 'display:flex;gap:5px;margin-top:3px;';
-    bar.appendChild(this._hotbarRow);
+    this._hotbarRow.id = 'rpg-hotbar';
+    this._hotbarRow.style.cssText = `
+      position:fixed; left:50%; bottom:14px; transform:translateX(-50%);
+      display:flex; gap:5px; z-index:62; pointer-events:none;
+      padding:6px; background:rgba(6,9,16,.55); border-radius:12px;
+      box-shadow:0 4px 18px rgba(0,0,0,.45);`;
+    document.body.appendChild(this._hotbarRow);
     this._hotbarEls = [];
     for (let i = 0; i < 9; i++) {
       const slot = document.createElement('div');
       slot.style.cssText = `
-        position:relative;width:42px;height:42px;border-radius:7px;
-        background:rgba(8,10,20,.78);border:1.5px solid #2f3f5f;
+        position:relative;width:52px;height:52px;border-radius:8px;
+        background:rgba(8,10,20,.85);border:2px solid #3a4a6a;
         display:flex;align-items:center;justify-content:center;
-        color:#9ab;font-size:18px;overflow:hidden;`;
-      slot.innerHTML = `<span style="position:absolute;top:1px;left:3px;font-size:9px;color:#ffd24a;font-weight:bold;z-index:2;text-shadow:0 0 3px #000;">${i + 1}</span>`;
+        color:#9ab;font-size:22px;overflow:hidden;`;
+      slot.innerHTML = `<span style="position:absolute;top:1px;left:4px;font-size:11px;color:#ffd24a;font-weight:bold;z-index:2;text-shadow:0 0 3px #000;">${i + 1}</span>`;
       this._hotbarRow.appendChild(slot);
       this._hotbarEls.push(slot);
     }
-
-    document.body.appendChild(bar);
-    this._bar = bar;
 
     // Re-renderiza hotbar quando o inventário muda + persiste (debounced).
     //  Sem o save aqui, itens add. fora da UI (ex.: 📌 da Biblioteca) sumiam no F5.

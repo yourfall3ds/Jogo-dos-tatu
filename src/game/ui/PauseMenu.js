@@ -82,6 +82,22 @@ export class PauseMenu {
       .fc-key { display:inline-block; background:rgba(255,177,63,0.18); color:#ffce8a;
         font:800 12px monospace; padding:2px 8px; border-radius:6px; min-width:22px; text-align:center; }
       .fc-empty { color:#5a7088; font-size:14px; padding:30px; text-align:center; }
+      .fc-hotbar { display:flex; gap:8px; flex-wrap:wrap; margin:4px 0 6px; }
+      .fc-slot { position:relative; width:84px; height:84px; border-radius:12px; cursor:pointer;
+        background:linear-gradient(160deg,rgba(16,28,44,0.9),rgba(10,18,30,0.95));
+        border:2px solid rgba(90,150,210,0.25); display:flex; flex-direction:column; align-items:center;
+        justify-content:center; gap:2px; transition:all .12s; }
+      .fc-slot:hover { border-color:rgba(63,208,255,0.6); transform:translateY(-2px); }
+      .fc-slot.filled { border-color:rgba(63,208,255,0.45); }
+      .fc-slot .slot-num { position:absolute; top:3px; left:6px; font:800 12px monospace; color:#ffd24a; text-shadow:0 0 3px #000; }
+      .fc-slot .slot-ic { font-size:30px; line-height:1; }
+      .fc-slot img.slot-ic { width:42px; height:42px; object-fit:contain; }
+      .fc-slot .slot-nm { font:600 9px monospace; color:#9fc4e6; max-width:78px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:center; }
+      .fc-slot .slot-empty { font:600 11px monospace; color:#3a526a; }
+      .fc-bagitem { cursor:pointer; }
+      .fc-bagitem.equipped { border-color:rgba(63,208,255,0.55); box-shadow:0 0 12px rgba(63,208,255,0.2); }
+      .fc-card span.ic { font-size:30px; }
+      .fc-card img.ic, .fc-card span.ic { width:46px; height:46px; }
       .fc-btn { background:linear-gradient(135deg,rgba(30,50,80,0.9),rgba(18,32,52,0.95));
         border:1px solid rgba(90,160,220,0.35); color:#dfeefc; font:700 14px 'Segoe UI',monospace;
         letter-spacing:1px; padding:16px 20px; border-radius:12px; cursor:pointer; text-align:left;
@@ -158,19 +174,39 @@ export class PauseMenu {
   }
 
   // ── Abas ───────────────────────────────────────────────────────
+  _itemIcon(id, cls) {
+    const def = ItemCatalog[id] || {};
+    return def.thumb
+      ? `<img class="${cls}" src="${def.thumb}" onerror="this.outerHTML='<span class=\\'${cls}\\'>${def.icon || '📦'}</span>'">`
+      : `<span class="${cls}">${def.icon || '📦'}</span>`;
+  }
+
   _renderInv() {
-    const player = window._gamePlayer || window._player;
-    const bag = player?.inventory?.bag || [];
+    const inv = (window._gamePlayer || window._player)?.inventory;
+    const hot = inv?.hotbar || new Array(9).fill(null);
+    const bag = inv?.bag || [];
+    // ── Hotbar 1–9 (slots equipados) ──────────────────────────────
+    const slots = Array.from({ length: 9 }, (_, i) => {
+      const id = hot[i];
+      const def = id ? (ItemCatalog[id] || {}) : null;
+      const inner = id
+        ? `${this._itemIcon(id, 'slot-ic')}<span class="slot-nm">${def?.name || id}</span>`
+        : `<span class="slot-empty">vazio</span>`;
+      return `<div class="fc-slot${id ? ' filled' : ''}" data-slot="${i}" title="${id ? 'Clique pra DESEQUIPAR' : 'slot vazio'}">
+        <span class="slot-num">${i + 1}</span>${inner}</div>`;
+    }).join('');
+    // ── Mochila (clique = equipar na 1ª vaga livre) ───────────────
     const cards = bag.filter(s => s && s.qty > 0).map(s => {
       const def = ItemCatalog[s.id] || {};
-      const thumb = def.thumb
-        ? `<img class="ic" src="${def.thumb}" onerror="this.outerHTML='<div class=\\'ic\\'>${def.icon || '📦'}</div>'">`
-        : `<div class="ic">${def.icon || '📦'}</div>`;
-      return `<div class="fc-card">${thumb}<div class="nm">${def.name || s.id}</div>
-        <div class="dt">${def.type || 'item'}</div><span class="qty">×${s.qty}</span></div>`;
+      const inSlot = hot.includes(s.id);
+      return `<div class="fc-card fc-bagitem${inSlot ? ' equipped' : ''}" data-item="${s.id}" title="Clique pra EQUIPAR num slot">
+        ${this._itemIcon(s.id, 'ic')}<div class="nm">${def.name || s.id}</div>
+        <div class="dt">${def.type || 'item'}${inSlot ? ' · equipado' : ''}</div><span class="qty">×${s.qty}</span></div>`;
     }).join('');
     return `<h2 class="fc-h">🎒 Inventário</h2>
-      <p class="fc-sub">Itens na mochila. Use a hotbar (1–9) durante o jogo.</p>
+      <p class="fc-sub">Clique num item da mochila pra <b style="color:#9fe4ff">EQUIPAR</b> num slot · clique num slot cheio pra <b style="color:#ffb0b0">DESEQUIPAR</b>. As teclas 1–9 usam o slot em jogo.</p>
+      <div class="fc-hotbar">${slots}</div>
+      <h3 class="fc-h" style="font-size:16px;margin:24px 0 10px;">🎒 Mochila</h3>
       ${cards ? `<div class="fc-grid fc-cards">${cards}</div>` : `<div class="fc-empty">Mochila vazia — derrote inimigos e colete drops.</div>`}`;
   }
 
@@ -239,6 +275,27 @@ export class PauseMenu {
 
   _wireContent() {
     const openTool = (fn) => { this._resume(); setTimeout(() => { try { fn(); } catch (e) { console.warn('[PauseMenu]', e?.message); } }, 40); };
+
+    // ── Inventário: equipar/desequipar slots da hotbar ─────────────
+    const inv = (window._gamePlayer || window._player)?.inventory;
+    this._content.querySelectorAll('[data-slot]').forEach(el => {
+      el.onclick = () => {
+        if (!inv) return;
+        const i = +el.dataset.slot;
+        if (inv.hotbar[i]) { inv.hotbar[i] = null; try { inv._notify?.(); } catch (_) {} this._render(); }  // desequipa
+      };
+    });
+    this._content.querySelectorAll('[data-item]').forEach(el => {
+      el.onclick = () => {
+        if (!inv) return;
+        const id = el.dataset.item;
+        const cur = inv.hotbar.indexOf(id);
+        if (cur >= 0) { inv.hotbar[cur] = null; }                 // já equipado → tira
+        else { let f = inv.hotbar.indexOf(null); if (f < 0) f = 8; inv.hotbar[f] = id; }  // 1ª vaga livre (ou último)
+        try { inv._notify?.(); } catch (_) {}
+        this._render();
+      };
+    });
     this._content.querySelectorAll('[data-world]').forEach(btn => {
       btn.onclick = () => {
         const w = btn.dataset.world;
