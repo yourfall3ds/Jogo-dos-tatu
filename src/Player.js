@@ -1838,34 +1838,12 @@ export class Player {
     // Fallback global (caso algo ainda chame): renasce.
     window.respawnPlayer = () => this.respawn();
 
-    // ── AUTO-RESPAWN: contagem regressiva, SEM botão (sempre) ────────
-    //  Vale no SOLO E no MUNDO SELVAGEM (wild, que é online): conta 3s e
-    //  renasce SOZINHO. O jogador NUNCA fica preso numa tela clicando.
-    //  (Na arena PvP pura o servidor já cuida do respawn via DeathTimer.)
-    const _inWild = window._worldManager?._inBiomeWorld === true;
-    if (!_isMp || _inWild) {
-      if (this._autoRespawnT) { try { clearInterval(this._autoRespawnT); } catch (_) {} }
-      let secs = 3;
-      const updateMsg = () => {
-        const m = document.getElementById('death-msg');
-        if (m) m.textContent = (type === 'fall'
-          ? 'Você caiu! '
-          : 'Você foi derrotado! ') + `Renascendo em ${secs}…`;
-        // some o botão Renascer (auto-respawn não precisa de clique)
-        const btn = document.getElementById('respawn-btn');
-        if (btn) btn.style.display = 'none';
-      };
-      updateMsg();
-      this._autoRespawnT = setInterval(() => {
-        secs--;
-        if (secs <= 0) {
-          clearInterval(this._autoRespawnT); this._autoRespawnT = null;
-          if (this._dead) this.respawn();
-        } else {
-          updateMsg();
-        }
-      }, 1000);
-    }
+    // NOTA: o AUTO-RESPAWN 100% automático (sem botão) vive no update() —
+    //  bloco "RESPAWN 100% AUTOMÁTICO" (linhas ~608), que cobre caiu-do-mapa,
+    //  SP/offline e MP. NÃO duplicar aqui (era um bloco meu que quebrava com
+    //  _isMp não definido após o rebase). Só garantimos que o botão Renascer
+    //  fica escondido (o respawn é sozinho).
+    try { const btn = document.getElementById('respawn-btn'); if (btn) btn.style.display = 'none'; } catch (_) {}
 
     // REGRA DO DONO #2/#3: CADÁVER estilo Fortnite. O corpo cai/fica ~1.4s,
     // depois SOME em ~0.6s (fade cyan + partículas + encolhe) = ~2s total.
