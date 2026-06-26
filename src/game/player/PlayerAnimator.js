@@ -28,7 +28,7 @@
 //  Idle_5                         │ Pulo parado
 //  Roll_Dodge_1                   │ Mirando e andando
 // ─────────────────────────────────────────────────────────────────
-import { DEBUG } from './utils/debug.js';
+import { DEBUG } from '../../utils/debug.js';
 
 // ── ANIM_MAP_START ──
 // Mapeamento para os nomes limpos do AnimationLibrary (chaves do MOVESETS).

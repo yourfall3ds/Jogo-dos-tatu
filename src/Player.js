@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────
 import { WallJumpController } from './game/player/WallJumpController.js';
 import { WeaponSystem }       from './WeaponSystem.js';
-import { PlayerAnimator }     from './PlayerAnimator.js';
+import { PlayerAnimator }     from './game/player/PlayerAnimator.js';
 import { AnimConfigUI }       from './game/ui/AnimConfigUI.js';
 import { physicsReady }       from './game/physics/PhysicsWorld.js';
 
