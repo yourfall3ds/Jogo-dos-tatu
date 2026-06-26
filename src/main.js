@@ -166,19 +166,10 @@ import { InteractableManager } from './game/interactive/InteractableManager.js';
   } catch (_) {}
 })();
 
-// Colyseus LOCAL (ws://<host>:2567) quando a página é servida em localhost OU
-// num IP de LAN (jogar em rede com o amigo) — assim o amigo abre http://SEU_IP:5500
-// e o cliente conecta no Colyseus do MESMO host. Em produção (domínio) → VPS/nginx.
-// Detecta automático: localhost/127.* ou IP privado (192.168.*, 10.*, 172.16-31.*).
-const _h = (typeof location !== 'undefined' && location.hostname) || '';
-const _isLanHost =
-  _h === 'localhost' || _h === '127.0.0.1' || _h.endsWith('.local') ||
-  /^192\.168\.\d{1,3}\.\d{1,3}$/.test(_h) ||
-  /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(_h) ||
-  /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(_h);
-const TRANSFPS_CS_URL = _isLanHost
-  ? `ws://${_h}:2567`
-  : 'wss://app.overpixel.online/transfps-cs';
+// Colyseus: SEMPRE a VPS de produção, inclusive rodando em localhost.
+// Domínio público → Cloudflare/Nginx → VPS (127.0.0.1:2567). Mesmo caminho do
+// jogo publicado. Sem túnel SSH, sem Colyseus local, sem adivinhação de host.
+const TRANSFPS_CS_URL = 'wss://app.overpixel.online/transfps-cs';
 
 // ── UI helpers ───────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -607,6 +598,10 @@ async function init() {
   // ── Ciclo dia/noite (sol, lua, fases, céu HD) ────────────────────
   const dayNight = new DayNightCycle(scene, sun, ambient, shadowGen);
   window._dayNight = dayNight;
+  // ── PAISAGEM DE GALÁXIA: o jogo flutua no espaço (céu = universo) ──────
+  //  Liga por padrão. Toggle no console: spaceMode(false) volta o céu azul.
+  try { dayNight.setSpaceMode(true); } catch (e) { console.error('[space] init:', e); }
+  window.spaceMode = (on = true) => window._dayNight?.setSpaceMode(on);
 
   // ── Sistemas base ────────────────────────────────────────────────
   const input  = new InputManager(canvas);
