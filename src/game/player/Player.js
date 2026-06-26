@@ -18,10 +18,13 @@ export class Player {
     // ── Câmera ──────────────────────────────────────────────────────
     this.yaw   = 0;     // graus (horizontal)
     this.pitch = 0;     // graus (vertical)
-    // Offset de facing do avatar. O commit 828e61f (do sócio, que FUNCIONAVA com
-    //  o personagem olhando pra frente ao spawnar) usava _facingOff = 0. Meu
-    //  Math.PI tinha invertido pra "de frente pra câmera". Restaurado pra 0.
-    this._facingOff = 0;
+    // Offset de facing do avatar. DEVE bater com FACING_OFFSET (=Math.PI) do
+    //  PlayerAnimator: os dois giram o MESMO nó (animator.root), só que em
+    //  caminhos diferentes (animLib novo vs PlayerAnimator antigo). +π = de
+    //  COSTAS pra câmera (o modelo Meshy tem o rosto em −Z; sem o π fica de
+    //  frente). Um merge tinha zerado isto (=0) → no caminho animLib o
+    //  personagem virava de FRENTE. π mantém os dois caminhos consistentes.
+    this._facingOff = Math.PI;
     this.MOUSE_SENS = 0.15;
 
     // ── Dimensões ───────────────────────────────────────────────────

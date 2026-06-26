@@ -460,7 +460,12 @@ export class PlayerAnimator {
     let key;
 
     if (state.dead) {
-      key = 'roll';
+      // NÃO 'roll': o roll (Parkour_Vault_with_Roll) GIRA o personagem — é o
+      //  "girou ao morrer e ficou de frente pra câmera". Fica PARADO em pé (idle)
+      //  e a rotação segue _bodyYaw + FACING_OFFSET(π) = de COSTAS pra câmera; o
+      //  vanish (fade cyan + partículas, Player._playDeathVanish) sinaliza a morte.
+      //  Mesmo fix do caminho animLib (Player._startDeath toca 'idle', não 'dead').
+      key = 'idle';
 
     } else if (this._wallJumpT > 0) {
       key = 'wall_jump';
