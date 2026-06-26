@@ -48,26 +48,37 @@ export class WorldManager {
 
       // esconde o mapa atual (não deleta — dá pra voltar depois)
       this._hideCurrentMap(true);
+      this.loadScreen.setProgress(0.15, 'gerando o mundo selvagem…');
 
-      // constrói o mundo LOCAL (geometria determinística por seed — leve, igual
-      //  pra todos). Mobs/baús/XP vêm do servidor (próximas ondas).
-      this._builder = new BiomeWorldBuilder(this.scene, {
-        onProgress: (p, phase) => this.loadScreen.setProgress(p, phase),
-      });
-      await this._builder.build();
+      // ── MUNDO RICO: liga o BiomeWorld do projeto (9 biomas com GLBs +
+      //    streaming Fortnite + props/baús). Em vez do terreno plano básico. ──
+      const bw = window._biomeWorld;
+      if (bw?.enable) {
+        bw.enable();
+        // Base natural por baixo dos biomas: chão grande + céu + atmosfera +
+        //  montanhas nas bordas (dá a dimensão de "planeta imenso").
+        this.loadScreen.setProgress(0.4, 'esculpindo o terreno…');
+        await this._buildNaturalBase();
+        // dá tempo do streaming carregar o(s) bioma(s) perto do spawn
+        this.loadScreen.setProgress(0.7, 'carregando biomas…');
+        try { bw.update(0.6, new BABYLON.Vector3(0, 0, 0)); } catch (_) {}
+        await new Promise(r => setTimeout(r, 800));
+        this.loadScreen.setProgress(0.95, 'finalizando…');
+      } else {
+        // fallback: o builder básico (se o BiomeWorld não existir)
+        this._builder = new BiomeWorldBuilder(this.scene, {
+          onProgress: (p, phase) => this.loadScreen.setProgress(p, phase),
+        });
+        await this._builder.build();
+      }
 
-      // SKYDIVE no spawn seguro (clareira central): nasce CAINDO de 200m e
-      //  POUSA no terreno (que já tem colisão). Assim NUNCA atravessa o chão /
-      //  cai no vazio — o problema do teleporte direto. spawn({sky:true}) usa o
-      //  X/Z do spawn e despenca até o chão.
-      const sp = this._builder.spawnPoint || new BABYLON.Vector3(0, 4, 0);
+      // SKYDIVE no spawn (praça central 0,0): nasce CAINDO de 200m e POUSA no
+      //  chão. Nunca atravessa / cai no vazio. spawn({sky:true}) usa o X/Z.
       this._inBiomeWorld = true;          // marca ANTES (respawn/colisão sabem)
       const p = window._gamePlayer;
       if (p?.spawn) {
-        try { p.spawn({ sky: true, x: sp.x, z: sp.z }); }
-        catch (e) { console.error('[WorldManager] skydive spawn:', e); this._teleportPlayer(sp); }
-      } else {
-        this._teleportPlayer(sp);
+        try { p.spawn({ sky: true, x: 0, z: 0 }); }
+        catch (e) { console.error('[WorldManager] skydive spawn:', e); }
       }
       await new Promise(r => setTimeout(r, 400)); // respiro visual
       this.loadScreen.hide();
@@ -103,6 +114,96 @@ export class WorldManager {
         p._cc.setVelocity(BABYLON.Vector3.Zero());
       } catch (_) {}
     }
+  }
+
+  // ── Base natural: chão grande + céu + névoa + MONTANHAS nas bordas ──
+  //  Dá a sensação de "planeta imenso": o chão se estende, o céu envolve, e
+  //  uma muralha de montanhas altas fecha o horizonte em volta do mundo.
+  async _buildNaturalBase() {
+    const scene = this.scene;
+    if (this._naturalBuilt) { this._setNaturalVisible(true); return; }
+    this._naturalRoot = new BABYLON.TransformNode('wildNatural', scene);
+    const root = this._naturalRoot;
+
+    // 1) CHÃO grande (1600x1600m) com leve relevo por noise.
+    const ground = BABYLON.MeshBuilder.CreateGround('wildGround',
+      { width: 1600, height: 1600, subdivisions: 120, updatable: false }, scene);
+    const pos = ground.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+    for (let i = 0; i < pos.length; i += 3) {
+      const x = pos[i], z = pos[i + 2];
+      const d = Math.hypot(x, z);
+      // relevo suave no centro; sobe forte perto da borda (base das montanhas)
+      const gentle = Math.sin(x * 0.012) * Math.cos(z * 0.013) * 2.2;
+      const rim = d > 600 ? Math.pow((d - 600) / 200, 2) * 30 : 0;
+      pos[i + 1] = gentle + rim;
+    }
+    ground.updateVerticesData(BABYLON.VertexBuffer.PositionKind, pos);
+    ground.createNormals(true);
+    const gmat = new BABYLON.StandardMaterial('wildGroundMat', scene);
+    gmat.diffuseColor = new BABYLON.Color3(0.22, 0.30, 0.16);
+    gmat.specularColor = new BABYLON.Color3(0.02, 0.02, 0.02);
+    ground.material = gmat;
+    ground.checkCollisions = true;
+    ground._biomeWorldMesh = true;
+    ground.parent = root;
+    this._tryStaticBody(ground, 'mesh');
+
+    // 2) CÉU (skybox gradiente) + névoa de distância.
+    const sky = BABYLON.MeshBuilder.CreateSphere('wildSky', { diameter: 3600, segments: 16, sideOrientation: BABYLON.Mesh.BACKSIDE }, scene);
+    const smat = new BABYLON.StandardMaterial('wildSkyMat', scene);
+    smat.backFaceCulling = false;
+    smat.disableLighting = true;
+    smat.emissiveColor = new BABYLON.Color3(0.30, 0.45, 0.70);
+    sky.material = smat;
+    sky._biomeWorldMesh = true;
+    sky.parent = root;
+    scene.fogMode = BABYLON.Scene.FOGMODE_EXP2;
+    scene.fogDensity = 0.0009;
+    scene.fogColor = new BABYLON.Color3(0.45, 0.55, 0.70);
+
+    // 3) MONTANHAS gigantes em anel nas bordas (fecham o horizonte).
+    await this._buildBorderMountains(root);
+
+    this._naturalBuilt = true;
+  }
+
+  /** Anel de montanhas altas em volta do mundo (cones de pedra). */
+  async _buildBorderMountains(root) {
+    const scene = this.scene;
+    const R = 760;            // raio do anel de montanhas
+    const COUNT = 28;         // quantas montanhas no anel
+    const mat = new BABYLON.StandardMaterial('mtnMat', scene);
+    mat.diffuseColor = new BABYLON.Color3(0.28, 0.27, 0.30);
+    mat.specularColor = new BABYLON.Color3(0.03, 0.03, 0.03);
+    for (let i = 0; i < COUNT; i++) {
+      const a = (i / COUNT) * Math.PI * 2;
+      // jitter determinístico no raio/altura pra não ficar perfeito/robótico
+      const jr = ((i * 53) % 17) / 17;
+      const r = R + (jr - 0.5) * 120;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      const h = 180 + ((i * 31) % 13) / 13 * 160;   // 180..340m de altura
+      const diam = 220 + ((i * 19) % 11) / 11 * 160;
+      const m = BABYLON.MeshBuilder.CreateCylinder(`mtn_${i}`,
+        { height: h, diameterTop: 4, diameterBottom: diam, tessellation: 7 }, scene);
+      m.position.set(x, h / 2 - 20, z);
+      m.rotation.y = jr * Math.PI;
+      m.material = mat;
+      m.checkCollisions = true;
+      m._biomeWorldMesh = true;
+      m.parent = root;
+    }
+  }
+
+  _setNaturalVisible(v) {
+    try { this._naturalRoot?.setEnabled?.(v); } catch (_) {}
+  }
+
+  /** Corpo estático Havok (se a física estiver pronta). */
+  async _tryStaticBody(mesh, shape = 'box') {
+    try {
+      const { physicsReady, makeStaticBody } = await import('../physics/PhysicsWorld.js');
+      if (physicsReady?.()) makeStaticBody?.(mesh, this.scene, shape);
+    } catch (_) {}
   }
 
   /** Esconde/mostra o mapa da ARENA (cemetery etc.), sem deletar. */
