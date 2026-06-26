@@ -42,6 +42,7 @@ import { SkillSystem }          from './game/skills/SkillSystem.js';
 import { Inventory }            from './game/items/Inventory.js';
 import { RpgHUD }               from './game/ui/RpgHUD.js';
 import { ScreenFocusManager }   from './game/ui/ScreenFocusManager.js';
+import { PauseMenu }             from './game/ui/PauseMenu.js';
 import { LocalDB }              from './game/data/LocalDB.js';
 import { AssetGroupsUI }        from './game/ui/AssetGroupsUI.js';
 import { initItemCatalog }      from './game/items/ItemCatalog.js';
@@ -687,6 +688,10 @@ async function init() {
 
   const settingsUI = new SettingsUI(bloodFX, musicSystem);
   window._settingsUI = settingsUI;
+
+  // ── Menu de pausa estilo BR (cursor sempre funciona, via ScreenFocus) ──
+  const pauseMenu = new PauseMenu();
+  window._pauseMenu = pauseMenu;
 
   // ── AUTH + LOGIN + LOBBY + MULTIPLAYER ─────────────────────────
   // Auth FORA do caminho crítico: o jogo NUNCA espera a rede do Supabase pra
@@ -2204,10 +2209,10 @@ async function init() {
       if (window._cs?.connected) {
         e.preventDefault();
         const fm = window._screenFocus;
-        const ovMp = $('pause-overlay');
-        const isOpen = ovMp?.classList.contains('visible') || fm?.state === 'menu';
+        const isOpen = window._pauseMenu?.isOpen || fm?.state === 'menu';
         if (isOpen) {
-          // Pause aberto → ESC retoma (re-captura pointer lock, esconde overlay).
+          // Pause aberto → ESC retoma (re-captura pointer lock, esconde menu).
+          window._pauseMenu?.hide();
           fm?.enterPlaying();
           _resumeFromPause();
         } else {
@@ -2217,7 +2222,7 @@ async function init() {
           fm?.enterMenu();
           // gameActive CONTINUA true no MP → update do player roda, dano chega.
           window._gameInput && (window._gameInput.gameActive = true);
-          ovMp?.classList.add('visible');
+          window._pauseMenu?.show();
           try { document.body.classList.remove('in-game'); } catch (_) {}
           _updateGameFocusHint();
         }
