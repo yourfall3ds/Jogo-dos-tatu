@@ -151,9 +151,6 @@ export class BuildMode {
       },
       onDelete: (worldId) => this._removeWorldEntry(worldId),
       onUpdate: async (rec, row) => {
-        // #region debug-point C:realtime-onupdate
-        fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"C",location:"BuildMode.js:realtime-onUpdate",msg:"[DEBUG] cliente recebeu realtime UPDATE",data:{worldId:rec?._worldId || null,broken:!!row?.broken,p:[rec?.p?.[0] ?? null,rec?.p?.[1] ?? null,rec?.p?.[2] ?? null]},ts:Date.now()})}).catch(()=>{});
-        // #endregion
         if (row?.broken) { this._removeWorldEntry(rec._worldId); return; }
         await this._upsertWorldEntry(rec);
       },
@@ -241,9 +238,6 @@ export class BuildMode {
     const found = this.findPlacedByMesh(mesh);
     if (!found?.entry) return false;
     const entry = found.entry;
-    // #region debug-point A:buildmode-sync
-    fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"BuildMode.js:syncPlacedTransform",msg:"[DEBUG] buildmode iniciou syncPlacedTransform",data:{worldId:entry.worldId || null,kind:entry.record?.kind || null,pieceId:entry.record?.pieceId || null},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     if (entry.record?.kind === 'piece' && entry.root?._pieceBodies) {
       const { disposePieceBodies, makePieceBodies } = await import('./BuildPieces.js');
       disposePieceBodies(entry.root);
@@ -263,9 +257,6 @@ export class BuildMode {
     const found = this.findPlacedByMesh(mesh);
     if (!found?.entry) return false;
     const entry = found.entry;
-    // #region debug-point A:buildmode-remove
-    fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"BuildMode.js:removePlacedByMesh",msg:"[DEBUG] buildmode iniciou removePlacedByMesh",data:{worldId:entry.worldId || null,kind:entry.record?.kind || null,pieceId:entry.record?.pieceId || null},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     if (entry.worldId) {
       const ok = await WorldObjects.remove(entry.worldId);
       if (!ok) return false;

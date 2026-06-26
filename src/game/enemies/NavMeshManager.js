@@ -5,7 +5,6 @@ const RECAST_CORE_URL = 'https://esm.sh/@recast-navigation/core?bundle';
 const RECAST_GENERATORS_URL = 'https://esm.sh/@recast-navigation/generators?bundle';
 const NAV_CACHE_KEY = 'transfps_nav_v2_cache';
 const NAV_CACHE_VERSION = '2026-06-08-v6-clean-arena-layout';
-const NAV_DEBUG_EVENT_URL = 'http://127.0.0.1:7778/event';
 const CROWD_MAX_AGENTS = 96;
 
 const NAV_PARAMS = {
@@ -282,20 +281,6 @@ export class NavMeshManager {
   }
 
   async init() {
-    // #region debug-point nav-init-start
-    fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      sessionId: 'wall-dynamic-nav',
-      runId: 'pre-fix',
-      hypothesisId: 'H2-H5',
-      location: 'NavMeshManager.js:init:start',
-      msg: '[DEBUG] nav init start',
-      data: {
-        hasPluginBefore: !!this.plugin,
-        readyBefore: this.ready === true,
-      },
-      ts: Date.now(),
-    }) }).catch(() => {});
-    // #endregion
     try {
       const addons = await loadNavigationFactory();
       this._waitForFullTileCacheUpdate = addons.WaitForFullTileCacheUpdate || null;
@@ -331,80 +316,13 @@ export class NavMeshManager {
         this._dynamicDirty = true;
         this._updateDebugVisuals();
         DEBUG.log('[NavMesh] V2 restaurada do cache');
-        // #region debug-point nav-init-cache-hit
-        fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          sessionId: 'wall-dynamic-nav',
-          runId: 'pre-fix',
-          hypothesisId: 'H2-H5',
-          location: 'NavMeshManager.js:init:cache-hit',
-          msg: '[DEBUG] nav init cache hit',
-          data: {
-            ready: this.ready === true,
-            cacheRestored: this._cacheRestored === true,
-            hasTileCache: !!this.plugin?.tileCache,
-            baseMeshCount: baseMeshes.length,
-            runtimeMode: this._navRuntimeMode,
-            babylonVersion: addons.babylonVersion,
-          },
-          ts: Date.now(),
-        }) }).catch(() => {});
-        // #endregion
       } else {
         DEBUG.log('[NavMesh] V2 pronta; bake em background agendado');
-        // #region debug-point nav-init-cache-miss
-        fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          sessionId: 'wall-dynamic-nav',
-          runId: 'pre-fix',
-          hypothesisId: 'H2-H5',
-          location: 'NavMeshManager.js:init:cache-miss',
-          msg: '[DEBUG] nav init cache miss',
-          data: {
-            ready: this.ready === true,
-            cacheRestored: this._cacheRestored === true,
-            hasTileCache: !!this.plugin?.tileCache,
-            baseMeshCount: baseMeshes.length,
-            runtimeMode: this._navRuntimeMode,
-            babylonVersion: addons.babylonVersion,
-          },
-          ts: Date.now(),
-        }) }).catch(() => {});
-        // #endregion
       }
 
       this._scheduleBuild(600);
-      // #region debug-point nav-init-end
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-dynamic-nav',
-        runId: 'pre-fix',
-        hypothesisId: 'H2-H5',
-        location: 'NavMeshManager.js:init:end',
-        msg: '[DEBUG] nav init end',
-        data: {
-          ready: this.ready === true,
-          hasPlugin: !!this.plugin,
-          usedV2: this._usedV2 === true,
-          hasTileCache: !!this.plugin?.tileCache,
-          runtimeMode: this._navRuntimeMode,
-          babylonVersion: addons.babylonVersion,
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
       return true;
     } catch (e) {
-      // #region debug-point nav-init-fail
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-dynamic-nav',
-        runId: 'pre-fix',
-        hypothesisId: 'H5',
-        location: 'NavMeshManager.js:init:fail',
-        msg: '[DEBUG] nav init fail',
-        data: {
-          error: e?.message || String(e),
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
       console.warn('[NavMesh] V2 falhou:', e?.message || e, '— IA usa fallback (linha reta)');
       this.plugin = null;
       this.ready = false;
@@ -432,22 +350,6 @@ export class NavMeshManager {
     if (!this.plugin) return;
 
     if (!this.ready && !this._building && now >= this._buildBlockedUntil && this._hasActiveConsumers()) {
-      // #region debug-point nav-update-request-build
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-dynamic-nav',
-        runId: 'pre-fix',
-        hypothesisId: 'H2-H5',
-        location: 'NavMeshManager.js:update:request-build',
-        msg: '[DEBUG] nav update requested build',
-        data: {
-          ready: this.ready === true,
-          building: this._building === true,
-          hasConsumers: this._hasActiveConsumers() === true,
-          hasPlugin: !!this.plugin,
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
       this._scheduleBuild(50);
     }
 
@@ -574,61 +476,10 @@ export class NavMeshManager {
       const start = debugData.start;
       const end = debugData.end;
       const path = debugData.path;
-      // #region debug-point nextstep-path
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-dynamic-nav',
-        runId: 'pre-fix',
-        hypothesisId: 'H2-H4-H5',
-        location: 'NavMeshManager.js:nextStep:path',
-        msg: '[DEBUG] nextStep computed path',
-        data: {
-          pathLength: path.length,
-          navRayHit: navRay.hit === true,
-          navRayHitPoint: navRay.hitPoint ? {
-            x: +navRay.hitPoint.x.toFixed(2),
-            y: +navRay.hitPoint.y.toFixed(2),
-            z: +navRay.hitPoint.z.toFixed(2),
-          } : null,
-          obstacleMeshCount: this.obstacles?.length || 0,
-          dynamicObstacleCount: this._dynamicObstacles.size,
-          hasTileCache: !!this.plugin?.tileCache,
-          hasCrowd: !!this._crowd,
-          start: start ? { x: +start.x.toFixed(2), y: +start.y.toFixed(2), z: +start.z.toFixed(2) } : null,
-          end: end ? { x: +end.x.toFixed(2), y: +end.y.toFixed(2), z: +end.z.toFixed(2) } : null,
-          firstPoints: path.slice(0, 4).map((p) => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2) })),
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
       if (path.length < 2) {
         const directSight = navRay.source === 'plugin'
           ? navRay.hit !== true
           : !this.hasObstacleBetween(from, to);
-        // #region debug-point nextstep-direct-fallback
-        fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          sessionId: 'wall-dynamic-nav',
-          runId: 'post-fix',
-          hypothesisId: 'H2-H3-H4',
-          location: 'NavMeshManager.js:nextStep:direct-fallback',
-          msg: '[DEBUG] nextStep path too short, fallback decision',
-          data: {
-            pathLength: path.length,
-            directSight,
-            navRaySource: navRay.source,
-            navRayHit: navRay.hit === true,
-            navRayHitPoint: navRay.hitPoint ? {
-              x: +navRay.hitPoint.x.toFixed(2),
-              y: +navRay.hitPoint.y.toFixed(2),
-              z: +navRay.hitPoint.z.toFixed(2),
-            } : null,
-            obstacleMeshCount: this.obstacles?.length || 0,
-            dynamicObstacleCount: this._dynamicObstacles.size,
-            start: start ? { x: +start.x.toFixed(2), y: +start.y.toFixed(2), z: +start.z.toFixed(2) } : null,
-            end: end ? { x: +end.x.toFixed(2), y: +end.y.toFixed(2), z: +end.z.toFixed(2) } : null,
-          },
-          ts: Date.now(),
-        }) }).catch(() => {});
-        // #endregion
         return directSight ? end : null;
       }
 
@@ -824,55 +675,14 @@ export class NavMeshManager {
       this._staticMeshes = baseMeshes;
       this._baseSignature = this._makeBaseSignature(baseMeshes);
       this._refreshCollisionLists(baseMeshes);
-      // #region debug-point nav-build-start
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-dynamic-nav',
-        runId: 'pre-fix',
-        hypothesisId: 'H2-H5',
-        location: 'NavMeshManager.js:build:start',
-        msg: '[DEBUG] nav build start',
-        data: {
-          force: force === true,
-          baseMeshCount: baseMeshes.length,
-          readyBefore: this.ready === true,
-          cacheRestored: this._cacheRestored === true,
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
 
       if (!baseMeshes.length) {
-        // #region debug-point nav-build-empty
-        fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          sessionId: 'wall-dynamic-nav',
-          runId: 'pre-fix',
-          hypothesisId: 'H2',
-          location: 'NavMeshManager.js:build:empty',
-          msg: '[DEBUG] nav build no base meshes',
-          data: {},
-          ts: Date.now(),
-        }) }).catch(() => {});
-        // #endregion
         this._building = false;
         this._buildPromise = null;
         return false;
       }
 
       if (!force && this.ready && this._cacheRestored) {
-        // #region debug-point nav-build-skip-cache
-        fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          sessionId: 'wall-dynamic-nav',
-          runId: 'pre-fix',
-          hypothesisId: 'H2-H5',
-          location: 'NavMeshManager.js:build:skip-cache',
-          msg: '[DEBUG] nav build skipped because cache is active',
-          data: {
-            ready: this.ready === true,
-            cacheRestored: this._cacheRestored === true,
-          },
-          ts: Date.now(),
-        }) }).catch(() => {});
-        // #endregion
         this._building = false;
         this._buildPromise = null;
         return true;
@@ -901,18 +711,6 @@ export class NavMeshManager {
           break;
         } catch (e) {
           lastError = e;
-          fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-            sessionId: 'wall-dynamic-nav',
-            runId: 'pre-fix',
-            hypothesisId: 'H5',
-            location: 'NavMeshManager.js:build:profile-fail',
-            msg: '[DEBUG] nav build profile fail',
-            data: {
-              profile: profile.label,
-              error: e?.message || String(e),
-            },
-            ts: Date.now(),
-          }) }).catch(() => {});
         }
       }
 
@@ -937,44 +735,9 @@ export class NavMeshManager {
           );
         }
         DEBUG.log('[NavMesh] V2 pronta', `${this._lastBuildMs}ms`, this._activeBuildProfile || 'unknown-profile');
-        // #region debug-point nav-build-success
-        fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          sessionId: 'wall-dynamic-nav',
-          runId: 'pre-fix',
-          hypothesisId: 'H2-H5',
-          location: 'NavMeshManager.js:build:success',
-          msg: '[DEBUG] nav build success',
-          data: {
-            buildMs: this._lastBuildMs,
-            navInputCount: navInput.length,
-            profile: this._activeBuildProfile,
-            ready: this.ready === true,
-            hasTileCache: !!this.plugin?.tileCache,
-            hasCrowd: !!this._crowd,
-            minimalOnly: this._activeBuildProfile === 'baseline-minimal',
-          },
-          ts: Date.now(),
-        }) }).catch(() => {});
-        // #endregion
       } catch (e) {
         this._buildFailStreak += 1;
         this._buildBlockedUntil = performance.now() + Math.min(15000, 1200 * this._buildFailStreak);
-        // #region debug-point nav-build-fail
-        fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          sessionId: 'wall-dynamic-nav',
-          runId: 'pre-fix',
-          hypothesisId: 'H5',
-          location: 'NavMeshManager.js:build:fail',
-          msg: '[DEBUG] nav build fail',
-          data: {
-            error: e?.message || String(e),
-            navInputCount: navInput.length,
-            failStreak: this._buildFailStreak,
-            blockedForMs: Math.max(0, Math.round(this._buildBlockedUntil - performance.now())),
-          },
-          ts: Date.now(),
-        }) }).catch(() => {});
-        // #endregion
         console.warn('[NavMesh] build V2 falhou:', e?.message || e);
       } finally {
         temps.forEach((mesh) => { try { mesh.dispose(); } catch (_) {} });
@@ -992,22 +755,6 @@ export class NavMeshManager {
   _scheduleBuild(delay = 0) {
     if (this._buildScheduled || this._building || !this.plugin) return;
     this._buildScheduled = true;
-    // #region debug-point nav-schedule-build
-    fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      sessionId: 'wall-dynamic-nav',
-      runId: 'pre-fix',
-      hypothesisId: 'H2-H5',
-      location: 'NavMeshManager.js:scheduleBuild',
-      msg: '[DEBUG] nav schedule build',
-      data: {
-        delay,
-        ready: this.ready === true,
-        building: this._building === true,
-        buildScheduled: this._buildScheduled === true,
-      },
-      ts: Date.now(),
-    }) }).catch(() => {});
-    // #endregion
     scheduleIdle(() => {
       if (!this.plugin) return;
       this._buildBaseNavMesh();
@@ -1018,33 +765,7 @@ export class NavMeshManager {
     if (!this.plugin || this._crowd || typeof this.plugin.createCrowd !== 'function') return;
     try {
       this._crowd = this.plugin.createCrowd(CROWD_MAX_AGENTS, NAV_PARAMS.walkableRadius || 1, this.scene);
-      // #region debug-point nav-crowd-created
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-dynamic-nav',
-        runId: 'pre-fix',
-        hypothesisId: 'H5',
-        location: 'NavMeshManager.js:ensureCrowd:success',
-        msg: '[DEBUG] nav crowd created',
-        data: {
-          hasCrowd: !!this._crowd,
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
     } catch (e) {
-      // #region debug-point nav-crowd-fail
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-dynamic-nav',
-        runId: 'pre-fix',
-        hypothesisId: 'H5',
-        location: 'NavMeshManager.js:ensureCrowd:fail',
-        msg: '[DEBUG] nav crowd fail',
-        data: {
-          error: e?.message || String(e),
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
       console.warn('[NavMesh] crowd auxiliar falhou:', e?.message || e);
     }
   }
@@ -1283,50 +1004,12 @@ export class NavMeshManager {
 
     const roots = this._collectDynamicRoots();
     const seen = new Set();
-    // #region debug-point dyn-obstacles-start
-    fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      sessionId: 'wall-dynamic-nav',
-      runId: 'pre-fix',
-      hypothesisId: 'H1-H3',
-      location: 'NavMeshManager.js:_syncDynamicObstacles:start',
-      msg: '[DEBUG] sync dynamic obstacles start',
-      data: {
-        ready: this.ready === true,
-        hasTileCache: !!tileCache,
-        rootsCount: roots.length,
-        trackedCount: this._dynamicObstacles.size,
-        obstacleMeshCount: this.obstacles?.length || 0,
-      },
-      ts: Date.now(),
-    }) }).catch(() => {});
-    // #endregion
 
     for (const root of roots) {
       const key = this._rootKey(root);
       seen.add(key);
       const snapshot = this._makeObstacleSnapshot(root);
       if (!snapshot) continue;
-      // #region debug-point wall-pass-through-dynamic-root
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-pass-through',
-        runId: 'pre-fix',
-        hypothesisId: 'H1-H3',
-        location: 'NavMeshManager.js:_syncDynamicObstacles:root',
-        msg: '[DEBUG] dynamic root candidate',
-        data: {
-          key,
-          rootName: root.name || null,
-          pieceBodies: root._pieceBodies?.length || 0,
-          childMeshCount: root.getChildMeshes?.(false)?.length || 0,
-          snapshot: snapshot ? {
-            center: { x: +snapshot.center.x.toFixed(2), y: +snapshot.center.y.toFixed(2), z: +snapshot.center.z.toFixed(2) },
-            extent: { x: +snapshot.extent.x.toFixed(2), y: +snapshot.extent.y.toFixed(2), z: +snapshot.extent.z.toFixed(2) },
-            angle: +snapshot.angle.toFixed(3),
-          } : null,
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
 
       const current = this._dynamicObstacles.get(key);
       if (current && current.signature === snapshot.signature) continue;
@@ -1341,24 +1024,6 @@ export class NavMeshManager {
         snapshot.angle,
         true
       ) || null;
-      // #region debug-point dyn-obstacle-upsert
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-dynamic-nav',
-        runId: 'pre-fix',
-        hypothesisId: 'H1',
-        location: 'NavMeshManager.js:_syncDynamicObstacles:upsert',
-        msg: '[DEBUG] dynamic obstacle upsert',
-        data: {
-          key,
-          hadPrevious: !!current,
-          hasHandle: !!handle,
-          center: snapshot.center ? { x: +snapshot.center.x.toFixed(2), y: +snapshot.center.y.toFixed(2), z: +snapshot.center.z.toFixed(2) } : null,
-          extent: snapshot.extent ? { x: +snapshot.extent.x.toFixed(2), y: +snapshot.extent.y.toFixed(2), z: +snapshot.extent.z.toFixed(2) } : null,
-          angle: +snapshot.angle.toFixed(3),
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
 
       this._dynamicObstacles.set(key, {
         root,
@@ -1374,17 +1039,6 @@ export class NavMeshManager {
       try { this.plugin.removeObstacle?.(entry.handle); } catch (_) {}
       this._dynamicObstacles.delete(key);
       this._dynamicRevision++;
-      // #region debug-point dyn-obstacle-remove
-      fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-dynamic-nav',
-        runId: 'pre-fix',
-        hypothesisId: 'H1',
-        location: 'NavMeshManager.js:_syncDynamicObstacles:remove',
-        msg: '[DEBUG] dynamic obstacle remove',
-        data: { key, hadHandle: !!entry?.handle },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
     }
 
     this._refreshCollisionLists(this._staticMeshes);
@@ -1395,21 +1049,6 @@ export class NavMeshManager {
       } catch (_) {}
     }
     this._syncCrowdAgentsToNav();
-    // #region debug-point dyn-obstacles-end
-    fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      sessionId: 'wall-dynamic-nav',
-      runId: 'pre-fix',
-      hypothesisId: 'H1-H3',
-      location: 'NavMeshManager.js:_syncDynamicObstacles:end',
-      msg: '[DEBUG] sync dynamic obstacles end',
-      data: {
-        trackedCount: this._dynamicObstacles.size,
-        obstacleMeshCount: this.obstacles?.length || 0,
-        walkableMeshCount: this.walkables?.length || 0,
-      },
-      ts: Date.now(),
-    }) }).catch(() => {});
-    // #endregion
     return true;
   }
 
@@ -1524,21 +1163,6 @@ export class NavMeshManager {
     }
 
     for (const mesh of this.obstacles) pushMesh(mesh, 'walkables');
-    // #region debug-point wall-pass-through-refresh-collision-lists
-    fetch(NAV_DEBUG_EVENT_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      sessionId: 'wall-pass-through',
-      runId: 'pre-fix',
-      hypothesisId: 'H1-H3',
-      location: 'NavMeshManager.js:_refreshCollisionLists:end',
-      msg: '[DEBUG] nav collision lists refreshed',
-      data: {
-        obstacleCount: this.obstacles.length,
-        walkableCount: this.walkables.length,
-        obstacleNames: this.obstacles.slice(0, 12).map((mesh) => mesh?.name || null),
-      },
-      ts: Date.now(),
-    }) }).catch(() => {});
-    // #endregion
   }
 
   _hasActiveConsumers() {

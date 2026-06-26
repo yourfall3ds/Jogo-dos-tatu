@@ -711,13 +711,7 @@ export class SceneEditor {
     }
 
     const placed = window._buildMode?.findPlacedByMesh?.(target || mesh);
-    // #region debug-point A:editor-delete-branch
-    fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"SceneEditor.js:delete-branch",msg:"[DEBUG] editor avaliou branch de delete",data:{selected:mesh?.name || null,target:target?.name || null,isGlobal:!!placed?.entry,worldId:placed?.entry?.worldId || null},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     if (placed?.entry) {
-      // #region debug-point A:editor-delete-global
-      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"SceneEditor.js:delete-global",msg:"[DEBUG] editor detectou item global para delete",data:{worldId:placed.entry.worldId || null,name:name || null},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       const removedFromWorld = await window._buildMode?.removePlacedByMesh?.(target || mesh);
       if (!removedFromWorld) {
         this._toast?.('Nao foi possivel remover esse item do mapa global agora', '#5a2a2a');
@@ -826,13 +820,7 @@ export class SceneEditor {
     }
 
     const placed = window._buildMode?.findPlacedByMesh?.(target);
-    // #region debug-point A:editor-save-branch
-    fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"SceneEditor.js:save-branch",msg:"[DEBUG] editor avaliou branch de save",data:{selected:mesh?.name || null,target:target?.name || null,isGlobal:!!placed?.entry,worldId:placed?.entry?.worldId || null,p:[target?.position?.x ?? null,target?.position?.y ?? null,target?.position?.z ?? null]},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     if (placed?.entry) {
-      // #region debug-point A:editor-save-global
-      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"A",location:"SceneEditor.js:save-global",msg:"[DEBUG] editor detectou item global para sync",data:{worldId:placed.entry.worldId || null,name:target?.name || mesh?.name || null,p:[target?.position?.x ?? null,target?.position?.y ?? null,target?.position?.z ?? null],s:[target?.scaling?.x ?? null,target?.scaling?.y ?? null,target?.scaling?.z ?? null]},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       this._refreshHierarchy();
       this._refreshCollider(target);   // colisor acompanha o novo move/scale
       Promise.resolve(window._buildMode.syncPlacedTransform(target)).catch((e) => {

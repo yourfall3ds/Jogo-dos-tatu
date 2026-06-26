@@ -193,22 +193,13 @@ export const WorldObjects = {
   async remove(worldId) {
     if (!worldId) return false;
     try {
-      // #region debug-point B:worldobjects-remove-start
-      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:remove-start",msg:"[DEBUG] world_objects DELETE iniciado",data:{worldId},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       const supa = await getSupabase();
       const { error } = await supa.schema('transfps')
         .from('world_objects').delete().eq('id', worldId);
       if (error) throw error;
       _cacheRemove(worldId);
-      // #region debug-point B:worldobjects-remove-ok
-      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:remove-ok",msg:"[DEBUG] world_objects DELETE concluido",data:{worldId},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       return true;
     } catch (e) {
-      // #region debug-point B:worldobjects-remove-fail
-      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:remove-fail",msg:"[DEBUG] world_objects DELETE falhou",data:{worldId,message:e?.message || String(e)},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       console.warn('[WorldObjects] remove falhou:', e?.message || e);
       return false;
     }
@@ -218,9 +209,6 @@ export const WorldObjects = {
   async updateTransform(worldId, rec) {
     if (!worldId || !rec) return false;
     try {
-      // #region debug-point B:worldobjects-update-start
-      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:update-start",msg:"[DEBUG] world_objects UPDATE iniciado",data:{worldId,p:[rec?.p?.[0] ?? null,rec?.p?.[1] ?? null,rec?.p?.[2] ?? null],s:Array.isArray(rec?.s)?rec.s:null},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       const supa = await _supa();
       if (!supa) return false;
       const row = recordToRow(rec);
@@ -241,14 +229,8 @@ export const WorldObjects = {
         .eq('id', worldId);
       if (error) throw error;
       _cacheUpsert({ ...rec, _worldId: worldId });
-      // #region debug-point B:worldobjects-update-ok
-      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:update-ok",msg:"[DEBUG] world_objects UPDATE concluido",data:{worldId,p:[rec?.p?.[0] ?? null,rec?.p?.[1] ?? null,rec?.p?.[2] ?? null]},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       return true;
     } catch (e) {
-      // #region debug-point B:worldobjects-update-fail
-      fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"B",location:"WorldObjects.js:update-fail",msg:"[DEBUG] world_objects UPDATE falhou",data:{worldId,message:e?.message || String(e)},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       console.warn('[WorldObjects] updateTransform falhou:', e?.message || e);
       return false;
     }
@@ -322,17 +304,11 @@ export const WorldObjects = {
           { event: 'DELETE', schema: 'transfps', table: 'world_objects' },
           (p) => {
             try {
-              // #region debug-point C:realtime-delete
-              fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"C",location:"WorldObjects.js:realtime-delete",msg:"[DEBUG] cliente recebeu realtime DELETE",data:{worldId:p.old?.id || null},ts:Date.now()})}).catch(()=>{});
-              // #endregion
               _cacheRemove(p.old?.id);
               onDelete?.(p.old?.id);
             } catch (_) {}
           })
         .subscribe((status, err) => {
-          // #region debug-point C:realtime-status
-          fetch("http://127.0.0.1:7780/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"world-realtime-sync",runId:"pre-fix",hypothesisId:"C",location:"WorldObjects.js:realtime-status",msg:"[DEBUG] status do canal realtime",data:{status,message:err?.message || null},ts:Date.now()})}).catch(()=>{});
-          // #endregion
           if (status === 'SUBSCRIBED')      console.log('[WorldObjects] 🌍 realtime ATIVO (construções ao vivo)');
           else if (status === 'CHANNEL_ERROR') console.warn('[WorldObjects] realtime CHANNEL_ERROR:', err?.message || err || '(sem msg)');
           else if (status === 'TIMED_OUT')  console.warn('[WorldObjects] realtime TIMED_OUT');

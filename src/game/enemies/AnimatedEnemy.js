@@ -749,29 +749,6 @@ export class AnimatedEnemy {
           } else {
           this._blocked = this._blockedAhead(pos, mx, mz, step);
           }
-          // #region debug-point enemy-block-check
-          fetch('http://127.0.0.1:7778/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-            sessionId: 'wall-dynamic-nav',
-            runId: 'pre-fix',
-            hypothesisId: 'H3-H4',
-            location: 'AnimatedEnemy.js:block-check',
-            msg: '[DEBUG] enemy block check',
-            data: {
-              enemy: this.root?.name || this.constructor?.name || 'enemy',
-              blocked: this._blocked === true,
-              hasNavSteer,
-              hasWaypoint: !!(this._crowdState?.nextCorner || this._wp),
-              waypoint: this._wp ? { x: +this._wp.x.toFixed(2), y: +this._wp.y.toFixed(2), z: +this._wp.z.toFixed(2) } : null,
-              pos: { x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2) },
-              move: { x: +mx.toFixed(2), z: +mz.toFixed(2) },
-              crowdVelocity: this._crowdState?.velocity ? {
-                x: +this._crowdState.velocity.x.toFixed(2),
-                z: +this._crowdState.velocity.z.toFixed(2),
-              } : null,
-            },
-            ts: Date.now(),
-          }) }).catch(() => {});
-          // #endregion
           if (this._blocked) {
             this._wp = null;
             this._crowdState = null;
@@ -842,23 +819,6 @@ export class AnimatedEnemy {
         if (ddx * ddx + ddz * ddz < 25) near.push(m);   // < 5u
       }
       if (!near.length) {
-        // #region debug-point wall-pass-through-no-near-obstacle
-        fetch('http://127.0.0.1:7778/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          sessionId: 'wall-pass-through',
-          runId: 'pre-fix',
-          hypothesisId: 'H1-H3',
-          location: 'AnimatedEnemy.js:_blockedAhead:no-near',
-          msg: '[DEBUG] blockedAhead found no near obstacle',
-          data: {
-            enemy: this.root?.name || this.constructor?.name || 'enemy',
-            obstacleCount: obstacles.length,
-            pos: { x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2) },
-            dir: { x: +dx.toFixed(2), z: +dz.toFixed(2) },
-            len: +len.toFixed(2),
-          },
-          ts: Date.now(),
-        }) }).catch(() => {});
-        // #endregion
         return false;
       }
       for (const hy of [0.9, 0.35]) {
@@ -869,25 +829,6 @@ export class AnimatedEnemy {
           if (pick?.hit && pick.distance < len) return true;
         }
       }
-      // #region debug-point wall-pass-through-ray-miss
-      fetch('http://127.0.0.1:7778/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        sessionId: 'wall-pass-through',
-        runId: 'pre-fix',
-        hypothesisId: 'H2-H3-H5',
-        location: 'AnimatedEnemy.js:_blockedAhead:ray-miss',
-        msg: '[DEBUG] blockedAhead ray missed nearby obstacles',
-        data: {
-          enemy: this.root?.name || this.constructor?.name || 'enemy',
-          nearCount: near.length,
-          obstacleCount: obstacles.length,
-          pos: { x: +pos.x.toFixed(2), y: +pos.y.toFixed(2), z: +pos.z.toFixed(2) },
-          dir: { x: +dx.toFixed(2), z: +dz.toFixed(2) },
-          len: +len.toFixed(2),
-          nearNames: near.slice(0, 8).map((m) => m?.name || null),
-        },
-        ts: Date.now(),
-      }) }).catch(() => {});
-      // #endregion
     }
     // Fallback: pick na cena com filtro (raro — navmesh não pronta)
     for (const hy of [0.9, 0.35]) {
