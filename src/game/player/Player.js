@@ -2271,6 +2271,14 @@ export class Player {
     this._kbVx = 0; this._kbVz = 0;
     this._vx = 0; this._vz = 0; this.velY = 0;
     this._exhausted = false; this.stamina = this.maxStamina;
+    // Slowmo de morte: restaura a escala de tempo AGORA. O decaimento do timer
+    //  fica no fim do update(), mas o skydive do respawn faz early-return ANTES
+    //  desse bloco → sem isto a cena toda renasceria em câmera lenta.
+    if (this._deathSlowmoT > 0) {
+      this._deathSlowmoT = 0;
+      try { this.scene.animationTimeScale = this._slowmoPrevScale ?? 1; } catch (_) {}
+    }
+    this._actionLockT = 0;   // limpa hitstun público pendente ao renascer
     // Renasce com a CÂMERA ATRÁS (vendo as costas), não na frente do rosto.
     //  CONVENÇÃO do modelo animLib ATIVO (confirmada com o player VIVO): o facing
     //  block usa rotation.y = yawRad PURO (SEM offset) = de costas pra câmera.

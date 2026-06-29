@@ -2069,7 +2069,11 @@ export class SceneEditor {
 
   _resetAll() {
     if (!confirm('⚠️ Apagar TODAS as modificações?\nOs objetos voltam ao original após F5.')) return;
-    localStorage.removeItem(SceneEditor.STORAGE_KEY);
+    // Usa o MESMO backend (LocalDB, com prefixo LS_PREFIX) usado pra salvar.
+    // Antes era localStorage.removeItem('scene') cru — chave sem prefixo, nunca
+    // apagava o registro real (transfps_localdb_scene). O save vazio abaixo é
+    // o que de fato reseta; este del garante a remoção da chave correta.
+    LocalDB.del(SceneEditor.STORAGE_KEY);
     this._saved = {};
     this._deleted = [];                                   // traz deletados de volta
     LocalDB.save(SceneEditor.STORAGE_KEY, this._saved);

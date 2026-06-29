@@ -148,7 +148,7 @@ export class PauseMenu {
       btn.onclick = () => { this._active = btn.dataset.tab; this._render(); };
     });
     ov.querySelector('#fc-resume').onclick = () => this._resume();
-    ov.querySelector('#fc-quit').onclick   = () => { try { window._leaveToMenu?.() || location.reload(); } catch (_) { location.reload(); } };
+    ov.querySelector('#fc-quit').onclick   = () => { try { if (window._leaveToMenu) { window._leaveToMenu(); } else { location.reload(); } } catch (_) { location.reload(); } };
 
     this._render();
   }

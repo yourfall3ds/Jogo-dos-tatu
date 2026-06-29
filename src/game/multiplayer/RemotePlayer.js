@@ -907,10 +907,9 @@ export class RemotePlayer {
         leftLeg:   find('leftupleg') || find('leftleg'),
         rightLeg:  find('rightupleg') || find('rightleg'),
       };
-      for (const k in this._limbBones) {
-        const n = this._limbBones[k];
-        if (n) { try { if (n.rotationQuaternion) n.rotationQuaternion = null; n._restRotImp = n.rotation.clone(); } catch (_) {} }
-      }
+      // NÃO anula o rotationQuaternion: os clipes do avatar remoto animam os ossos
+      // via quaternion TODO frame. O impulso é aplicado ADITIVO por cima da pose do
+      // clipe (ver _tickLimbImpulse) → não congela nem é sobrescrito.
     }
     const bones = this._limbBones;
     if (!bones) return;
@@ -928,7 +927,7 @@ export class RemotePlayer {
     if (Math.abs(lateral) > 0.5) bone = (lateral > 0 ? bones.rightArm : bones.leftArm) || bones.spine;
     else if (frontal < -0.4)     bone = bones.head || bones.spine;     // bateu por trás → cabeça/tronco
     bone = bone || bones.spine || bones.head;
-    if (!bone || !bone._restRotImp) return;
+    if (!bone) return;
 
     // Magnitude do impulso (rad) por força/crit; clampada (legível, sem deformar).
     const mag = Math.min(0.35, 0.12 * (force || 1) * (critLevel >= 1 ? 1.5 : 1.0));
@@ -947,24 +946,57 @@ export class RemotePlayer {
     }
   }
 
-  /** Decai o impulso de membro a cada frame (spring-out) e o limpa no fim. */
+  /** Decai o impulso de membro a cada frame (spring-out) e o limpa no fim.
+   *  ADITIVO sobre a pose do clipe (compõe um quaternion de offset por cima do
+   *  que o clipe avaliou neste frame) → não congela o osso nem é sobrescrito. */
   _tickLimbImpulse() {
     const imp = this._impulse;
-    if (!imp || !imp.bone || !imp.bone._restRotImp) return;
+    if (!imp || !imp.bone || typeof BABYLON === 'undefined') { this._impulse = null; return; }
+    const bone = imp.bone;
+    if (bone.isDisposed?.()) { this._impulse = null; return; }
     const dt = this.scene?.getEngine?.()?.getDeltaTime?.() / 1000 || 0.016;
     imp.t += dt;
     const f = Math.min(1, imp.t / imp.dur);
     // envelope: sobe rápido e volta (sin(πf)) → "tranco" e relaxa.
     const env = Math.sin(Math.PI * f);
+    const ex = imp.axis === 'x' ? imp.val * env : 0;
+    const ez = imp.axis === 'z' ? imp.val * env : 0;
     try {
-      const r = imp.bone._restRotImp;
-      imp.bone.rotation.x = r.x + (imp.axis === 'x' ? imp.val * env : 0);
-      imp.bone.rotation.z = r.z + (imp.axis === 'z' ? imp.val * env : 0);
+      if (bone.rotationQuaternion) {
+        // base = pose do clipe deste frame; reusa a base cacheada se o clipe não
+        // mexeu (evita acumular o offset). result = base * off.
+        const cur = bone.rotationQuaternion;
+        let base;
+        if (bone._impAppliedQ && this._quatNearImp(cur, bone._impAppliedQ)) {
+          base = bone._impClipQ || cur;
+        } else {
+          base = cur.clone(); bone._impClipQ = base.clone();
+        }
+        if (f >= 1 || (!ex && !ez)) {
+          bone.rotationQuaternion = base.clone();   // fim/zero → restaura base limpa
+        } else {
+          const off = BABYLON.Quaternion.RotationYawPitchRoll(0, ex, ez);
+          bone.rotationQuaternion = base.multiply(off);
+        }
+        bone._impAppliedQ = bone.rotationQuaternion.clone();
+      } else {
+        // Caminho euler: soma direto na pose avaliada (não há base fixa a preservar).
+        bone.rotation.x += ex;
+        bone.rotation.z += ez;
+      }
     } catch (_) {}
     if (f >= 1) {
-      try { imp.bone.rotation.copyFrom(imp.bone._restRotImp); } catch (_) {}
+      bone._impClipQ = null; bone._impAppliedQ = null;
       this._impulse = null;
     }
+  }
+
+  /** true se dois quaternions são praticamente iguais (detecta "clipe não mexeu"). */
+  _quatNearImp(a, b) {
+    if (!a || !b) return false;
+    const e = 1e-5;
+    return Math.abs(a.x - b.x) < e && Math.abs(a.y - b.y) < e &&
+           Math.abs(a.z - b.z) < e && Math.abs(a.w - b.w) < e;
   }
 
   /**
@@ -1601,6 +1633,17 @@ export class RemotePlayer {
       this._animCtrl = null;
       this._realAnimsReady = false;
       this._curAnim = null;
+      // Item 39: zera o estado do per-limb hit reaction — os ossos cacheados
+      // (_limbBones) pertencem ao rig ANTIGO que será descartado abaixo; sem
+      // resetar, o hook de decaimento mexeria em ossos mortos e nunca re-resolveria
+      // no rig novo. Remove o hook também (re-instalado sob demanda no próximo hit).
+      this._impulse = null;
+      this._limbBones = null;
+      this._limbBonesTried = false;
+      if (this._limbImpulseHook && this.scene) {
+        try { this.scene.onBeforeRenderObservable.remove(this._limbImpulseHook); } catch (_) {}
+        this._limbImpulseHook = null;
+      }
       // descarta a árvore do GLB antigo
       try { this._avatarRoot?.dispose(false, true); } catch (_) {}
       this._avatarRoot = null;

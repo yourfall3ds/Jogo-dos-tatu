@@ -2670,7 +2670,7 @@ async function init() {
     if (_localAura) _localAura.update(dt);
     try { window._fnHUD?.update(); } catch (_) {}
     pvpToggle.update(input);
-    combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && !buildMode._active);
+    combatDirector.update(dt, input, input.gameActive && !catalogUI._visible && buildMode._state === 'inactive');
     navMesh.update(dt);
     dropSystem.update(dt, player.mesh?.position);
     dayNight.update(dt);

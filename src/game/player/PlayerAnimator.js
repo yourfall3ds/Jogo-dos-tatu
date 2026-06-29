@@ -426,20 +426,71 @@ export class PlayerAnimator {
       leftHand:  this._findBone('LeftHand'),
       rightHand: this._findBone('RightHand'),
     };
-    // Guarda a rest-rotation (pose neutra) dos ossos que recebem offset aditivo,
-    // pra somar o offset em cima dela a cada frame (e não acumular).
-    for (const k of ['head', 'neck', 'spine', 'chest', 'leftFoot', 'rightFoot']) {
+    // NÃO capturamos uma "rest-rotation" fixa e NÃO anulamos o rotationQuaternion:
+    //  os clipes GLB animam os ossos via rotationQuaternion. Se zerássemos o quat
+    //  (ou escrevêssemos rotation.x = rest + offset), o offset ou seria IGNORADO
+    //  (quat do clipe sobrescreve rotation) ou CONGELARIA o eixo na rest-pose
+    //  (clipe deixa de mexer naquele osso). A solução é ADITIVA por frame: ler o
+    //  que o clipe avaliou neste frame e compor um pequeno offset por cima
+    //  (ver _addRotOffset). Só guardamos a posição de descanso dos pés p/ o IK.
+    for (const k of ['leftFoot', 'rightFoot']) {
       const n = b[k];
       if (n) {
-        try {
-          if (n.rotationQuaternion) n.rotationQuaternion = null;
-          n._restRot = n.rotation.clone();
-          n._restPos = n.position.clone();
-        } catch (_) {}
+        try { n._restPos = n.position.clone(); } catch (_) {}
       }
     }
     this._bones = b;
     return b;
+  }
+
+  /** Aplica um offset de rotação ADITIVO (euler rad) por cima da pose que o
+   *  clipe avaliou NESTE frame — nunca congela o eixo nem é sobrescrito pelo
+   *  clipe. Funciona tanto se o osso usa rotationQuaternion (GLB) quanto rotation.
+   *  Idempotente: chamado 1x por osso/frame com o offset acumulado das features. */
+  _addRotOffset(node, ex, ey, ez) {
+    if (!node) return;
+    try {
+      if (node.rotationQuaternion) {
+        // ── Caminho quaternion (GLB) ──────────────────────────────────────
+        // O clipe avalia o quaternion deste osso TODO frame. Compomos um pequeno
+        // offset por cima: result = base(clipe) * off. Para NÃO acumular caso o
+        // clipe não dirija este osso num frame (quat não muda), detectamos se o
+        // valor atual é o MESMO que escrevemos no frame anterior; se for, o clipe
+        // não mexeu → reusamos a base do clipe cacheada em vez do nosso resultado.
+        const cur = node.rotationQuaternion;
+        const last = node._procAppliedQ;
+        let base;
+        if (last && this._quatNear(cur, last)) {
+          base = node._procClipQ || cur;          // clipe não atualizou → base cacheada
+        } else {
+          base = cur.clone();                      // clipe atualizou → nova base
+          node._procClipQ = base.clone();
+        }
+        if (!ex && !ey && !ez) {
+          // Sem offset: restaura a base limpa do clipe (não deixa offset preso).
+          node.rotationQuaternion = base.clone();
+        } else {
+          const off = BABYLON.Quaternion.RotationYawPitchRoll(ey || 0, ex || 0, ez || 0);
+          node.rotationQuaternion = base.multiply(off);
+        }
+        node._procAppliedQ = node.rotationQuaternion.clone();
+      } else {
+        // ── Caminho euler ─────────────────────────────────────────────────
+        // O clipe avaliou node.rotation neste frame; somamos o offset direto.
+        if (!ex && !ey && !ez) return;
+        node.rotation.x += (ex || 0);
+        node.rotation.y += (ey || 0);
+        node.rotation.z += (ez || 0);
+      }
+    } catch (_) {}
+  }
+
+  /** true se dois quaternions são praticamente iguais (detecta "clipe não mexeu"). */
+  _quatNear(a, b) {
+    if (!a || !b) return false;
+    const e = 1e-5;
+    return Math.abs(a.x - b.x) < e && Math.abs(a.y - b.y) < e &&
+           Math.abs(a.z - b.z) < e && Math.abs(a.w - b.w) < e;
   }
 
   /** Tick procedural por frame. Só roda visível (TPS) e com BABYLON disponível. */
@@ -468,6 +519,13 @@ export class PlayerAnimator {
     let p = null;
     try { p = (typeof window !== 'undefined') ? (window._gamePlayer || window._player) : null; } catch (_) {}
 
+    // Acumulador de offsets de rotação por osso (euler rad). As features SOMAM
+    // aqui; no fim aplicamos UMA vez por osso por cima da pose do clipe (aditivo,
+    // não congela). Reusa o mesmo objeto entre frames (sem alocar).
+    const acc = this._rotAcc || (this._rotAcc = {});
+    for (const k in acc) { const o = acc[k]; o.x = 0; o.y = 0; o.z = 0; }
+    this._accBone = (k) => (acc[k] || (acc[k] = { x: 0, y: 0, z: 0 }));
+
     // 36 — Breathing: respiração sutil no peito/spine durante idle.
     this._applyBreathing(b, dt, isIdle);
     // 34 + 41 — Strafe lean + torso twist (movimento lateral relativo ao facing).
@@ -482,6 +540,17 @@ export class PlayerAnimator {
     this._applyFootIK(b, moving);
     // 38 — Expressão facial (morph targets) pain/effort em hit / HP baixo.
     this._applyFacial(p, dt);
+
+    // ── Flush dos offsets acumulados (aditivo sobre o clipe deste frame) ──
+    // Inclui ossos com offset 0 que JÁ receberam offset antes (_procAppliedQ),
+    // pra _addRotOffset restaurar a base limpa do clipe (não deixar offset preso).
+    for (const k of ['head', 'neck', 'spine', 'chest']) {
+      const node = b[k];
+      if (!node) continue;
+      const o = acc[k];
+      if (o) this._addRotOffset(node, o.x, o.y, o.z);
+      else if (node._procAppliedQ) this._addRotOffset(node, 0, 0, 0);
+    }
   }
 
   // 38 — Facial expression via morph targets. Se o avatar NÃO tem morph
@@ -544,7 +613,7 @@ export class PlayerAnimator {
   //  direção do deslocamento — barato e legível. Procedural; sem clipes.
   _applyStrafeLean(b, p, dt) {
     const node = b.spine;
-    if (!node || !node._restRot || !p) return;
+    if (!node || !p) return;
     let vx = p._vx || 0, vz = p._vz || 0;
     const sp = Math.hypot(vx, vz);
     // facing do corpo no mundo (root.rotation.y já inclui FACING_OFFSET = π).
@@ -566,10 +635,9 @@ export class PlayerAnimator {
     const k = Math.min(1, dt * 6);
     this._strafeRoll  += (targetRoll  - this._strafeRoll)  * k;
     this._strafeTwist += (targetTwist - this._strafeTwist) * k;
-    try {
-      node.rotation.z = node._restRot.z + this._strafeRoll;
-      node.rotation.y = node._restRot.y + this._strafeTwist;
-    } catch (_) {}
+    const o = this._accBone('spine');
+    o.z += this._strafeRoll;
+    o.y += this._strafeTwist;
   }
 
   // 35 — Turn-in-place: quando PARADO e o facing alvo (câmera) gira muito, dá um
@@ -603,8 +671,8 @@ export class PlayerAnimator {
 
   // 36 — Breathing additivo no peito/spine (idle). Soma seno na rest-pose.
   _applyBreathing(b, dt, isIdle) {
-    const node = b.chest || b.spine;
-    if (!node || !node._restRot) return;
+    const key = b.chest ? 'chest' : (b.spine ? 'spine' : null);
+    if (!key) return;
     // Amplitude desce a 0 quando não está em idle (sem respiração correndo).
     this._breathAmp = this._breathAmp ?? 0;
     const target = isIdle ? 1 : 0;
@@ -612,9 +680,7 @@ export class PlayerAnimator {
     if (this._breathAmp < 0.001) return;
     this._breathPhase += dt * 1.6;          // ~0.25 Hz respiração calma
     const s = Math.sin(this._breathPhase) * 0.022 * this._breathAmp; // ~1.3°
-    try {
-      node.rotation.x = node._restRot.x + s;     // peito sobe/desce sutil
-    } catch (_) {}
+    this._accBone(key).x += s;              // peito sobe/desce sutil (aditivo)
   }
 
   // 32 + 37 — Head/neck look-at + torso aim lean (additivo, clampado).
@@ -634,18 +700,12 @@ export class PlayerAnimator {
     pitch = clamp(pitch, 0.6);
     yawDelta = clamp(yawDelta, 0.5);
 
-    // Head look-at: olha pra cima/baixo conforme o pitch da mira.
-    if (b.head && b.head._restRot) {
-      try { b.head.rotation.x = b.head._restRot.x - pitch * 0.55; } catch (_) {}
-    }
-    if (b.neck && b.neck._restRot) {
-      try { b.neck.rotation.x = b.neck._restRot.x - pitch * 0.3; } catch (_) {}
-    }
+    // Head look-at: olha pra cima/baixo conforme o pitch da mira (aditivo).
+    if (b.head) this._accBone('head').x += -pitch * 0.55;
+    if (b.neck) this._accBone('neck').x += -pitch * 0.3;
     // 37 — Aim lean: tronco inclina levemente conforme pitch (mira pra cima =
     //  peito abre pra trás; pra baixo = curva pra frente). Sutil.
-    if (b.spine && b.spine._restRot) {
-      try { b.spine.rotation.x = b.spine._restRot.x - pitch * 0.12; } catch (_) {}
-    }
+    if (b.spine) this._accBone('spine').x += -pitch * 0.12;
   }
 
   // 33 — Hand-on-weapon IK: cola a mão ESQUERDA (secundária) no socket da arma
@@ -678,6 +738,9 @@ export class PlayerAnimator {
 
   // 31 — Foot IK: raycast pra baixo sob cada pé e ajusta a ALTURA do tornozelo
   //  pra plantar nas rampas/degraus (sem flutuar/afundar). Procedural, guardado.
+  //  PERF: o pickWithRay (caro, varre a cena) roda THROTTLADO (a cada N frames);
+  //  o offset alvo fica cacheado por pé e é aplicado/suavizado TODO frame.
+  //  O offset é somado por cima da pose do clipe (aditivo → não congela o bob).
   _applyFootIK(b, moving) {
     if (!this.scene) return;
     const feet = [b.leftFoot, b.rightFoot];
@@ -685,33 +748,44 @@ export class PlayerAnimator {
     // Não faz IK durante corrida rápida (pés no ar muito tempo → ruído); mantém
     // suave em idle/walk onde o plantio importa.
     const ikAmount = moving ? 0.4 : 0.9;
+    // Throttle do raycast: 1 a cada 3 frames (≈20Hz). O resto dos frames só
+    // suaviza pro alvo cacheado — corta ~66% dos picks sem perder o plantio.
+    this._footRayFrame = ((this._footRayFrame || 0) + 1) % 3;
+    const doRay = this._footRayFrame === 0;
     for (const foot of feet) {
       if (!foot || !foot._restPos || !foot.getAbsolutePosition) continue;
       try {
         // Shuffle de turn-in-place (item 35) somado por cima da IK.
         const turnY = foot._turnY || 0;
-        const fp = foot.getAbsolutePosition();
-        // Ray de cima do pé pra baixo, procurando o chão.
-        const origin = new BABYLON.Vector3(fp.x, fp.y + 0.4, fp.z);
-        const ray = new BABYLON.Ray(origin, new BABYLON.Vector3(0, -1, 0), 0.4 + this._footRayLen);
-        const hit = this.scene.pickWithRay(ray, (m) =>
-          m && m.isPickable !== false && !m._isRemotePlayer &&
-          m !== foot && (this._allMeshes.indexOf(m) < 0));
-        if (!hit?.hit || !hit.pickedPoint) continue;
-        // Diferença vertical entre o pé e o chão sob ele (mundo).
-        const groundY = hit.pickedPoint.y;
-        const desiredFootY = groundY + 0.02;        // pequena folga (sola)
-        const deltaW = desiredFootY - fp.y;
-        // Converte o delta mundial em delta LOCAL (escala do osso ~0.01 no rato).
-        const sc = this.root?.scaling?.y || 1;
-        const deltaLocal = (deltaW / sc) * ikAmount;
-        // Clampa pra não esticar a perna absurdamente.
-        const clamped = Math.max(-0.15, Math.min(0.15, deltaLocal));
-        // Aplica suave (lerp) na posição Y local do tornozelo, sobre a rest-pose.
-        const targetY = foot._restPos.y + clamped;
-        foot._ikY = foot._ikY ?? foot._restPos.y;
-        foot._ikY += (targetY - foot._ikY) * 0.25;
-        foot.position.y = foot._ikY + turnY;
+        if (doRay) {
+          const fp = foot.getAbsolutePosition();
+          // Ray de cima do pé pra baixo, procurando o chão.
+          const origin = new BABYLON.Vector3(fp.x, fp.y + 0.4, fp.z);
+          const ray = new BABYLON.Ray(origin, new BABYLON.Vector3(0, -1, 0), 0.4 + this._footRayLen);
+          const hit = this.scene.pickWithRay(ray, (m) =>
+            m && m.isPickable !== false && !m._isRemotePlayer &&
+            m !== foot && (this._allMeshes.indexOf(m) < 0));
+          if (hit?.hit && hit.pickedPoint) {
+            // Diferença vertical entre o pé e o chão sob ele (mundo).
+            const groundY = hit.pickedPoint.y;
+            const desiredFootY = groundY + 0.02;        // pequena folga (sola)
+            const deltaW = desiredFootY - fp.y;
+            // Converte o delta mundial em delta LOCAL (escala do osso ~0.01).
+            const sc = this.root?.scaling?.y || 1;
+            const deltaLocal = (deltaW / sc) * ikAmount;
+            // Clampa pra não esticar a perna absurdamente.
+            foot._ikTarget = Math.max(-0.15, Math.min(0.15, deltaLocal));
+          } else {
+            foot._ikTarget = 0;   // sem chão sob o pé → relaxa pro clipe puro
+          }
+        }
+        // Offset de IK suavizado pro alvo cacheado (todo frame).
+        const tgt = foot._ikTarget || 0;
+        foot._ikOff = foot._ikOff ?? 0;
+        foot._ikOff += (tgt - foot._ikOff) * 0.25;
+        // ADITIVO: soma o offset por cima da posição Y que o clipe avaliou neste
+        // frame (não sobrescreve a partir da rest → preserva o bob do clipe).
+        foot.position.y += foot._ikOff + turnY;
       } catch (_) {}
     }
   }

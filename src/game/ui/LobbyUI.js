@@ -547,8 +547,11 @@ export class LobbyUI {
       const pvpIcon = p.pvp_on ? ' <span style="color:#ff5050;" title="PvP ON">⚔</span>' : '';
       const hostBadge = p.is_host ? ' <span style="color:#ffcc00;font-size:0.85em;">[host]</span>' : '';
       const meBadge = isMe ? ' <span style="color:#7efa9a;font-size:0.85em;">(você)</span>' : '';
-      if (!p.nickname) throw new Error('[Lobby] player sem nickname no state: ' + p.id);
-      row.innerHTML = `${readyIcon} ${_esc(p.nickname)}${hostBadge}${meBadge}${pvpIcon}`;
+      // Nickname pode chegar vazio durante a sincronização do schema (race do
+      // Colyseus). Antes um throw aqui derrubava o render INTEIRO do roster.
+      // Agora cai num rótulo neutro e segue listando os demais players.
+      const _nick = p.nickname || 'player';
+      row.innerHTML = `${readyIcon} ${_esc(_nick)}${hostBadge}${meBadge}${pvpIcon}`;
       playersDiv.appendChild(row);
     });
 
