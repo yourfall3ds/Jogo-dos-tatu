@@ -367,7 +367,21 @@ async function _awaitEssentials(reason = 'jogar') {
   await new Promise(r => setTimeout(r, 200));
   if (resolved) return;
   _ensureBootGuard(reason);
-  await window._essentialReady;
+  // TETO DE SEGURANÇA: o boot NUNCA pode travar. Espera os essenciais, mas se
+  // passarem de TIMEOUT_MS (cenário imprevisto), loga alto e entra mesmo assim.
+  const TIMEOUT_MS = 20000;
+  let timer;
+  const timeout = new Promise(r => {
+    timer = setTimeout(() => {
+      if (!resolved) {
+        console.warn(`[Boot] ⚠️ Essenciais não ficaram prontos em ${TIMEOUT_MS}ms — entrando mesmo assim (degradado).`);
+        window._bootDegraded = window._bootDegraded || ['timeout de essenciais'];
+      }
+      r();
+    }, TIMEOUT_MS);
+  });
+  await Promise.race([window._essentialReady, timeout]);
+  clearTimeout(timer);
 }
 window._awaitEssentials = _awaitEssentials;
 
@@ -2722,7 +2736,15 @@ async function init() {
   // (que consome o click antes do player para não atirar)
 
   // ── Carrega assets em background (após o jogo já estar jogável) ──
-  _loadAssetsBackground(loader, player, level, shadowGen, scene);
+  //  Rede de segurança: se o carregador rejeitar por QUALQUER motivo antes de
+  //  liberar o portão, abrimos o portão mesmo assim — o boot NUNCA pode travar.
+  _loadAssetsBackground(loader, player, level, shadowGen, scene)
+    .catch(e => {
+      console.error('[Boot] _loadAssetsBackground rejeitou — liberando JOGAR mesmo assim (degradado):', e);
+      window._bootDegraded = window._bootDegraded || ['carregamento de assets'];
+      try { _essentialReadyResolve?.(); } catch (_) {}
+      try { _bootGuard?.done(); } catch (_) {}
+    });
 
   // ── Miniaturas REAIS das armas (RTT do GLB) no inventário/hotbar ──
   //  Gera um PNG de cada arma a partir do modelo 3D e salva em LocalDB
@@ -2988,23 +3010,43 @@ async function _loadAssetsBackground(loader, player, level, shadowGen, scene) {
     onProgress?.();
   };
 
-  // TIER 1: sequencial (deps internas)
+  // TIER 1: sequencial (deps internas).
+  //  REGRA: o boot NUNCA pode travar. Se um essencial falhar, loga ALTO,
+  //  registra o que ficou faltando e SEGUE — o jogo abre em modo degradado em
+  //  vez de pendurar o spinner pra sempre.
+  const failedEssentials = [];
   let essentialDone = 0;
   for (const item of essentials) {
     setLoadingUI(Math.round((essentialDone / essentials.length) * 35), item.label);
-    await loadOne(item);
+    try {
+      await loadOne(item);
+    } catch (e) {
+      failedEssentials.push(item);
+      console.error(`[Boot] ⛔ ESSENCIAL FALHOU: ${item.key} ("${item.label}") — abrindo o jogo mesmo assim (degradado).`, e);
+      try { window.transfpsPhase?.(`ESSENCIAL FALHOU: ${item.key} — boot segue degradado`); } catch (_) {}
+    }
     essentialDone++;
   }
-  setLoadingUI(40, 'pronto pra jogar — carregando extras…');
+
+  if (failedEssentials.length) {
+    const lista = failedEssentials.map(f => f.label || f.key).join(', ');
+    window._bootDegraded = failedEssentials.map(f => f.key);
+    console.warn(`[Boot] ⚠️ MODO DEGRADADO — não carregou: ${lista}. Alguns recursos podem não funcionar; o resto do jogo abre normalmente.`);
+    setLoadingUI(40, `⚠️ faltou: ${lista} — abrindo mesmo assim…`);
+  } else {
+    setLoadingUI(40, 'pronto pra jogar — carregando extras…');
+  }
   try { window.transfpsPhase?.('TIER1 PRONTO — _essentialReady resolvido (JOGAR liberado)'); window.transfpsBootReport?.(); } catch (_) {}
 
   // ── TIER 1 concluído: libera startGame/lobby para entrar SEM esperar ──
+  //  Resolve SEMPRE (mesmo com falha acima) — jamais propaga erro daqui, senão
+  //  o portão JOGAR nunca abriria.
   try { _essentialReadyResolve?.(); }
-  catch (e) { console.error('[Boot] essentialReadyResolve:', e); throw e; }
+  catch (e) { console.error('[Boot] essentialReadyResolve:', e); }
   // Se o usuário já abriu o portão (clicou JOGAR antes de TIER1 terminar),
   // o BootLoadGuard existe — fecha ele agora. Caso contrário, fica null.
   try { _bootGuard?.done(); }
-  catch (e) { console.error('[BootGuard] done apos TIER1:', e); throw e; }
+  catch (e) { console.error('[BootGuard] done apos TIER1:', e); }
 
   // TIER 2: paralelo em background. Atualiza barra mas não bloqueia.
   let bgDone = 0;
