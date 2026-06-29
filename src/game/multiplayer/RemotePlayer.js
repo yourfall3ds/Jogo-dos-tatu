@@ -102,6 +102,33 @@ function _classModel(classId) {
   return REMOTE_CLASS_MODELS[classId | 0] || REMOTE_CLASS_MODELS[0];
 }
 
+// ── Item 40: presets de ESCALA/ALTURA por AVATAR (avatar_url) ─────────
+//  Os 6 personagens novos chegam por avatar_url (não por class_id), então
+//  todos caíam na escala/altura DEFAULT (1.164 / 1.8). Cada rig tem porte
+//  diferente (orc grandão, mago curvado, cleric menor...) → ficavam fora de
+//  escala/flutuando. Este mapa permite calibrar por avatar; chave = nome do
+//  arquivo .glb em minúsculas. Quem não estiver aqui usa o default da classe.
+const REMOTE_AVATAR_PRESETS = {
+  'player.glb':                     { scale: 1.164, height: 1.8 },
+  'azurefin.glb':                   { scale: 1.164, height: 1.8 },
+  'orc_warrior_ready.glb':          { scale: 1.35,  height: 2.0 },
+  'dark_warrior_aaa_ready.glb':     { scale: 1.25,  height: 1.95 },
+  'cleric_priestess48_ready.glb':   { scale: 1.05,  height: 1.7 },
+  'mage_oldwizard_ready.glb':       { scale: 1.10,  height: 1.75 },
+  'lizard_monster_ready.glb':       { scale: 1.30,  height: 1.95 },
+};
+/** Resolve scale/height pro avatar/classe. avatar_url tem prioridade (preset
+ *  por arquivo); senão cai no preset da classe. */
+function _avatarPreset(url, classId) {
+  const base = _classModel(classId);
+  try {
+    const key = decodeURIComponent(String(url || '').split('?')[0].split('/').pop() || '').toLowerCase();
+    const p = REMOTE_AVATAR_PRESETS[key];
+    if (p) return { scale: p.scale ?? base.scale, height: p.height ?? base.height };
+  } catch (_) {}
+  return { scale: base.scale, height: base.height };
+}
+
 // ─────────────────────────────────────────────────────────────────
 //  Mapa de animação remota  (anim_state do server -> clipe REAL do GLB)
 //
@@ -625,12 +652,15 @@ export class RemotePlayer {
 
     this._enableBlending(anims);
 
-    // PARA todas as outras anims: garante que a anterior NUNCA fica rodando
-    // empilhada (sem 2 anims sobrepostas). Com enableBlending ativo, o Babylon
-    // ja faz a rampa de peso ao iniciar a nova, dando crossfade suave (sem snap).
+    // ── Crossfade (item 42) ─────────────────────────────────────────────
+    //  Antes parávamos TODAS as outras anims de imediato → o clipe que saía
+    //  cortava seco (só o que entrava fazia rampa via enableBlending). Agora
+    //  deixamos o clipe ANTERIOR continuar rodando por ~1 ciclo de blend e o
+    //  paramos com um timer curto, dando um crossfade ponderado de verdade.
+    const prev = this._curAnim;
     for (const a of anims) {
-      if (a === next) continue;
-      try { a.stop(); } catch (_) {}
+      if (a === next || a === prev) continue;
+      try { a.stop(); } catch (_) {}    // mais antigos: corta (não acumula pilha)
     }
 
     try {
@@ -639,6 +669,17 @@ export class RemotePlayer {
       next.start(true, 1.0, next.from, next.to, false);
     } catch (_) {
       try { next.start(true, 1.0); } catch (_) {}
+    }
+
+    // Para o clipe anterior só DEPOIS do crossfade (deixa as duas poses
+    // blendarem). REMOTE_BLEND_SPEED ~0.09/frame ≈ 11 frames ≈ ~180ms.
+    if (prev && prev !== next) {
+      if (this._xfadeTimer) { try { clearTimeout(this._xfadeTimer); } catch (_) {} }
+      this._xfadeTimer = setTimeout(() => {
+        this._xfadeTimer = null;
+        if (this._disposed || this._disposing) return;
+        if (prev !== this._curAnim) { try { prev.stop(); } catch (_) {} }
+      }, 200);
     }
 
     this._curAnim = next;
@@ -841,6 +882,89 @@ export class RemotePlayer {
     // Flinch (anim de reação) + flash vermelho.
     try { this.playAttackOnce('stunned', critLevel >= 1 ? 360 : 220); } catch (_) {}
     try { this._flashHit(); } catch (_) {}
+    // Item 39: impulso procedural no osso mais próximo da direção do golpe
+    // (per-limb hit reaction) — soma um "tranco" no membro atingido em cima do
+    // flinch genérico. Guardado: sem ossos resolvíveis, simplesmente não atua.
+    try { this._applyLimbImpulse(dirVec, force, critLevel); } catch (_) {}
+  }
+
+  /** Item 39 — Per-limb hit reaction (procedural). Escolhe o osso mais próximo
+   *  da direção do impacto e adiciona um impulso de rotação transiente que
+   *  decai sozinho num render-hook. Tudo null-guarded (rig sem ossos → no-op). */
+  _applyLimbImpulse(dirVec, force = 1, critLevel = 0) {
+    if (this._disposed || this._disposing || !this._avatarRoot || typeof BABYLON === 'undefined') return;
+    // Resolve ossos de membro/tronco 1x e cacheia (com rest-rotation).
+    if (!this._limbBonesTried) {
+      this._limbBonesTried = true;
+      const desc = this._avatarRoot.getDescendants ? this._avatarRoot.getDescendants(false) : [];
+      const low = (s) => String(s || '').toLowerCase();
+      const find = (suf) => desc.find(d => { const n = low(d.name); return n.endsWith(suf) || n === suf || n.includes(suf); }) || null;
+      this._limbBones = {
+        spine:     find('spine1') || find('spine'),
+        head:      find('head'),
+        leftArm:   find('leftarm') || find('leftshoulder'),
+        rightArm:  find('rightarm') || find('rightshoulder'),
+        leftLeg:   find('leftupleg') || find('leftleg'),
+        rightLeg:  find('rightupleg') || find('rightleg'),
+      };
+      for (const k in this._limbBones) {
+        const n = this._limbBones[k];
+        if (n) { try { if (n.rotationQuaternion) n.rotationQuaternion = null; n._restRotImp = n.rotation.clone(); } catch (_) {} }
+      }
+    }
+    const bones = this._limbBones;
+    if (!bones) return;
+
+    // Direção do golpe relativa ao facing do avatar (root.rotation.y inclui +π).
+    let dx = (dirVec?.x) || 0, dz = (dirVec?.z) || 0;
+    const len = Math.hypot(dx, dz) || 1; dx /= len; dz /= len;
+    const facing = (this.root?.rotation?.y || 0) - Math.PI;
+    // lateral (>0 = bateu pela direita do avatar); frontal (>0 = pela frente).
+    const lateral  = dx * Math.cos(facing) - dz * Math.sin(facing);
+    const frontal  = dx * Math.sin(facing) + dz * Math.cos(facing);
+
+    // Escolhe o membro/tronco mais "exposto" à direção do impacto.
+    let bone = bones.spine;
+    if (Math.abs(lateral) > 0.5) bone = (lateral > 0 ? bones.rightArm : bones.leftArm) || bones.spine;
+    else if (frontal < -0.4)     bone = bones.head || bones.spine;     // bateu por trás → cabeça/tronco
+    bone = bone || bones.spine || bones.head;
+    if (!bone || !bone._restRotImp) return;
+
+    // Magnitude do impulso (rad) por força/crit; clampada (legível, sem deformar).
+    const mag = Math.min(0.35, 0.12 * (force || 1) * (critLevel >= 1 ? 1.5 : 1.0));
+    // Eixo: pancada lateral gira no Z (balanço), frontal/traseira no X (recuo).
+    const useZ = Math.abs(lateral) > 0.5;
+    this._impulse = {
+      bone, axis: useZ ? 'z' : 'x',
+      val: useZ ? -lateral * mag : -frontal * mag,
+      t: 0, dur: 0.32,
+    };
+    // Instala o hook de decaimento 1x (compartilhado entre impulsos).
+    if (!this._limbImpulseHook && this.scene) {
+      this._limbImpulseHook = this.scene.onBeforeRenderObservable.add(() => {
+        try { this._tickLimbImpulse(); } catch (_) {}
+      });
+    }
+  }
+
+  /** Decai o impulso de membro a cada frame (spring-out) e o limpa no fim. */
+  _tickLimbImpulse() {
+    const imp = this._impulse;
+    if (!imp || !imp.bone || !imp.bone._restRotImp) return;
+    const dt = this.scene?.getEngine?.()?.getDeltaTime?.() / 1000 || 0.016;
+    imp.t += dt;
+    const f = Math.min(1, imp.t / imp.dur);
+    // envelope: sobe rápido e volta (sin(πf)) → "tranco" e relaxa.
+    const env = Math.sin(Math.PI * f);
+    try {
+      const r = imp.bone._restRotImp;
+      imp.bone.rotation.x = r.x + (imp.axis === 'x' ? imp.val * env : 0);
+      imp.bone.rotation.z = r.z + (imp.axis === 'z' ? imp.val * env : 0);
+    } catch (_) {}
+    if (f >= 1) {
+      try { imp.bone.rotation.copyFrom(imp.bone._restRotImp); } catch (_) {}
+      this._impulse = null;
+    }
   }
 
   /**
@@ -1332,6 +1456,8 @@ export class RemotePlayer {
     // mas limpar aqui evita o setTimeout solto.
     if (this._attackTimer) { try { clearTimeout(this._attackTimer); } catch (_) {} this._attackTimer = null; }
     if (this._hitFlashTimer) { try { clearTimeout(this._hitFlashTimer); } catch (_) {} this._hitFlashTimer = null; }
+    if (this._xfadeTimer) { try { clearTimeout(this._xfadeTimer); } catch (_) {} this._xfadeTimer = null; }
+    if (this._limbImpulseHook && this.scene) { try { this.scene.onBeforeRenderObservable.remove(this._limbImpulseHook); } catch (_) {} this._limbImpulseHook = null; }
     try { this._detachWeapon?.(); } catch (_) {}
     try { this._weaponSocket?.dispose(); } catch (_) {}
     // Sistema de animação real: para e descarta os clipes retargetados.
@@ -1493,6 +1619,9 @@ export class RemotePlayer {
     const avUrl = (this.state?.avatar_url || '').trim();
     const model = _classModel(this.state?.class_id);
     const url = (avUrl && /\.glb($|\?)/i.test(avUrl)) ? avUrl : model.url;
+    // Item 40: scale/height por preset (avatar_url > classe). Usado abaixo no
+    // posicionamento (foot-offset = -height/2) e na escala do modelo.
+    const preset = _avatarPreset(url, this.state?.class_id);
     this._loadedAvatarUrl = url;
     this._loadedClassId = this.state?.class_id | 0;
     const shortId = (this.playerId || "").slice(0, 8);
@@ -1535,9 +1664,9 @@ export class RemotePlayer {
       // nos PES, entao precisa descer -(height/2) = -0.9 pra encostar no chao — exatamente
       // o foot-offset que o Player LOCAL aplica (PlayerAnimator.js:293 _rootOffsetY=-(h/2)).
       // Sem isso o avatar remoto flutua ~0.9 acima do chao.
-      root.position.set(0, -((model.height || 1.8) / 2), 0);
-      // Escala do modelo da classe (default = player.glb Meshy, PlayerAnimator.js:291).
-      root.scaling.setAll(model.scale || 1.164);
+      root.position.set(0, -((preset.height || model.height || 1.8) / 2), 0);
+      // Escala do modelo: preset por-avatar (item 40) → fallback classe → default.
+      root.scaling.setAll(preset.scale || model.scale || 1.164);
       // FIX PvP fidelidade: a capsule continua HABILITADA e PICAVEL — ela e o
       // hitbox-proxy limpo do player remoto (segue x/y/z incl. pulo via this.root).
       // So fica INVISIVEL (visibility=0). NAO usar setEnabled(false): isso a tiraria

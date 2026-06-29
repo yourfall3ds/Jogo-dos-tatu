@@ -13,16 +13,28 @@ export class DamageNumbers {
   /**
    * @param {BABYLON.Vector3} worldPos  posição do impacto
    * @param {number} amount             dano
-   * @param {Object} opts  { color, crit }
+   * @param {Object} opts  { color, crit, headshot, overkill }
+   *   - crit     → maior + laranja/vermelho
+   *   - headshot → DOURADO + maior + sufixo, implica crit visual
+   *   - overkill → marca de excesso (golpe letal): exclamação + tom mais quente
    */
-  spawn(worldPos, amount, { color = '#ffe24a', crit = false } = {}) {
+  spawn(worldPos, amount, { color = '#ffe24a', crit = false, headshot = false, overkill = false } = {}) {
     if (!worldPos || !this.scene) return;
     // GUARDA NaN: se o dano ou a posição vierem inválidos, não mostra "NaN"
     //  flutuando. Sanitiza o número e ignora posições não-finitas.
     const n = Number.isFinite(amount) ? Math.round(amount) : 0;
     if (n <= 0) return;
     if (!Number.isFinite(worldPos.x) || !Number.isFinite(worldPos.y) || !Number.isFinite(worldPos.z)) return;
-    const txt = String(n);
+    // Headshot é um crit "especial" (maior, dourado).
+    const isBig = crit || headshot;
+    const txt = headshot ? (n + '!') : (overkill ? (n + '!') : String(n));
+
+    // ── Cor por tipo ──────────────────────────────────────────────────
+    let fill;
+    if (headshot)      fill = '#ffd23c';   // dourado
+    else if (overkill) fill = '#ff2d2d';   // vermelho forte (excesso letal)
+    else if (crit)     fill = '#ff5a3c';   // laranja-vermelho
+    else               fill = color;
 
     // ── Textura com o número (contorno preto + cor) ──────────────────
     const W = 256, H = 128;
@@ -30,14 +42,14 @@ export class DamageNumbers {
     tex.hasAlpha = true;
     const ctx = tex.getContext();
     ctx.clearRect(0, 0, W, H);
-    const fs = crit ? 96 : 74;
+    const fs = headshot ? 104 : (crit ? 96 : 74);
     ctx.font = `900 ${fs}px Segoe UI, Arial, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = 10; ctx.strokeStyle = '#000';
+    ctx.lineWidth = headshot ? 12 : 10; ctx.strokeStyle = '#000';
     ctx.strokeText(txt, W / 2, H / 2);
-    ctx.fillStyle = crit ? '#ff5a3c' : color;
+    ctx.fillStyle = fill;
     ctx.fillText(txt, W / 2, H / 2);
     tex.update();
 
@@ -61,8 +73,8 @@ export class DamageNumbers {
 
     // ── Animação: sobe + pop + fade ──────────────────────────────────
     let t = 0;
-    const dur  = crit ? 1.0 : 0.8;
-    const base = crit ? 1.35 : 1.0;
+    const dur  = isBig ? 1.0 : 0.8;
+    const base = headshot ? 1.6 : (crit ? 1.35 : 1.0);
     const obs = this.scene.onBeforeRenderObservable.add(() => {
       const dt = this.scene.getEngine().getDeltaTime() / 1000;
       t += dt;

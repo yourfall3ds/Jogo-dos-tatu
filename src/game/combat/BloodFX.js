@@ -238,6 +238,27 @@ export class BloodFX {
 
   _spawnBurst(position, dir, count, preset) {
     if (count <= 0) return;
+
+    // ── Anti-pierce (item 12): raycast curto na direção do jato ──────
+    //  Se houver uma parede logo à frente, encurta a VIDA/velocidade dos
+    //  respingos pra eles não atravessarem a geometria. Clamp barato (1 ray)
+    //  em vez de colisão por-partícula (cara). Tolerante a falhas.
+    let lifeScale = 1, speedScale = 1;
+    try {
+      const ray = new BABYLON.Ray(position.clone(), dir.clone().normalize(), 2.2);
+      const wallHit = this.scene.pickWithRay(ray, mm =>
+        mm.isEnabled() && mm.isPickable !== false && mm.checkCollisions &&
+        !mm.name.startsWith('enemy_') && !mm.name.startsWith('blood') &&
+        !mm.name.startsWith('hitbox') && !mm.name.startsWith('spark')
+      );
+      if (wallHit?.hit && wallHit.distance < 2.2) {
+        // quanto mais perto a parede, mais curto o respingo (não fura)
+        const d = Math.max(0.15, wallHit.distance);
+        speedScale = Math.min(1, d / 2.2);
+        lifeScale  = Math.min(1, d / 2.0);
+      }
+    } catch (_) {}
+
     // Usa Babylon ParticleSystem para perf
     const ps = new BABYLON.ParticleSystem(`blood_${Date.now()}_${Math.random()}`, count, this.scene);
     ps.particleTexture = this._getDropTexture();
@@ -259,12 +280,13 @@ export class BloodFX {
     // Respingos MENORES + mais densos = realismo (vs gota grande)
     ps.minSize = preset.sizeMin * 0.6;
     ps.maxSize = preset.sizeMax * 0.85;
-    ps.minLifeTime = 0.28;   // vida curta
-    ps.maxLifeTime = 0.50;   // caem rápido e somem
+    ps.minLifeTime = 0.28 * lifeScale;   // vida curta (encurtada perto de parede)
+    ps.maxLifeTime = 0.50 * lifeScale;   // caem rápido e somem
     ps.gravity = new BABYLON.Vector3(0, -26, 0);   // gravidade FORTE = caem rápido
     // Espalhamento mais largo na direção do golpe = jato/leque de respingos
-    ps.direction1 = new BABYLON.Vector3(dir.x * preset.speed - 3.5, preset.speed * 0.5, dir.z * preset.speed - 3.5);
-    ps.direction2 = new BABYLON.Vector3(dir.x * preset.speed + 3.5, preset.speed * 1.25, dir.z * preset.speed + 3.5);
+    const _spd = preset.speed * speedScale;   // reduz velocidade junto à parede (anti-pierce)
+    ps.direction1 = new BABYLON.Vector3(dir.x * _spd - 3.5, _spd * 0.5, dir.z * _spd - 3.5);
+    ps.direction2 = new BABYLON.Vector3(dir.x * _spd + 3.5, _spd * 1.25, dir.z * _spd + 3.5);
     ps.minAngularSpeed = -Math.PI * 2;
     ps.maxAngularSpeed =  Math.PI * 2;
     ps.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;  // ALPHA (respeita alpha da textura redonda)
@@ -360,6 +382,7 @@ export class BloodFX {
       decal._bloodBorn = performance.now() / 1000;
       decal._bloodLife = 8 + Math.random() * 4;   // 8-12s antes de começar a sumir
       decal._bloodFade = 2.5;                      // dura 2.5s sumindo
+      decal.visibility = 1;                        // começa opaco (fade controlado em update)
       this._decalPool.push(decal);
       // FIFO: descarta mais antigos
       while (this._decalPool.length > MAX_POOL) {

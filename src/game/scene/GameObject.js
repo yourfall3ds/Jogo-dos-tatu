@@ -295,7 +295,10 @@ export class GameObject {
       this.angVel.scaleInPlace(0.55);
     } else {
       this._restPos = null;                     // saiu do chão → destrava
-      const drag = Math.exp(-dt);
+      // Item 11: arrasto de ar MENOR (coef 1.0 → 0.35) → objetos arremessados
+      //  carregam mais inércia (assentam menos instantaneamente). A lógica de
+      //  sleep/blocked abaixo segue intacta (no chão o atrito 0.68 ainda freia).
+      const drag = Math.exp(-dt * 0.35);
       this.vel.x *= drag; this.vel.z *= drag;
     }
 

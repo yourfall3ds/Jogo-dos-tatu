@@ -28,7 +28,70 @@ export class WaterSystem {
     waterMat.specularPower = 80;
     waterMat.alpha = 0.72;
     waterMat.backFaceCulling = false;
+
+    // ── Normal map de ondas (procedural, sem asset) ─────────────────────
+    //  Gera um normal map de ondulação somando senóides em X/Y → relevo de
+    //  ripples. Escorrega as UVs todo frame (update) pras ondas se moverem.
+    //  Barato: 1 textura 128² compartilhada por todas as poças. Se o material
+    //  não suportar bumpTexture (não é o caso de StandardMaterial), só ignora.
+    try {
+      const N = 128;
+      const ndt = new BABYLON.DynamicTexture('waterNormal', { width: N, height: N }, this.scene, false);
+      const nctx = ndt.getContext();
+      const img = nctx.createImageData(N, N);
+      const TAU = Math.PI * 2;
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+          const u = x / N, v = y / N;
+          // altura = soma de ondas (direções/escalas diferentes → tilable)
+          const dhx =
+            Math.cos(u * TAU * 3) * 0.6 +
+            Math.cos((u * 2 + v) * TAU * 2) * 0.4 +
+            Math.cos((u * 5 - v * 2) * TAU) * 0.2;
+          const dhy =
+            Math.cos(v * TAU * 3) * 0.6 +
+            Math.cos((v * 2 + u) * TAU * 2) * 0.4 +
+            Math.cos((v * 5 - u * 2) * TAU) * 0.2;
+          // normal tangent-space: (-dhx, -dhy, 1) normalizado → RGB 0..255
+          const s = 0.5;
+          let nx = -dhx * s, ny = -dhy * s, nz = 1;
+          const inv = 1 / Math.hypot(nx, ny, nz);
+          nx *= inv; ny *= inv; nz *= inv;
+          const i = (y * N + x) * 4;
+          img.data[i]     = (nx * 0.5 + 0.5) * 255;
+          img.data[i + 1] = (ny * 0.5 + 0.5) * 255;
+          img.data[i + 2] = (nz * 0.5 + 0.5) * 255;
+          img.data[i + 3] = 255;
+        }
+      }
+      nctx.putImageData(img, 0, 0);
+      ndt.update();
+      ndt.wrapU = BABYLON.Texture.WRAP_ADDRESSMODE;
+      ndt.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+      ndt.uScale = 3; ndt.vScale = 3;
+      waterMat.bumpTexture = ndt;
+      waterMat.bumpTexture.level = 0.55;   // relevo sutil
+      this._waterNormalTex = ndt;
+    } catch (e) { console.warn('[Water] normal map indisponível:', e?.message); }
+
+    // ── Fresnel: borda/grazing reflete mais (espelho raso), centro translúcido ─
+    try {
+      // mais opaco/reflexivo em ângulos rasos (grazing) → look de espelho d'água
+      waterMat.opacityFresnelParameters = new BABYLON.FresnelParameters();
+      waterMat.opacityFresnelParameters.leftColor = BABYLON.Color3.White();   // borda: opaco
+      waterMat.opacityFresnelParameters.rightColor = BABYLON.Color3.Black();  // topo: translúcido
+      waterMat.opacityFresnelParameters.power = 2.2;
+      waterMat.opacityFresnelParameters.bias = 0.18;
+      // brilho extra do céu nas bordas (reflexo a ângulo raso)
+      waterMat.emissiveFresnelParameters = new BABYLON.FresnelParameters();
+      waterMat.emissiveFresnelParameters.leftColor = new BABYLON.Color3(0.25, 0.40, 0.55);
+      waterMat.emissiveFresnelParameters.rightColor = new BABYLON.Color3(0.02, 0.10, 0.16);
+      waterMat.emissiveFresnelParameters.power = 1.6;
+      waterMat.useReflectionFresnelFromSpecular = false;
+    } catch (e) { console.warn('[Water] fresnel indisponível:', e?.message); }
+
     this.waterMat = waterMat;
+    this._waveTime = 0;
 
     // 4 piscinas/poças espalhadas pelo mapa (skill map)
     const POOLS = [
@@ -100,6 +163,17 @@ export class WaterSystem {
   }
 
   update(dt, player) {
+    // ── Anima as ondas: escorrega as UVs do normal map (duas camadas em
+    //    direções diferentes dão sensação de água viva). Vento do DayNight,
+    //    se disponível, acelera/direciona o fluxo (window._windVec).
+    if (this._waterNormalTex) {
+      this._waveTime += dt;
+      const w = (typeof window !== 'undefined' && window._windVec) || null;
+      const wx = w ? w.x : 0.6, wz = w ? w.z : 0.4;
+      this._waterNormalTex.uOffset = (this._waveTime * (0.03 + wx * 0.04)) % 1;
+      this._waterNormalTex.vOffset = (this._waveTime * (0.025 + wz * 0.04)) % 1;
+    }
+
     if (!player?.mesh) return;
     const pos = player.mesh.position;
     const pool = this._isPlayerInWater(pos);

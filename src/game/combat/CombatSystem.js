@@ -276,6 +276,7 @@ export class CombatSystem {
     // Swing/whoosh: o golpe corta o ar. Se conectar, o _applyHit toca o som
     // de IMPACTO por cima. (Só socos/chutes — finalizadores entram também.)
     this._hitLanded = false;
+    this._lastHitWasCrit = false;   // resetado por golpe (item 28: crit alarga cancel window)
     this._playSwingSound(attackAnim);
 
     // CHIBATA: dispara a animação procedural do lash (chicoteio)
@@ -308,13 +309,27 @@ export class CombatSystem {
     // único timer que lê o buffer, marcamos _canCancel=true e consumimos na
     // hora — assim cada clique vira um golpe imediato (sem engasgo).
     this._canCancel = false;
-    const cancelAt = lastHitTime + 40;   // abre logo após o impacto
+    // Janela de cancelamento: abre logo após o impacto. Se o golpe CRITOU,
+    // mantemos a janela ABERTA por mais tempo (item 28) — dá mais folga pra
+    // encadear o próximo golpe depois de um crit (combo flow mais generoso).
+    const cancelAt = lastHitTime + 40;
     this._cancelTimer = setTimeout(() => {
       if (token !== this._comboToken) return;
       if (!this.stateMachine.isAttacking()) return;
       this._canCancel = true;
       const next = this.comboSystem.consumeBuffer();
-      if (next) this._executeAttack(next);   // já tem clique na fila → encadeia
+      if (next) { this._executeAttack(next); return; }
+      // Crit → estende a janela: re-checa o buffer um pouco mais tarde antes
+      // de o golpe terminar, em vez de fechar o cancel imediatamente.
+      if (this._lastHitWasCrit) {
+        clearTimeout(this._critWindowTimer);
+        this._critWindowTimer = setTimeout(() => {
+          if (token !== this._comboToken || !this.stateMachine.isAttacking()) return;
+          this._canCancel = true;
+          const n2 = this.comboSystem.consumeBuffer();
+          if (n2) this._executeAttack(n2);
+        }, 160);   // ~160ms extra de janela após crit
+      }
     }, cancelAt);
 
     // ── SAFETY: garante que o ataque termina ────────────────────────
@@ -360,7 +375,7 @@ export class CombatSystem {
   // Som de IMPACTO (acertou alguém). Combo normal → som CONSISTENTE; só o
   // CRÍTICO (golpe pesado) troca pro som especial. Chamado só ao CONECTAR.
   // critLevel: 0 normal · 1 crítico · 2 super crítico
-  _playImpactSound(isKick, critLevel = 0) {
+  _playImpactSound(isKick, critLevel = 0, surface = 'flesh') {
     const snd = this.playerMesh?._playerRef?.sounds;
     if (!snd) return;
 
@@ -369,6 +384,17 @@ export class CombatSystem {
     const curW = pl?.weapon?.getCurrentWeapon?.();
     if (curW?.id === 'chibata' && curW.isMelee) {
       snd.playNow('chibatada', 1.0);
+      return;
+    }
+
+    // ── Som por SUPERFÍCIE / tipo de alvo (item 22) ──────────────────
+    //  Alvos não-carne (props de metal/madeira, quebráveis, cenário) tocam
+    //  um impacto seco diferente de bater em carne. SoundManager ignora ids
+    //  ausentes → se o arquivo não existir, fica em silêncio sem quebrar.
+    if (surface && surface !== 'flesh') {
+      const map = { metal: 'wall_hit', wood: 'ground_hit', stone: 'wall_hit' };
+      const sid = map[surface] || 'wall_hit';
+      snd.playNow(sid, 0.85);
       return;
     }
 
@@ -402,11 +428,34 @@ export class CombatSystem {
       else if (r < 0.20) critLevel = 1;   // crítico
     }
     const isCrit = critLevel >= 1;
+    // Crit afeta MECÂNICA (item 28): marca pra _executeNextAttack ALARGAR a
+    // janela de cancelamento do combo (mais tempo pra encadear depois de um
+    // crit) e pra estender o hitstun no inimigo (logo abaixo, via takeDamage).
+    if (isCrit) this._lastHitWasCrit = true;
 
     // Força efetiva: num crit garante o "voar longe" mesmo num golpe leve.
-    const kbEff = critLevel === 2 ? Math.max(baseKb, 5.5)
-                : critLevel === 1 ? Math.max(baseKb, 4.5)
-                : baseKb;
+    let kbEff = critLevel === 2 ? Math.max(baseKb, 5.5)
+              : critLevel === 1 ? Math.max(baseKb, 4.5)
+              : baseKb;
+
+    // ── Escala de COMBO (item 16) ────────────────────────────────────
+    //  Quanto mais longo o combo, mais forte o golpe: o dano cresce ~6% por
+    //  hit encadeado (teto +60%), e o knockback/feel acompanha de leve. O
+    //  contador vem do histórico do ComboSystem. comboTier (0..1) também
+    //  escala o hitstop/VFX mais abaixo (impacto "sobe" durante o combo).
+    const comboCount = (() => { try { return this.comboSystem.getComboCount?.() || 0; } catch (_) { return 0; } })();
+    const comboMult  = 1 + Math.min(0.60, comboCount * 0.06);
+    const comboTier  = Math.min(1, comboCount / 8);   // 0 no início → 1 num combo longo
+    kbEff *= (1 + comboTier * 0.25);
+
+    // ── ESPADA mais PESADA (item 17) ─────────────────────────────────
+    //  A espada tem alcance maior (3.2u) e deve "pesar" mais: knockback
+    //  reforçado e hitstop maior (ver mais abaixo) que socos/chutes.
+    const isSwordHit = hitDef.melee === 'sword';
+    if (isSwordHit) kbEff *= 1.35;
+
+    // Dano efetivo escalado pelo combo (arredondado p/ número limpo).
+    const dmgEff = Math.max(1, Math.round(hitDef.damage * comboMult));
 
     // Garante um osso válido: vários hitDefs não definem .bone, o que
     // quebrava getSocketNode (toLowerCase de undefined). Default p/ RightHand,
@@ -481,7 +530,7 @@ export class CombatSystem {
         if (activeHitbox.intersectsMesh(m, false) || _inFront(m.getAbsolutePosition())) {
           hitSomething = true;
           hitEnemies.add(m._propRef);
-          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel, this._surfaceOf(m, m._propRef)); this._hitLanded = true; }
           window._cs?.sendHitProp?.(m._propRef.id, animName);
           if (this.impactSystem) {
             const ip = activeHitbox.getAbsolutePosition().clone();
@@ -499,9 +548,10 @@ export class CombatSystem {
         if (activeHitbox.intersectsMesh(m, false) || _inFront(m.getAbsolutePosition())) {
           hitSomething = true;
           hitEnemies.add(m._mobRef);
-          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
-          window._cs?.sendHitMob?.(m._mobRef.id, hitDef.damage, animName);
-          window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel, 'flesh'); this._hitLanded = true; }
+          this._notifyPlayerMeleeHit(critLevel, false);
+          window._cs?.sendHitMob?.(m._mobRef.id, dmgEff, animName);
+          window._dmgNumbers?.spawn(m.getAbsolutePosition(), dmgEff, { crit: isCrit });
           if (this.impactSystem) {
             const ip = activeHitbox.getAbsolutePosition().clone();
             if (isKick) this.impactSystem.spawnKickImpact(ip, true);
@@ -529,16 +579,17 @@ export class CombatSystem {
         if (activeHitbox.intersectsMesh(m, false) || _inFront(m.getAbsolutePosition())) {
           hitSomething = true;
           hitEnemies.add(m._remoteRef);
-          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel, 'flesh'); this._hitLanded = true; }
+          this._notifyPlayerMeleeHit(critLevel, false);
           // Envia hit via MP — o cliente-alvo recebe e aplica dano local.
           // launch = CHUTE ou CRIT → server arremessa o alvo (knockback forte
           // + pra cima). Sem isso chute/crit só empurravam de leve.
           const _launch = !!isKick || (critLevel || 0) >= 1;
-          window._cs?.sendHitPlayer?.(m._remoteRef.playerId, hitDef.damage, animName, _launch);
+          window._cs?.sendHitPlayer?.(m._remoteRef.playerId, dmgEff, animName, _launch);
           // Damage number visual no cliente que atacou (feedback imediato)
-          window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
-          // HITMARKER imediato no crosshair do atacante (sem esperar o server).
-          window._hitMarker?.hit({ dmg: hitDef.damage, crit: isCrit });
+          window._dmgNumbers?.spawn(m.getAbsolutePosition(), dmgEff, { crit: isCrit });
+          // HITMARKER imediato no crosshair do atacante (escala por dano — item 24).
+          window._hitMarker?.hit({ dmg: dmgEff, crit: isCrit });
           // KNOCKBACK + flinch PREDITIVO no player remoto (lado do atacante):
           //  empurrão visual na direção do golpe usando o kbEff já calculado
           //  (mesmo do PvE). É cosmético — o snapshot do server reconverge a
@@ -581,9 +632,18 @@ export class CombatSystem {
           // "launch" = só o CHUTE forte que lança longe (não soco, não crit normal).
           //  É o que dispara o som espacial do cara voando.
           const launch = isKick && critLevel >= 1;
-          enemy.takeDamage(hitDef.damage, moveDir, kbEff, launch, getLocalCombatTarget(this.playerMesh));
+          const _hpBefore = enemy.hp;
+          enemy.takeDamage(dmgEff, moveDir, kbEff, launch, getLocalCombatTarget(this.playerMesh));
+          const _killed = _hpBefore > 0 && enemy.hp <= 0;
+          // Overkill: golpe LETAL onde o dano supera a vida restante com folga.
+          const _overkill = _killed && dmgEff >= _hpBefore * 1.5;
+          // ── Player hooks (itens 15 & 25) ───────────────────────────
+          //  Melee local conectou → trava ação do player brevemente (hitstun)
+          //  e, se foi golpe letal, dispara o slow-mo de morte. Chamados
+          //  GUARDADOS (?.): o Player de outro agente pode ainda não tê-los.
+          this._notifyPlayerMeleeHit(critLevel, _killed);
           // Som de IMPACTO (só uma vez por golpe, mesmo acertando vários)
-          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel, 'flesh'); this._hitLanded = true; }
           const impactPos = activeHitbox.getAbsolutePosition().clone();
           if (this.impactSystem) {
             if (isKick) this.impactSystem.spawnKickImpact(impactPos, true);
@@ -604,12 +664,23 @@ export class CombatSystem {
               isHeavy: isSword || critLevel >= 2,
             });
           }
-          // Número de dano flutuante (crit = vermelho)
-          window._dmgNumbers?.spawn(m.getAbsolutePosition(), hitDef.damage, { crit: isCrit });
-          // Hit-stop escalado: micro no normal · forte no crit · mais no super.
-          if (critLevel >= 2)      window._hitStop?.hit(0.14, { zoom: 0.13, flash: 0.42 });
-          else if (critLevel === 1) window._hitStop?.hit(0.10, { zoom: 0.09, flash: 0.30 });
-          else                      window._hitStop?.hit(0.035);
+          // Número de dano flutuante (crit = vermelho · overkill = marca letal)
+          window._dmgNumbers?.spawn(m.getAbsolutePosition(), dmgEff, { crit: isCrit, overkill: _overkill });
+          // HITMARKER no crosshair (confirmação + tier por dano/kill — item 24)
+          window._hitMarker?.hit({ dmg: dmgEff, crit: isCrit, kill: _killed });
+          // ── Hit-stop ESCALADO por crit + COMBO + ESPADA (itens 16/17/28) ──
+          //  comboTier (0..1) e a espada empurram o freeze pra cima → o impacto
+          //  "ganha peso" conforme o combo cresce e com a arma pesada.
+          const _swordBoost = isSwordHit ? 1.0 : 0;
+          if (critLevel >= 2) {
+            // super crit + espada → freeze pesadão (~0.22s)
+            window._hitStop?.hit(0.14 + comboTier * 0.05 + _swordBoost * 0.08, { zoom: 0.14, flash: 0.45 });
+          } else if (critLevel === 1) {
+            // sword crit ~0.20s (item 17): base 0.10 + boost 0.10 da espada
+            window._hitStop?.hit(0.10 + comboTier * 0.04 + _swordBoost * 0.10, { zoom: 0.09 + comboTier * 0.02, flash: 0.30 });
+          } else {
+            window._hitStop?.hit(0.035 + comboTier * 0.03 + _swordBoost * 0.03, comboTier > 0.5 ? { zoom: 0.03, flash: 0.12 } : {});
+          }
         }
         return;
       }
@@ -621,7 +692,7 @@ export class CombatSystem {
           hitSomething = true;
           hitPhysics.add(brk);   // não conta 2x no mesmo objeto/golpe
           brk.hit();
-          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel, this._surfaceOf(m, brk)); this._hitLanded = true; }
           if (this.impactSystem) {
             const ip = activeHitbox.getAbsolutePosition().clone();
             if (isKick) this.impactSystem.spawnKickImpact(ip, true);
@@ -645,7 +716,7 @@ export class CombatSystem {
           const force = moveDir.scale(power);
           force.y += isKick ? 4 : 2.5;
           go.applyImpulse(force, activeHitbox.getAbsolutePosition());
-          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel); this._hitLanded = true; }
+          if (!this._hitLanded) { this._playImpactSound(isKick, critLevel, this._surfaceOf(m, go)); this._hitLanded = true; }
           if (this.impactSystem) {
             const ip = activeHitbox.getAbsolutePosition().clone();
             if (isKick) this.impactSystem.spawnKickImpact(ip, true);
@@ -713,6 +784,43 @@ export class CombatSystem {
         }
       }
     }
+  }
+
+  // ── Hooks no Player local (itens 15 & 25) ────────────────────────
+  //  Chamado quando um melee LOCAL conecta. Trava a ação do player por um
+  //  curto hitstun (feel de "peso"); num golpe LETAL dispara o slow-mo de
+  //  morte + um micro hitstop/zoom extra. Tudo GUARDADO: se o Player (outro
+  //  agente) ainda não expôs esses métodos, nada acontece (sem quebrar).
+  //
+  //  WIRING: o player local é alcançado por this.playerMesh._playerRef
+  //  (mesmo ref usado em _applyHit p/ câmera/sons). Se um dia esse ref não
+  //  existir, o no-op silencioso mantém o combate funcionando.
+  _notifyPlayerMeleeHit(critLevel = 0, killed = false) {
+    const pl = this.playerMesh?._playerRef;
+    if (!pl) return;
+    try {
+      // Hitstun do player: 150ms normal, ~280ms em crit (lock breve de ação).
+      const ms = critLevel >= 2 ? 280 : critLevel === 1 ? 220 : 150;
+      pl.applyHitstun?.(ms);
+    } catch (_) {}
+    if (killed) {
+      try { pl.triggerDeathSlowmo?.(); } catch (_) {}
+      // Beat extra de impacto no abate (independente do slow-mo do player).
+      try { window._hitStop?.hit(0.12, { zoom: 0.10, flash: 0.30 }); } catch (_) {}
+    }
+  }
+
+  // ── Classifica a superfície de um mesh para o som de impacto (item 22) ──
+  //  flesh (inimigo/player) · metal · wood · stone. Usa flags do gameobject
+  //  e heurística por nome (barril/caixa/madeira/metal). Default: stone.
+  _surfaceOf(mesh, ref) {
+    try {
+      const tag = (ref?.material || ref?.surface || ref?.type || mesh?.name || '').toString().toLowerCase();
+      if (/wood|madeira|crate|caixa|barrel|barril|plank|box/.test(tag)) return 'wood';
+      if (/metal|steel|iron|aço|aco|ferro|tin|drum|tank/.test(tag))     return 'metal';
+      if (/stone|rock|pedra|concrete|concreto|brick|tijolo/.test(tag))  return 'stone';
+      return 'metal';   // props genéricos soam metálicos por padrão
+    } catch (_) { return 'metal'; }
   }
 
   _onAttackFinish() {

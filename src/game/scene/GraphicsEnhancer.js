@@ -122,7 +122,33 @@ export class GraphicsEnhancer {
         this.glow = glow;
       } catch (_) {}
     } else {
-      console.log('[GFX] GlowLayer desligado no WebGPU (highlights estoura limite de 16 varyings)');
+      // ── Fallback de glow no WebGPU (sem highlights pass / sem varyings) ──
+      //  Não dá pra criar o GlowLayer (estoura 16 varyings). Mas dá pra fazer
+      //  o emissivo "brilhar" de outro jeito BARATO: amplificar a emissiveColor
+      //  dos materiais de tracer/muzzle/neon ACIMA de 1.0. Como o ACES
+      //  tonemapping + exposure rodam no material (sem render-target extra), um
+      //  emissivo >1 vira um núcleo estourado/brilhante (highlight aditivo) —
+      //  sem nenhum postprocess novo → 0 varying extra → seguro no WebGPU.
+      //  Roda 1×/seg num observer leve, pega materiais novos (armas trocadas).
+      const GLOW_OK = /tracer|muzzle|spark|neon|plasma|sunDisc|moonDisc|crystal|beam|glow/i;
+      const BOOST = 2.6;        // multiplicador do emissivo (núcleo estourado)
+      let _gAccum = 0;
+      this._wgpuGlowObs = scene.onBeforeRenderObservable.add(() => {
+        _gAccum += scene.getEngine().getDeltaTime();
+        if (_gAccum < 1000) return;
+        _gAccum = 0;
+        for (const m of scene.meshes) {
+          if (!GLOW_OK.test(m.name || '')) continue;
+          const mat = m.material;
+          if (!mat || !mat.emissiveColor || mat._wgpuGlowBoosted) continue;
+          const e = mat.emissiveColor;
+          // só amplifica se há emissivo real; marca pra não reaplicar (compounding)
+          if (e.r + e.g + e.b <= 0.001) continue;
+          mat.emissiveColor = new BABYLON.Color3(e.r * BOOST, e.g * BOOST, e.b * BOOST);
+          mat._wgpuGlowBoosted = true;
+        }
+      });
+      console.log('[GFX] GlowLayer OFF no WebGPU → fallback: emissivo amplificado (highlight aditivo, sem varyings)');
     }
 
     // — Aberração cromática sutil (lente real) → bordas com franja de cor —
@@ -139,10 +165,116 @@ export class GraphicsEnhancer {
       try { pl.chromaticAberrationEnabled = false; } catch (_) {}
     }
 
+    // ── Motion blur (câmera) + DoF opcional ──────────────────────────
+    //  ⚠️ SÓ no WebGL2 (_heavyFX). Tanto o MotionBlur quanto o DoF usam o
+    //  prePass de velocidade/profundidade que injeta varyings extras no
+    //  fragment shader → no WebGPU estoura o cap de 16 ("fragment input
+    //  17 > 16") → tela preta, igual bloom/glow/SSAO/CA. No WebGPU ficam
+    //  desligados; no WebGL2 ligam (motion blur sutil, DoF off por padrão).
+    if (_heavyFX) {
+      try {
+        const mb = new BABYLON.MotionBlurPostProcess('motionBlur', scene, 1.0, cam);
+        mb.motionStrength = 0.35;     // sutil — só borra movimento rápido
+        mb.motionBlurSamples = 12;
+        // objeto-motion exige prePass+velocidade (caro); câmera-motion basta
+        if (mb.isObjectBased !== undefined) mb.isObjectBased = false;
+        this.motionBlur = mb;
+      } catch (e) { console.warn('[GFX] MotionBlur indisponível:', e?.message); }
+
+      // DoF: integrado ao DefaultRenderingPipeline. OFF por padrão (caro e
+      //  some o fundo num FPS). Religável via setDoF(true).
+      try {
+        pl.depthOfFieldEnabled = false;
+        pl.depthOfFieldBlurLevel = BABYLON.DepthOfFieldEffectBlurLevel.Low;
+        pl.depthOfField.focusDistance = 12000;   // mm
+        pl.depthOfField.focalLength = 50;
+        pl.depthOfField.fStop = 2.8;
+      } catch (_) {}
+    } else {
+      console.log('[GFX] MotionBlur/DoF desligados no WebGPU (prePass de velocidade estoura 16 varyings)');
+    }
+
+    // ── Auto-exposure (eye-adaptation) — preparação ──────────────────
+    //  Amostra o brilho médio da cena e adapta a exposição suavemente.
+    //  Roda em ambos os backends (lê 1 pixel de um RTT minúsculo, sem
+    //  postprocess que injete varyings). NÃO briga com o lock manual do F8
+    //  (só adapta se _lockExposure for false). Ver _updateAutoExposure().
+    this._autoExposure = true;
+    this._exposureTarget = ip.exposure;
+    this._exposureBase = ip.exposure;   // exposição "neutra" calibrada (F8)
+    this._setupAutoExposureProbe();
+
     // nitidez: render na resolução nativa
     try { this.engine.setHardwareScalingLevel(1 / (window.devicePixelRatio || 1) <= 0.5 ? 0.5 : 1); } catch (_) {}
 
     console.log(`[GFX] ✨ pós-processamento: ${window._webgpu ? 'FXAA + ACES-no-material (WebGPU: bloom/glow/CA/imgProc-RTT OFF)' : 'Bloom+ACES+FXAA+Glow+CA'}${this.ssao ? '+SSAO' : ''}`);
+  }
+
+  // ── Auto-exposure: sonda de brilho + adaptação suave ─────────────
+  //  Estratégia barata e cross-backend: a cada ~250ms lê um bloco pequeno
+  //  de pixels do framebuffer já renderizado (engine.readPixels), calcula a
+  //  luminância média e define um alvo de exposição. O update() (chamado pelo
+  //  loop / setDayFactor) faz lerp suave até o alvo. Sem postprocess extra →
+  //  zero varyings → seguro no WebGPU. Respeita o lock manual (F8).
+  _setupAutoExposureProbe() {
+    if (this._aeObserver) return;
+    this._aeAccum = 0;
+    this._aeBusy = false;
+    try {
+      this._aeObserver = this.scene.onAfterRenderObservable.add(() => {
+        const dt = this.engine.getDeltaTime() / 1000 || 0.016;
+        this._aeAccum += dt;
+        if (this._aeAccum < 0.25 || this._aeBusy) { this._adaptExposure(dt); return; }
+        this._aeAccum = 0;
+        this._sampleBrightness();
+        this._adaptExposure(dt);
+      });
+    } catch (e) { console.warn('[GFX] auto-exposure probe falhou:', e?.message); }
+  }
+
+  _sampleBrightness() {
+    if (!this._autoExposure || this._lockExposure) return;
+    const w = this.engine.getRenderWidth?.() || 0;
+    const h = this.engine.getRenderHeight?.() || 0;
+    if (!w || !h) return;
+    // lê um bloco central pequeno (32×32) → barato, representativo do centro de mira
+    const sw = 32, sh = 32;
+    const sx = Math.max(0, ((w - sw) / 2) | 0);
+    const sy = Math.max(0, ((h - sh) / 2) | 0);
+    try {
+      const res = this.engine.readPixels(sx, sy, sw, sh);
+      const apply = (data) => {
+        if (!data || !data.length) return;
+        let sum = 0, n = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          sum += (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+          n++;
+        }
+        if (!n) return;
+        const lum = sum / n;   // 0..1 luminância média percebida
+        // alvo: cena escura → exposição maior; cena clara → menor. Centrado na
+        //  exposição-base calibrada (F8). Faixa contida pra não estourar o look.
+        const k = (0.42 - lum) * 0.9;   // >0 se escuro, <0 se claro
+        this._exposureTarget = Math.max(0.6, Math.min(1.5, this._exposureBase + k));
+      };
+      // WebGPU: readPixels devolve Promise; WebGL2: Uint8Array direto
+      if (res && typeof res.then === 'function') {
+        this._aeBusy = true;
+        res.then((d) => { apply(d); this._aeBusy = false; })
+           .catch(() => { this._aeBusy = false; });
+      } else {
+        apply(res);
+      }
+    } catch (_) { /* readPixels indisponível → desativa silenciosamente */ }
+  }
+
+  _adaptExposure(dt) {
+    if (!this._autoExposure || this._lockExposure) return;
+    const ip = this.scene.imageProcessingConfiguration;
+    // lerp suave (eye-adaptation): ~1.5s de constante de tempo
+    const rate = 1 - Math.exp(-dt / 1.5);
+    ip.exposure += (this._exposureTarget - ip.exposure) * rate;
   }
 
   // ── VR: desliga TODO pós-processamento pesado ────────────────────
@@ -156,7 +288,11 @@ export class GraphicsEnhancer {
     try { this.ssao?.dispose(); } catch (_) {}
     try { this.ssr?.dispose(); } catch (_) {}
     try { this.glow?.dispose(); } catch (_) {}
-    this.pipeline = this.ssao = this.ssr = this.glow = null;
+    try { this.motionBlur?.dispose(); } catch (_) {}
+    try { if (this._aeObserver) this.scene.onAfterRenderObservable.remove(this._aeObserver); } catch (_) {}
+    try { if (this._wgpuGlowObs) this.scene.onBeforeRenderObservable.remove(this._wgpuGlowObs); } catch (_) {}
+    this._aeObserver = this._wgpuGlowObs = null;
+    this.pipeline = this.ssao = this.ssr = this.glow = this.motionBlur = null;
     try { this.engine.setHardwareScalingLevel(1); } catch (_) {}
     this._vrDisabled = true;
     console.log('[GFX] pós-processamento DESLIGADO para VR (compat WebXR)');
@@ -271,7 +407,25 @@ export class GraphicsEnhancer {
   setDayFactor(dayF) {
     if (this._lockExposure) return;        // usuário travou no painel F8 / sol manual
     const ip = this.scene.imageProcessingConfiguration;
-    ip.exposure = 0.82 + dayF * 0.19;      // noite ~0.82, meio-dia ~1.01 (valor F8)
+    const exp = 0.82 + dayF * 0.19;        // noite ~0.82, meio-dia ~1.01 (valor F8)
+    if (this._autoExposure) {
+      // dia/noite define a exposição NEUTRA; o auto-exposure adapta em torno
+      //  dela (e o _adaptExposure faz o lerp suave de ip.exposure).
+      this._exposureBase = exp;
+    } else {
+      ip.exposure = exp;
+    }
     if (this.pipeline) this.pipeline.bloomWeight = 0.12 + dayF * 0.10;   // bloom contido
+  }
+
+  // Liga/desliga o auto-exposure (eye-adaptation). Off → volta pra base.
+  setAutoExposure(on = true) {
+    this._autoExposure = !!on;
+    if (!on) this._exposureTarget = this._exposureBase;
+  }
+
+  // Liga/desliga o Depth of Field (off por padrão; só efetivo no WebGL2).
+  setDoF(on = true) {
+    try { if (this.pipeline) this.pipeline.depthOfFieldEnabled = !!on && !window._webgpu; } catch (_) {}
   }
 }

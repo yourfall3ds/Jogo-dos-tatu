@@ -35,6 +35,18 @@ export class DayNightCycle {
     // limites do ciclo AUTO pra sombra nunca sumir (sol nunca 100% vertical)
     this.maxAutoElev = 0.80;   // teto da altura do sol no auto (~58°)
 
+    // ── Vento / clima ────────────────────────────────────────────────
+    //  Um valor de vento global e suave que oscila lentamente. Publica em
+    //  window._windVec pra que outros sistemas (água, folhagem) leiam um
+    //  parâmetro de sway comum. Direção em XZ, força 0..1. Default leve.
+    this.windStrength = 0.4;                 // base (0..1)
+    this.windDir = new BABYLON.Vector3(0.8, 0, 0.6).normalize();
+    this._windPhase = Math.random() * 10;
+    this.wind = new BABYLON.Vector3(0, 0, 0);
+    this.rainEnabled = false;
+    this._rainPS = null;
+    if (typeof window !== 'undefined') window._windVec = this.wind;
+
     // ── Céu procedural HD ────────────────────────────────────────────
     this._buildSky();
 
@@ -322,6 +334,7 @@ export class DayNightCycle {
   }
 
   update(dt) {
+    this._updateWind(dt);                          // vento roda sempre (manual/pausado também)
     if (this.manual) { this._apply(); return; }   // re-impõe o sol manual
     if (this.paused) return;
     // SINCRONIZADO ENTRE TODOS: a hora do dia NÃO é mais um acumulador local de
@@ -331,6 +344,65 @@ export class DayNightCycle {
     const secs = Date.now() / 1000;
     this.t = ((secs / this.dayLengthSec) + 0.30) % 1;   // +0.30 = começa de manhã
     this._apply();
+  }
+
+  // ── Vento global: sway suave que oscila lentamente (gust + base) ────
+  //  Atualiza this.wind (= window._windVec) que a água/folhagem leem. Força
+  //  modulada por uma senóide lenta pra dar "rajadas". Barato (sem GPU).
+  _updateWind(dt) {
+    this._windPhase += dt * 0.15;
+    // rajada: força base + oscilação suave (0.6..1.0 do strength)
+    const gust = 0.8 + 0.2 * Math.sin(this._windPhase) + 0.1 * Math.sin(this._windPhase * 2.3);
+    const s = this.windStrength * gust;
+    this.wind.x = this.windDir.x * s;
+    this.wind.z = this.windDir.z * s;
+    if (typeof window !== 'undefined') window._windVec = this.wind;
+  }
+
+  // ── Chuva opcional (overlay de partículas leve) ─────────────────────
+  //  Toggle off por padrão. Cria UM ParticleSystem de gotas que segue a
+  //  câmera (caixa de emissão acima do jogador) → cobre só o entorno, barato.
+  setRain(on = true) {
+    on = !!on;
+    if (this.rainEnabled === on) return;
+    this.rainEnabled = on;
+    if (on) {
+      try {
+        if (!this._rainTex) {
+          const t = new BABYLON.DynamicTexture('rainDrop', { width: 8, height: 8 }, this.scene, false);
+          const c = t.getContext();
+          c.fillStyle = 'rgba(190,210,235,0.9)';
+          c.fillRect(3, 0, 2, 8);   // gota = risquinho vertical
+          t.update(); t.hasAlpha = true;
+          this._rainTex = t;
+        }
+        const ps = new BABYLON.ParticleSystem('rainOverlay', 1200, this.scene);
+        ps.particleTexture = this._rainTex;
+        // emite numa caixa acima da câmera; seguimos a câmera em _apply via emitter
+        const cam = this.scene.activeCamera;
+        ps.emitter = (cam && cam.position) ? cam.position : new BABYLON.Vector3(0, 20, 0);
+        ps.minEmitBox = new BABYLON.Vector3(-24, 18, -24);
+        ps.maxEmitBox = new BABYLON.Vector3( 24, 22,  24);
+        ps.color1 = new BABYLON.Color4(0.75, 0.82, 0.92, 0.5);
+        ps.color2 = new BABYLON.Color4(0.65, 0.72, 0.85, 0.4);
+        ps.colorDead = new BABYLON.Color4(0.6, 0.7, 0.8, 0);
+        ps.minSize = 0.04; ps.maxSize = 0.09;
+        ps.minScaleY = 6; ps.maxScaleY = 12;   // gotas alongadas (riscos)
+        ps.minLifeTime = 0.7; ps.maxLifeTime = 1.1;
+        ps.emitRate = 700;
+        ps.gravity = new BABYLON.Vector3(0, -55, 0);
+        ps.direction1 = new BABYLON.Vector3(-2, -18, -2);
+        ps.direction2 = new BABYLON.Vector3( 2, -22,  2);
+        ps.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;
+        ps.start();
+        this._rainPS = ps;
+        console.log('[DayNight] 🌧️ chuva ligada');
+      } catch (e) { console.warn('[DayNight] chuva indisponível:', e?.message); }
+    } else {
+      try { this._rainPS?.stop(); this._rainPS?.dispose(); } catch (_) {}
+      this._rainPS = null;
+      console.log('[DayNight] chuva desligada');
+    }
   }
 
   // ── Aplica iluminação/céu/cores conforme o tempo ─────────────────
@@ -467,6 +539,15 @@ export class DayNightCycle {
     // Acabamento gráfico acompanha a hora (exposure/bloom). No modo manual
     //  o painel controla a exposição → não sobrescreve.
     if (!this.manual && this.gfx?.setDayFactor) this.gfx.setDayFactor(dayF);
+
+    // ── Chuva: segue a câmera + deriva conforme o vento ────────────────
+    if (this._rainPS) {
+      const cam = this.scene.activeCamera;
+      if (cam && cam.position) this._rainPS.emitter = cam.position;
+      const wx = this.wind.x * 14, wz = this.wind.z * 14;
+      this._rainPS.direction1.x = -2 + wx; this._rainPS.direction1.z = -2 + wz;
+      this._rainPS.direction2.x =  2 + wx; this._rainPS.direction2.z =  2 + wz;
+    }
 
     // ── ESPAÇO: sobrescreve céu/luz pro vácuo (preto, sombra dura) ──────
     if (this.space) this._applySpaceOverride(sunPos);

@@ -132,6 +132,20 @@ export class PlayerAnimator {
 
     this._visible   = false;
     this._weaponSocket = null; // TransformNode parentado ao osso da mão
+
+    // ── Procedural rig (IK / look-at / breathing / aim lean) ──────────
+    //  Tudo abaixo é PROCEDURAL (sem clipes dedicados): aplica offsets de
+    //  rotação/posição nos ossos DEPOIS da animação rodar, via um hook no
+    //  onBeforeRenderObservable instalado no setup(). Cada feature é guardada:
+    //  se o osso não existir, ela simplesmente não faz nada (nunca crasha).
+    this._bones = null;          // cache de ossos resolvidos { head, neck, spine, ... }
+    this._bonesTried = false;    // já tentou resolver (evita re-busca por frame)
+    this._procHook = null;       // observer do onBeforeRenderObservable
+    this._procEnabled = true;    // master switch (window._procRig = false desliga)
+    this._breathPhase = Math.random() * Math.PI * 2;
+    this._idleCycleT = 0;        // tempo acumulado em idle (p/ variação)
+    this._idleVariant = 'idle';  // clipe de idle atual (idle / idle_02)
+    this._footRayLen = 0.6;      // alcance do raycast de foot IK (m, escala local)
   }
 
   // ── Sockets (Ancoragem de itens) ────────────────────────────────
@@ -350,6 +364,356 @@ export class PlayerAnimator {
 
     // Inicia em idle
     this._playKey('idle');
+
+    // ── Instala o hook procedural (foot IK / look-at / breathing / lean) ──
+    //  Roda DEPOIS do passo de animação (skeleton já avaliado pelo Babylon),
+    //  só quando o avatar está visível (TPS). Removido junto com o root.
+    this._installProcHook();
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  PROCEDURAL RIG  (itens 31/32/33/36/37 — todos GUARDADOS)
+  // ════════════════════════════════════════════════════════════════
+
+  _installProcHook() {
+    if (this._procHook || !this.scene) return;
+    // onBeforeRenderObservable roda após os AnimationGroups avaliarem os ossos
+    // do frame anterior; aplicamos os offsets aditivos por cima. Guardado em
+    // try/catch global pra um erro num bone nunca derrubar o render loop.
+    this._procHook = this.scene.onBeforeRenderObservable.add(() => {
+      try { this._updateProcedural(); } catch (_) {}
+    });
+  }
+
+  /** Acha um nó/osso descendente cujo nome casa (case-insensitive, exato →
+   *  sufixo). Retorna null se não achar (feature dependente se desliga). */
+  _findBone(...names) {
+    if (!this.root?.getDescendants) return null;
+    const desc = this.root.getDescendants(false);
+    const low = (s) => String(s || '').toLowerCase();
+    for (const want of names) {
+      const w = low(want);
+      // exato
+      let n = desc.find(d => low(d.name) === w);
+      if (n) return n;
+      // termina-com (cobre prefixos tipo "mixamorig:Head")
+      n = desc.find(d => { const dn = low(d.name); return dn.endsWith(':' + w) || dn.endsWith('_' + w) || dn === w; });
+      if (n) return n;
+    }
+    // substring como último recurso
+    for (const want of names) {
+      const w = low(want);
+      const n = desc.find(d => low(d.name).includes(w));
+      if (n) return n;
+    }
+    return null;
+  }
+
+  /** Resolve (1x) os ossos usados pelo rig procedural. Tudo opcional. */
+  _resolveBones() {
+    if (this._bonesTried) return this._bones;
+    this._bonesTried = true;
+    if (!this.root) { this._bones = null; return null; }
+    const b = {
+      head:      this._findBone('Head'),
+      neck:      this._findBone('Neck'),
+      spine:     this._findBone('Spine1', 'Spine'),
+      chest:     this._findBone('Spine2', 'Chest', 'Spine1'),
+      leftFoot:  this._findBone('LeftFoot'),
+      rightFoot: this._findBone('RightFoot'),
+      leftLeg:   this._findBone('LeftLeg'),
+      rightLeg:  this._findBone('RightLeg'),
+      leftHand:  this._findBone('LeftHand'),
+      rightHand: this._findBone('RightHand'),
+    };
+    // Guarda a rest-rotation (pose neutra) dos ossos que recebem offset aditivo,
+    // pra somar o offset em cima dela a cada frame (e não acumular).
+    for (const k of ['head', 'neck', 'spine', 'chest', 'leftFoot', 'rightFoot']) {
+      const n = b[k];
+      if (n) {
+        try {
+          if (n.rotationQuaternion) n.rotationQuaternion = null;
+          n._restRot = n.rotation.clone();
+          n._restPos = n.position.clone();
+        } catch (_) {}
+      }
+    }
+    this._bones = b;
+    return b;
+  }
+
+  /** Tick procedural por frame. Só roda visível (TPS) e com BABYLON disponível. */
+  _updateProcedural() {
+    // Auto-remove o hook se o root foi descartado (setMouseCharacter troca o
+    // animator inteiro mas o observer ficaria pendurado na cena).
+    if (!this.root || this.root.isDisposed?.()) {
+      if (this._procHook && this.scene) {
+        try { this.scene.onBeforeRenderObservable.remove(this._procHook); } catch (_) {}
+        this._procHook = null;
+      }
+      return;
+    }
+    if (!this._visible || typeof BABYLON === 'undefined') return;
+    if (this._procEnabled === false || (typeof window !== 'undefined' && window._procRig === false)) return;
+    const b = this._resolveBones();
+    if (!b) return;
+    const dt = this.scene?.getEngine?.()?.getDeltaTime?.() / 1000 || 0.016;
+
+    const moving = (this._curKey === 'walk' || this._curKey === 'walk_aim' ||
+                    this._curKey === 'run' || this._curKey === 'run_shoot' ||
+                    this._curKey === 'walk_back' || this._curKey === 'run_reload');
+    const isIdle = this._curKey === 'idle' || this._curKey === '';
+
+    // Lê estado de movimento do player global (vel + facing) p/ strafe/turn.
+    let p = null;
+    try { p = (typeof window !== 'undefined') ? (window._gamePlayer || window._player) : null; } catch (_) {}
+
+    // 36 — Breathing: respiração sutil no peito/spine durante idle.
+    this._applyBreathing(b, dt, isIdle);
+    // 34 + 41 — Strafe lean + torso twist (movimento lateral relativo ao facing).
+    this._applyStrafeLean(b, p, dt);
+    // 35 — Turn-in-place: shuffle de passo quando gira parado.
+    this._applyTurnInPlace(b, p, dt, isIdle);
+    // 32 + 37 — Look-at de cabeça/pescoço + lean de tronco pela mira.
+    this._applyLookAndLean(b);
+    // 33 — Hand-on-weapon IK (mão secundária no socket da arma).
+    this._applyHandIK(b);
+    // 31 — Foot IK (planta os pés no chão/rampa via raycast).
+    this._applyFootIK(b, moving);
+    // 38 — Expressão facial (morph targets) pain/effort em hit / HP baixo.
+    this._applyFacial(p, dt);
+  }
+
+  // 38 — Facial expression via morph targets. Se o avatar NÃO tem morph
+  //  targets, _resolveMorphs marca _noMorphs=true e a feature se desliga.
+  _resolveMorphs() {
+    if (this._morphsTried) return this._morphTargets;
+    this._morphsTried = true;
+    const found = [];
+    try {
+      const meshes = this._allMeshes || [];
+      for (const m of meshes) {
+        const mtm = m?.morphTargetManager;
+        if (!mtm || !mtm.numTargets) continue;
+        for (let i = 0; i < mtm.numTargets; i++) {
+          const t = mtm.getTarget(i);
+          if (!t) continue;
+          const nm = String(t.name || '').toLowerCase();
+          // heurística: alvos de boca/sobrancelha/dor servem de "pain/effort".
+          if (/pain|hurt|angry|brow|frown|mouth|jaw|grit|effort|aa|oh|ee/.test(nm)) {
+            found.push(t);
+          }
+        }
+        // sem match por nome mas tem alvos → usa o primeiro como genérico.
+        if (!found.length && mtm.numTargets > 0) {
+          const t = mtm.getTarget(0); if (t) found.push(t);
+        }
+      }
+    } catch (_) {}
+    this._morphTargets = found;
+    this._noMorphs = found.length === 0;
+    return found;
+  }
+
+  _applyFacial(p, dt) {
+    if (this._noMorphs) return;
+    const targets = this._resolveMorphs();
+    if (!targets || !targets.length) return;   // skip: avatar sem blendshapes
+    // Intensidade alvo: sobe em hit recente (shootT é proxy de ação) ou HP baixo.
+    let want = 0;
+    try {
+      if (p) {
+        const hp = p.hp ?? p._hp ?? 100, maxHp = p.maxHp ?? p._maxHp ?? 100;
+        if (maxHp > 0 && hp / maxHp < 0.35) want = 0.5;       // careta de dor (HP baixo)
+        if ((p._hitStunT || 0) > 0) want = 1.0;                // pancada agora
+      }
+    } catch (_) {}
+    this._facialAmt = this._facialAmt ?? 0;
+    this._facialAmt += (want - this._facialAmt) * Math.min(1, dt * (want > this._facialAmt ? 12 : 4));
+    if (this._facialAmt < 0.005 && want === 0) this._facialAmt = 0;
+    for (const t of targets) {
+      try { t.influence = this._facialAmt; } catch (_) {}
+    }
+  }
+
+  // 34 + 41 — Strafe lean / direction-adaptive twist.
+  //  Não existem clipes de strafe (esquerda/direita) — quando o corpo está
+  //  travado encarando a câmera (armado) e o movimento é LATERAL, o clipe de
+  //  andar pra frente girado parece errado. Compensamos com: (a) LEAN do tronco
+  //  na direção do movimento lateral e (b) TWIST sutil pra o corpo "liderar" a
+  //  direção do deslocamento — barato e legível. Procedural; sem clipes.
+  _applyStrafeLean(b, p, dt) {
+    const node = b.spine;
+    if (!node || !node._restRot || !p) return;
+    let vx = p._vx || 0, vz = p._vz || 0;
+    const sp = Math.hypot(vx, vz);
+    // facing do corpo no mundo (root.rotation.y já inclui FACING_OFFSET = π).
+    const facing = (this.root?.rotation?.y || 0) - FACING_OFFSET;
+    // componente lateral (direita = +) do movimento relativo ao facing.
+    // forward = (sin(facing), cos(facing)); right = (cos(facing), -sin(facing)).
+    let lateral = 0, forward = 0;
+    if (sp > 0.2) {
+      const nx = vx / sp, nz = vz / sp;
+      lateral = nx * Math.cos(facing) - nz * Math.sin(facing);
+      forward = nx * Math.sin(facing) + nz * Math.cos(facing);
+    }
+    // Só vale a pena quando o movimento é majoritariamente lateral (strafe).
+    const strafeFrac = (sp > 0.2) ? Math.abs(lateral) * (1 - Math.min(1, Math.abs(forward))) : 0;
+    const targetRoll  = -lateral * 0.10 * strafeFrac;   // inclina pro lado do strafe
+    const targetTwist =  lateral * 0.18 * strafeFrac;   // tronco "lidera" a direção
+    this._strafeRoll  = this._strafeRoll ?? 0;
+    this._strafeTwist = this._strafeTwist ?? 0;
+    const k = Math.min(1, dt * 6);
+    this._strafeRoll  += (targetRoll  - this._strafeRoll)  * k;
+    this._strafeTwist += (targetTwist - this._strafeTwist) * k;
+    try {
+      node.rotation.z = node._restRot.z + this._strafeRoll;
+      node.rotation.y = node._restRot.y + this._strafeTwist;
+    } catch (_) {}
+  }
+
+  // 35 — Turn-in-place: quando PARADO e o facing alvo (câmera) gira muito, dá um
+  //  "shuffle" procedural (pequeno balanço dos pés alternado) já que não há
+  //  clipe de turn-in-place. O giro do corpo em si é feito pelo Player.js; aqui
+  //  só adicionamos a leitura de pés pra não parecer que desliza girando.
+  _applyTurnInPlace(b, p, dt, isIdle) {
+    if (!p) return;
+    const yaw = p.yaw || 0;
+    this._lastYawTurn = this._lastYawTurn ?? yaw;
+    let dyaw = yaw - this._lastYawTurn;
+    while (dyaw > 180) dyaw -= 360; while (dyaw < -180) dyaw += 360;
+    this._lastYawTurn = yaw;
+    // taxa de giro (graus/s) — só dispara o shuffle parado e girando rápido.
+    const rate = dt > 0 ? Math.abs(dyaw) / dt : 0;
+    const turning = isIdle && rate > 60;   // > ~60°/s parado = girando de propósito
+    this._turnShuffle = this._turnShuffle ?? 0;
+    const target = turning ? 1 : 0;
+    this._turnShuffle += (target - this._turnShuffle) * Math.min(1, dt * 5);
+    if (this._turnShuffle < 0.01) return;
+    // shuffle: pequeno bob alternado dos pés (sobe/desce em contrafase).
+    this._turnPhase = (this._turnPhase || 0) + dt * 9;
+    const s = Math.sin(this._turnPhase) * 0.02 * this._turnShuffle;
+    if (b.leftFoot && b.leftFoot._restPos) {
+      try { b.leftFoot._turnY = s; } catch (_) {}
+    }
+    if (b.rightFoot && b.rightFoot._restPos) {
+      try { b.rightFoot._turnY = -s; } catch (_) {}
+    }
+  }
+
+  // 36 — Breathing additivo no peito/spine (idle). Soma seno na rest-pose.
+  _applyBreathing(b, dt, isIdle) {
+    const node = b.chest || b.spine;
+    if (!node || !node._restRot) return;
+    // Amplitude desce a 0 quando não está em idle (sem respiração correndo).
+    this._breathAmp = this._breathAmp ?? 0;
+    const target = isIdle ? 1 : 0;
+    this._breathAmp += (target - this._breathAmp) * Math.min(1, dt * 4);
+    if (this._breathAmp < 0.001) return;
+    this._breathPhase += dt * 1.6;          // ~0.25 Hz respiração calma
+    const s = Math.sin(this._breathPhase) * 0.022 * this._breathAmp; // ~1.3°
+    try {
+      node.rotation.x = node._restRot.x + s;     // peito sobe/desce sutil
+    } catch (_) {}
+  }
+
+  // 32 + 37 — Head/neck look-at + torso aim lean (additivo, clampado).
+  _applyLookAndLean(b) {
+    // Pitch/yaw da mira: a câmera olha pra onde a mira aponta. Em TPS o corpo
+    // já encara a câmera (Player gira o root), então o DELTA relevante é o
+    // PITCH (cima/baixo) — a cabeça acompanha. Lê do player global se houver.
+    let pitch = 0, yawDelta = 0;
+    try {
+      const p = (typeof window !== 'undefined') ? (window._gamePlayer || window._player) : null;
+      if (p) {
+        pitch = BABYLON.Tools?.ToRadians ? BABYLON.Tools.ToRadians(p.pitch || 0) : (p.pitch || 0) * Math.PI / 180;
+      }
+    } catch (_) {}
+    // clamp
+    const clamp = (v, m) => Math.max(-m, Math.min(m, v));
+    pitch = clamp(pitch, 0.6);
+    yawDelta = clamp(yawDelta, 0.5);
+
+    // Head look-at: olha pra cima/baixo conforme o pitch da mira.
+    if (b.head && b.head._restRot) {
+      try { b.head.rotation.x = b.head._restRot.x - pitch * 0.55; } catch (_) {}
+    }
+    if (b.neck && b.neck._restRot) {
+      try { b.neck.rotation.x = b.neck._restRot.x - pitch * 0.3; } catch (_) {}
+    }
+    // 37 — Aim lean: tronco inclina levemente conforme pitch (mira pra cima =
+    //  peito abre pra trás; pra baixo = curva pra frente). Sutil.
+    if (b.spine && b.spine._restRot) {
+      try { b.spine.rotation.x = b.spine._restRot.x - pitch * 0.12; } catch (_) {}
+    }
+  }
+
+  // 33 — Hand-on-weapon IK: cola a mão ESQUERDA (secundária) no socket da arma
+  //  (cano/antebraço). Sem alvo de socket → não faz nada. Procedural simples:
+  //  orienta o osso da mão esquerda pro socket da arma se ambos existirem.
+  _applyHandIK(b) {
+    const hand = b.leftHand;
+    const socket = this._weaponSocket;
+    if (!hand || !socket || !hand.getAbsolutePosition) return;
+    try {
+      // Só atua quando há arma anexada (socket com filhos = arma na mão).
+      const hasWeapon = socket.getChildren && socket.getChildren().length > 0;
+      if (!hasWeapon) return;
+      // Alvo: um pouco "atrás" do socket (empunhadura de apoio). Convertemos a
+      // posição mundial do socket pro espaço local do PAI da mão e apontamos.
+      const targetW = socket.getAbsolutePosition();
+      const parent = hand.parent;
+      if (!parent?.getWorldMatrix) return;
+      const inv = BABYLON.Matrix.Invert(parent.getWorldMatrix());
+      const local = BABYLON.Vector3.TransformCoordinates(targetW, inv);
+      // Suaviza pra mão "escorregar" suavemente até a posição (lerp), sem snap.
+      if (hand._restPos) {
+        const k = 0.18; // peso da correção (mantém parte da pose original)
+        hand.position.x = hand._restPos.x + (local.x - hand._restPos.x) * k;
+        hand.position.y = hand._restPos.y + (local.y - hand._restPos.y) * k;
+        hand.position.z = hand._restPos.z + (local.z - hand._restPos.z) * k;
+      }
+    } catch (_) {}
+  }
+
+  // 31 — Foot IK: raycast pra baixo sob cada pé e ajusta a ALTURA do tornozelo
+  //  pra plantar nas rampas/degraus (sem flutuar/afundar). Procedural, guardado.
+  _applyFootIK(b, moving) {
+    if (!this.scene) return;
+    const feet = [b.leftFoot, b.rightFoot];
+    if (!feet[0] && !feet[1]) return;   // sem pés → desliga
+    // Não faz IK durante corrida rápida (pés no ar muito tempo → ruído); mantém
+    // suave em idle/walk onde o plantio importa.
+    const ikAmount = moving ? 0.4 : 0.9;
+    for (const foot of feet) {
+      if (!foot || !foot._restPos || !foot.getAbsolutePosition) continue;
+      try {
+        // Shuffle de turn-in-place (item 35) somado por cima da IK.
+        const turnY = foot._turnY || 0;
+        const fp = foot.getAbsolutePosition();
+        // Ray de cima do pé pra baixo, procurando o chão.
+        const origin = new BABYLON.Vector3(fp.x, fp.y + 0.4, fp.z);
+        const ray = new BABYLON.Ray(origin, new BABYLON.Vector3(0, -1, 0), 0.4 + this._footRayLen);
+        const hit = this.scene.pickWithRay(ray, (m) =>
+          m && m.isPickable !== false && !m._isRemotePlayer &&
+          m !== foot && (this._allMeshes.indexOf(m) < 0));
+        if (!hit?.hit || !hit.pickedPoint) continue;
+        // Diferença vertical entre o pé e o chão sob ele (mundo).
+        const groundY = hit.pickedPoint.y;
+        const desiredFootY = groundY + 0.02;        // pequena folga (sola)
+        const deltaW = desiredFootY - fp.y;
+        // Converte o delta mundial em delta LOCAL (escala do osso ~0.01 no rato).
+        const sc = this.root?.scaling?.y || 1;
+        const deltaLocal = (deltaW / sc) * ikAmount;
+        // Clampa pra não esticar a perna absurdamente.
+        const clamped = Math.max(-0.15, Math.min(0.15, deltaLocal));
+        // Aplica suave (lerp) na posição Y local do tornozelo, sobre a rest-pose.
+        const targetY = foot._restPos.y + clamped;
+        foot._ikY = foot._ikY ?? foot._restPos.y;
+        foot._ikY += (targetY - foot._ikY) * 0.25;
+        foot.position.y = foot._ikY + turnY;
+      } catch (_) {}
+    }
   }
 
   // ── Visibilidade ─────────────────────────────────────────────────

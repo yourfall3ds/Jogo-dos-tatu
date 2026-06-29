@@ -89,7 +89,8 @@ export class MonsterPlant {
     this.BASE_SCALE = 0.010;
     this._flashT    = 0;
     this._deathT    = 0;
-    this.DEATH_DUR  = 1.6;
+    this.DEATH_DUR  = 2.0;          // levemente maior: dá tempo do "beat" de morte
+    this.DEATH_CRUMPLE = 0.45;      // fração inicial = crumple (squash) antes do fade
 
     this.onAttack     = null;
     this.onPlaySound  = null;   // (id: string) => void — chamado pelo Level.js
@@ -238,17 +239,22 @@ export class MonsterPlant {
     this._flashT  = 0.20;
     this.onPlaySound?.('plant_damage');
 
+    // CRIT = golpe pesado (kbMult alto, alinhado ao CRIT_KB do CombatSystem).
+    // Crit ESTENDE o hitstun (item 28): o monstro fica travado por mais tempo.
+    const crit       = kbMult >= 4.5;
+    const stunMult   = crit ? 1.8 : 1.0;
+
     // ── Hitstun (Interrompe e atrasa ataques) ───────────────────
-    this._attackT = Math.max(this._attackT, 1.0); // Adiciona 1 seg de delay pro ataque base
-    this._biteT   = Math.max(this._biteT, 1.5);
-    this._slamT   = Math.max(this._slamT, 2.0);
+    this._attackT = Math.max(this._attackT, 1.0 * stunMult); // delay do ataque base (maior em crit)
+    this._biteT   = Math.max(this._biteT, 1.5 * stunMult);
+    this._slamT   = Math.max(this._slamT, 2.0 * stunMult);
 
     // Cancela cast de habilidades se estiver apanhando
     if (this._hopState === HopState.CROUCH || 
         this._hopState === HopState.BITE_WINDUP || 
         this._hopState === HopState.SLAM_WINDUP) {
         this._hopState = HopState.WAIT;
-        this._hopT = 0.5; // Fica tonto meio segundo antes de pular de novo
+        this._hopT = crit ? 0.9 : 0.5; // Fica tonto antes de pular (mais tempo em crit — item 28)
     }
 
     if (fromDir) {
@@ -273,6 +279,12 @@ export class MonsterPlant {
       this._deathT   = this.DEATH_DUR;
       this._hopState = HopState.DYING;
       this.onPlaySound?.('plant_death');
+      // ── Beat de morte (item 26): jato de sangue + poça no chão antes do fade ──
+      try {
+        const dp = this.root.position.add(new BABYLON.Vector3(0, this.HEAD_HEIGHT * 0.5, 0));
+        const dd = fromDir ? fromDir.normalize() : BABYLON.Vector3.Up();
+        window._bloodFX?.spawn?.(dp, dd, { multiplier: 1.8, sourceNode: this.root, isHeavy: true });
+      } catch (_) {}
     }
   }
 
@@ -288,14 +300,34 @@ export class MonsterPlant {
     if (this._biteT   > 0) this._biteT   -= dt;
     if (this._slamT   > 0) this._slamT   -= dt;
 
-    // ── Morte ─────────────────────────────────────────────────────
+    // ── Morte (item 26: crumple beat → tomba → fade) ───────────────
     if (this._hopState === HopState.DYING) {
       this._deathT -= dt;
-      const t   = 1 - (this._deathT / this.DEATH_DUR);
-      this.root.rotation.z = t * Math.PI * 0.6;
-      const vis = Math.max(0, this._deathT / this.DEATH_DUR);
-      for (const m of this._childMeshes) m.visibility = vis;
+      const t   = 1 - (this._deathT / this.DEATH_DUR);   // 0→1
+      const cr  = this.DEATH_CRUMPLE;
       this._showHPBar(false);
+
+      if (t < cr) {
+        // ── Beat de morte: a planta CRUMPLA (encolhe/achata, treme) sem sumir
+        //  ainda. Dá o "momento" antes do fade. Sem rotação grande aqui.
+        const k = t / cr;                       // 0→1 dentro do beat
+        const squashY  = 1.0 - 0.45 * k;        // achata verticalmente
+        const squashXZ = 1.0 + 0.30 * k;        // espalha um pouco
+        const s = this.root.scaling;
+        s.y = BABYLON.Scalar.Lerp(s.y, this.BASE_SCALE * squashY,  Math.min(1, dt * 14));
+        s.x = BABYLON.Scalar.Lerp(s.x, this.BASE_SCALE * squashXZ, Math.min(1, dt * 14));
+        s.z = BABYLON.Scalar.Lerp(s.z, this.BASE_SCALE * squashXZ, Math.min(1, dt * 14));
+        // micro tremor de agonia
+        this.root.rotation.z = Math.sin(t * 60) * 0.06 * (1 - k);
+        for (const m of this._childMeshes) m.visibility = 1;
+      } else {
+        // ── Tomba + fade ──
+        const k = (t - cr) / (1 - cr);          // 0→1 na fase de queda
+        this.root.rotation.z = k * Math.PI * 0.6;
+        const vis = Math.max(0, 1 - k);
+        for (const m of this._childMeshes) m.visibility = vis;
+      }
+
       if (this._deathT <= 0) {
         this._hopState = HopState.DEAD;
         this._cleanup();

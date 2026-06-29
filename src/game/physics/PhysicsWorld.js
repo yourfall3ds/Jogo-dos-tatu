@@ -56,6 +56,51 @@ export async function initPhysics(scene, gravityY = -28) {
 /** True se a física Havok está ativa. */
 export function physicsReady() { return _ready; }
 
+// ─────────────────────────────────────────────────────────────────
+//  ATRITO POR SUPERFÍCIE (material/tag) — item 6
+//  Permite que ICE/MUD/etc. tenham atrito diferente do default. A lookup
+//  resolve a partir de uma tag explícita (root._surfaceTag / mesh.metadata
+//  .surface) ou do NOME do mesh (heurística "ice"/"mud" no nome). Sem tag
+//  conhecida → DEFAULT_FRICTION (0.6), mantendo o comportamento atual.
+// ─────────────────────────────────────────────────────────────────
+const DEFAULT_FRICTION = 0.6;
+const SURFACE_FRICTION = {
+  ice:    0.02,   // escorrega
+  glass:  0.04,
+  mud:    0.95,   // gruda/atola
+  sand:   0.85,
+  grass:  0.55,
+  metal:  0.45,
+  wood:   0.5,
+  normal: DEFAULT_FRICTION,
+};
+
+/** Atrito de uma tag de superfície (string). Default 0.6 se desconhecida. */
+export function frictionForSurface(tag) {
+  if (!tag) return DEFAULT_FRICTION;
+  const k = String(tag).toLowerCase();
+  return (k in SURFACE_FRICTION) ? SURFACE_FRICTION[k] : DEFAULT_FRICTION;
+}
+
+/**
+ * Resolve o atrito a usar para um root/mesh:
+ *  1) tag explícita em root._surfaceTag ou mesh.metadata.surface
+ *  2) heurística pelo nome (contém "ice"/"mud"/etc.)
+ *  3) override numérico passado (opts.friction) — só se a superfície for default
+ *  4) DEFAULT_FRICTION (0.6)
+ */
+function _resolveFriction(root, fallback = DEFAULT_FRICTION) {
+  try {
+    const tag = root?._surfaceTag || root?.metadata?.surface;
+    if (tag) return frictionForSurface(tag);
+    const name = (root?.name || '').toLowerCase();
+    for (const key of Object.keys(SURFACE_FRICTION)) {
+      if (key !== 'normal' && name.includes(key)) return SURFACE_FRICTION[key];
+    }
+  } catch (_) {}
+  return fallback;
+}
+
 /** Plugin Havok (ou null). */
 export function getPhysicsPlugin() { return _plugin; }
 
@@ -73,6 +118,8 @@ export function makeStaticBody(root, scene, shape = 'box') {
   if (!_ready || !root) return null;
   const meshes = [root, ...(root.getChildMeshes?.(false) || [])].filter(m => (m.getTotalVertices?.() || 0) > 0);
   if (!meshes.length) return null;
+  // Item 6: atrito por superfície (tag/nome) — default 0.6.
+  const friction = _resolveFriction(root);
   try {
     meshes.forEach(m => { m.checkCollisions = false; });   // Havok assume
 
@@ -85,7 +132,7 @@ export function makeStaticBody(root, scene, shape = 'box') {
       //  perde, mas pra props/escadas/plataformas é o ideal.
       meshes.sort((a, b) => b.getTotalVertices() - a.getTotalVertices());
       const dom = meshes[0];
-      const agg = new BABYLON.PhysicsAggregate(dom, BABYLON.PhysicsShapeType.CONVEX_HULL, { mass: 0, friction: 0.6 }, scene);
+      const agg = new BABYLON.PhysicsAggregate(dom, BABYLON.PhysicsShapeType.CONVEX_HULL, { mass: 0, friction }, scene);
       root._staticBody = agg.body; root._colliderOptimized = true;
       return agg.body;
     }
@@ -104,7 +151,7 @@ export function makeStaticBody(root, scene, shape = 'box') {
     box.position.copyFrom(center);
     box.rotationQuaternion = BABYLON.Quaternion.Identity();
     box.isVisible = false; box.isPickable = true; box._isBoxCol = true;
-    const agg = new BABYLON.PhysicsAggregate(box, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.6 }, scene);
+    const agg = new BABYLON.PhysicsAggregate(box, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction }, scene);
     root._staticBody = agg.body; root._colliderOptimized = true;
     return agg.body;
   } catch (e) {
@@ -148,6 +195,9 @@ function _pickShapeType(mesh) {
  */
 export function makeDynamicBody(glbRoot, scene, { mass = 1, friction = 0.6, restitution = 0.2 } = {}) {
   if (!_ready || !glbRoot) return null;
+  // Item 6: se o objeto tiver uma tag de superfície (ice/mud/etc.), ela tem
+  // prioridade sobre o friction padrão recebido. Sem tag → mantém o valor dado.
+  friction = _resolveFriction(glbRoot, friction);
   const meshes = [glbRoot, ...(glbRoot.getChildMeshes?.(false) || [])]
     .filter(m => (m.getTotalVertices?.() || 0) > 0);
   if (!meshes.length) return null;

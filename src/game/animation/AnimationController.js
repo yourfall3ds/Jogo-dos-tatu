@@ -125,7 +125,21 @@ export class AnimationController {
    */
   updateLocomotion(moveAmount) {
     if (moveAmount < 0.1) {
-      this.play("idle", { loop: true, speed: 1.0, fade: 0.20 });
+      // ── Idle variation (item 36) ────────────────────────────────────
+      //  Alterna entre 'idle' e 'idle_02' a cada CICLO de idle pra o parado
+      //  não ficar monótono. Só troca quando ENTRA em idle vindo de movimento
+      //  (não pisca no meio de uma pose). Cai pra 'idle' se 'idle_02' não existe.
+      let idleClip = 'idle';
+      if (this.currentName !== 'idle' && this.currentName !== 'idle_02') {
+        // entrando em idle agora → escolhe a variante deste ciclo
+        if (this.library.has('idle_02')) {
+          this._idleToggle = !this._idleToggle;
+          idleClip = this._idleToggle ? 'idle_02' : 'idle';
+        }
+      } else {
+        idleClip = this.currentName;   // mantém a variante atual (sem re-fade)
+      }
+      this.play(idleClip, { loop: true, speed: 1.0, fade: 0.20 });
     } else if (moveAmount < 0.45) {
       // bem devagar (strafe/desacelerando) → andar
       this.play("walk", { loop: true, speed: Math.max(0.8, moveAmount * 2.2), fade: 0.16 });

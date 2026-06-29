@@ -309,14 +309,18 @@ export class WeaponSystem {
 
     this._decalMat   = mat;
     this._decalPool  = [];       // array de decals criados (para limpar os mais velhos)
-    this._decalMax   = 40;       // máximo de buracos de bala na cena ao mesmo tempo
+    this._decalMax   = 80;       // máximo de buracos de bala na cena (pool maior = ficam mais tempo)
+    this._decalLife  = 22;       // segundos até começar a sumir (vida mais longa)
+    this._decalFade  = 3.0;      // segundos de fade-out suave antes de remover
   }
 
   // Cria decal de buraco de bala na superfície
   _spawnDecal(pickedMesh, position, normal) {
     if (!pickedMesh || !position) return;
     try {
-      const size = new BABYLON.Vector3(0.28, 0.28, 0.28);
+      // Decal MAIOR (era 0.28) + leve variação por tiro → marca mais presente.
+      const s = 0.42 + Math.random() * 0.12;
+      const size = new BABYLON.Vector3(s, s, s);
       const decal = BABYLON.MeshBuilder.CreateDecal('bhole', pickedMesh, {
         position,
         normal: normal ?? BABYLON.Vector3.Up(),
@@ -325,6 +329,8 @@ export class WeaponSystem {
       });
       decal.material  = this._decalMat;
       decal.isPickable = false;
+      // Metadata pro fade-out suave em update() (vida longa, depois some devagar).
+      decal._bholeBorn = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
 
       this._decalPool.push(decal);
       // Remove o mais antigo quando ultrapassa o limite
@@ -460,6 +466,66 @@ export class WeaponSystem {
     } catch (_) {}
   }
 
+  // ── Falloff de dano por distância (hitscan) ──────────────────────
+  //  Dano CHEIO até NEAR (~50u); de NEAR→FAR (~300u) interpola linear até um
+  //  PISO (floor). Acima de FAR fica no piso. Retorna multiplicador 0..1.
+  //  Por arma: w.falloffNear / w.falloffFar / w.falloffFloor sobrescrevem.
+  _damageFalloff(dist) {
+    const w = this.getCurrentWeapon();
+    const near  = w?.falloffNear  ?? 50;
+    const far   = w?.falloffFar   ?? 300;
+    const floor = w?.falloffFloor ?? 0.45;
+    if (!(dist > near)) return 1;
+    if (dist >= far) return floor;
+    const t = (dist - near) / (far - near);   // 0..1
+    return 1 + (floor - 1) * t;                // lerp 1 → floor
+  }
+
+  // ── Detecção de headshot / weak-point ────────────────────────────
+  //  Sem nomes de osso confiáveis no hitscan (pegamos o mesh do alvo), usamos
+  //  a ALTURA Y do impacto vs o topo do bounding do alvo: terço superior =
+  //  cabeça (mult cheio), faixa logo abaixo = upper body (mult parcial).
+  //  Retorna { head:bool, mult:number }.
+  _headshotInfo(mesh, point) {
+    const HEAD = this.getCurrentWeapon()?.headshotMult ?? 1.8;
+    const UPPER = 1.25;
+    try {
+      if (!mesh || !point) return { head: false, mult: 1 };
+      const bb = mesh.getBoundingInfo?.()?.boundingBox;
+      let minY, maxY;
+      if (bb) { minY = bb.minimumWorld.y; maxY = bb.maximumWorld.y; }
+      else {
+        const c = mesh.getAbsolutePosition();
+        minY = c.y - 0.9; maxY = c.y + 0.9;
+      }
+      const h = Math.max(0.001, maxY - minY);
+      const rel = (point.y - minY) / h;        // 0 = pés, 1 = topo
+      if (rel >= 0.82) return { head: true,  mult: HEAD };   // cabeça
+      if (rel >= 0.62) return { head: false, mult: UPPER };  // upper body (weak-point leve)
+      return { head: false, mult: 1 };
+    } catch (_) { return { head: false, mult: 1 }; }
+  }
+
+  // Feedback sonoro distinto de headshot (reusa um som curto seco existente;
+  // SoundManager ignora ids ausentes — nunca quebra).
+  _playHeadshotSfx() {
+    try {
+      const snd = (this.level?.player || window._gamePlayer)?.sounds;
+      snd?.playNow?.('punch_crit', 0.8);
+    } catch (_) {}
+  }
+
+  // ── Tick de confirmação de acerto (item 24) ──────────────────────
+  //  Som curto quando o hitmarker pisca, escalado por dano (mais alto =
+  //  golpe mais pesado). Reusa ids existentes; ausência = silêncio.
+  _playHitConfirm(dmg = 0) {
+    try {
+      const snd = (this.level?.player || window._gamePlayer)?.sounds;
+      const vol = Math.min(0.9, 0.45 + dmg / 200);
+      snd?.playNow?.('bullet_impact', vol);
+    } catch (_) {}
+  }
+
   shoot() {
     // Melee (espada): WeaponSystem.shoot é no-op. Player.js detecta isMelee
     // e roteia LMB para combatSystem.swordAttack().
@@ -473,13 +539,25 @@ export class WeaponSystem {
     this._flash.setEnabled(true);
     this._flashT = .06;
     this._recoilVel = -8;
+    // Pico de bloom do crosshair ao disparar (decai em update()).
+    this._fireBloom = Math.min(1, (this._fireBloom ?? 0) + 0.45);
 
     // ── Camera kick (recoil vertical) — SÓ PITCH, sutil e visual ──
     // Acumula em _recoilKick (GRAUS). O Player consome em consumeRecoilPitch(),
     // aplica como offset de pitch e decai *0.85/frame até voltar ao centro.
     // w.recoil opcional por arma; clampa o acúmulo pra nunca dar salto absurdo.
-    this._recoilKick += (this.getCurrentWeapon().recoil ?? 1.2);
-    this._recoilKick = Math.min(this._recoilKick, 6); // teto: kick suave, sem virar pra trás
+    const _wRecoil = this.getCurrentWeapon().recoil ?? 1.2;
+    this._recoilKick += _wRecoil;
+    this._recoilKick = Math.min(this._recoilKick, 9); // teto maior: spray mais "chutado"
+    // ── Componente HORIZONTAL (yaw) — padrão de spray ────────────────
+    //  Alterna o lado a cada tiro (esquerda/direita) com leve aleatoriedade,
+    //  cresce conforme o spray sobe (mais bagunça quando segura o gatilho).
+    //  O Player consome via consumeRecoilYaw() e decai igual ao pitch. Guarda
+    //  o sinal pra não cancelar o que já está acumulado.
+    this._recoilSign = (this._recoilSign === 1) ? -1 : 1;
+    const yawMag = _wRecoil * (0.35 + Math.min(0.65, Math.abs(this._recoilKick) * 0.05)) * (0.6 + Math.random() * 0.8);
+    this._recoilYaw = (this._recoilYaw ?? 0) + this._recoilSign * yawMag;
+    this._recoilYaw = Math.max(-5, Math.min(5, this._recoilYaw)); // teto lateral
 
     // ── Cores por arma ──────────────────────────────────────────────
     const w = this.getCurrentWeapon();
@@ -567,46 +645,65 @@ export class WeaponSystem {
     if (hit?.hit && hit.pickedPoint) {
       this._spawnHitEffect(hit.pickedPoint);
 
+      // ── Dano efetivo: FALLOFF por distância + HEADSHOT ───────────────
+      //  baseDmg → escala com a distância do tiro (cheio até ~50u, decai até
+      //  um piso por volta de ~300u) e recebe multiplicador de cabeça/upper
+      //  body (detectado pela altura Y do impacto vs topo do alvo).
+      const _shotDist = BABYLON.Vector3.Distance(rayOrigin, hit.pickedPoint);
+      const _falloff = this._damageFalloff(_shotDist);
+      const _hs = this._headshotInfo(hit.pickedMesh, hit.pickedPoint);
+      const _baseDmg = this.getCurrentWeapon().damage;
+      const _effDmg = Math.max(1, Math.round(_baseDmg * _falloff * _hs.mult));
+
       // ── Inimigo ──────────────────────────────────────────────────
       if (hit.pickedMesh?._enemyRef) {
-        const dmg = this.getCurrentWeapon().damage;
+        const dmg = _effDmg;
         hit.pickedMesh._enemyRef.takeDamage(dmg, dir, 1.0, false, getLocalCombatTarget(this.level?.player || window._gamePlayer));
-        // Número de dano flutuante no ponto do tiro
-        window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, { color: '#ffffff' });
+        // Número de dano flutuante no ponto do tiro (headshot = dourado/maior)
+        window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, _hs.head ? { headshot: true } : { color: '#ffffff' });
+        // HITMARKER (headshot → tier crit + marca de kill se derrubar)
+        window._hitMarker?.hit({ dmg, crit: _hs.head, kill: hit.pickedMesh._enemyRef.hp <= 0 });
+        this._playHitConfirm(dmg);   // tick de confirmação (item 24)
+        if (_hs.head) this._playHeadshotSfx?.();
         // SANGUE no ponto do tiro
         if (window._bloodFX) {
           window._bloodFX.spawn(
             hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(),
             dir,
-            { multiplier: dmg >= 60 ? 1.4 : 0.85, sourceNode: hit.pickedMesh }
+            { multiplier: _hs.head ? 1.6 : (dmg >= 60 ? 1.4 : 0.85), sourceNode: hit.pickedMesh, isHeavy: _hs.head }
           );
         }
       }
 
       // ── PvP: tiro acertou outro player remoto ──
       if (hit.pickedMesh?._isRemotePlayer && hit.pickedMesh._remoteRef) {
-        const dmg = this.getCurrentWeapon().damage;
+        const dmg = _effDmg;
         window._cs?.sendHitPlayer?.(hit.pickedMesh._remoteRef.playerId, dmg, this.getCurrentWeapon().id);
-        window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, { color: '#ff6666' });
-        // HITMARKER imediato no crosshair do atirador (tier por dano).
-        window._hitMarker?.hit({ dmg, crit: dmg >= 80 });
+        window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, _hs.head ? { headshot: true } : { color: '#ff6666' });
+        // HITMARKER imediato no crosshair do atirador (headshot = tier crit).
+        window._hitMarker?.hit({ dmg, crit: _hs.head || dmg >= 80 });
+        this._playHitConfirm(dmg);   // tick de confirmação (item 24)
+        if (_hs.head) this._playHeadshotSfx?.();
         // Knockback + flinch PREDITIVO no alvo (visual, na direção do tiro).
-        try { hit.pickedMesh._remoteRef.playHit?.(dir, dmg >= 60 ? 4 : 2.5, dmg >= 80 ? 1 : 0); } catch (_) {}
+        try { hit.pickedMesh._remoteRef.playHit?.(dir, dmg >= 60 ? 4 : 2.5, (_hs.head || dmg >= 80) ? 1 : 0); } catch (_) {}
         if (window._bloodFX) {
           window._bloodFX.spawn(hit.pickedPoint, dir, {
-            multiplier: dmg >= 60 ? 1.4 : 0.85, sourceNode: hit.pickedMesh,
+            multiplier: _hs.head ? 1.6 : (dmg >= 60 ? 1.4 : 0.85), sourceNode: hit.pickedMesh, isHeavy: _hs.head,
           });
         }
       }
 
       // ── Tiro acertou mob remoto (server-auth) ──
       if (hit.pickedMesh?._isRemoteMob && hit.pickedMesh._mobRef) {
-        const dmg = this.getCurrentWeapon().damage;
+        const dmg = _effDmg;
         window._cs?.sendHitMob?.(hit.pickedMesh._mobRef.id, dmg, this.getCurrentWeapon().id);
-        window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, { color: '#ffffff' });
+        window._dmgNumbers?.spawn(hit.pickedPoint || hit.pickedMesh.getAbsolutePosition(), dmg, _hs.head ? { headshot: true } : { color: '#ffffff' });
+        window._hitMarker?.hit({ dmg, crit: _hs.head });
+        this._playHitConfirm(dmg);   // tick de confirmação (item 24)
+        if (_hs.head) this._playHeadshotSfx?.();
         if (window._bloodFX) {
           window._bloodFX.spawn(hit.pickedPoint, dir, {
-            multiplier: dmg >= 60 ? 1.4 : 0.85, sourceNode: hit.pickedMesh,
+            multiplier: _hs.head ? 1.6 : (dmg >= 60 ? 1.4 : 0.85), sourceNode: hit.pickedMesh, isHeavy: _hs.head,
           });
         }
       }
@@ -700,7 +797,16 @@ export class WeaponSystem {
     if (this.reloading || this.ammo === this.maxAmmo) return;
     this.reloading = true;
     this._reloadT = 1.5;
+    this._reloadDur = 1.5;
     if (this.onReload) this.onReload(this._reloadT);   // dispara o som casando com a duração
+    // ── Feedback de recarga ──────────────────────────────────────────
+    //  Sem clipe de animação de reload no viewmodel → faz um DIP procedural
+    //  (a arma abaixa/inclina e volta, ver update()) + som de recarga. O som
+    //  é tocado direto aqui caso o host (Player) não tenha ligado onReload,
+    //  pra garantir o áudio de recarregar. SoundManager ignora id ausente.
+    if (!this.onReload) {
+      try { (this.level?.player || window._gamePlayer)?.sounds?.playNow?.('gun_reload', 0.9); } catch (_) {}
+    }
   }
 
   update(dt, isMoving, speed) {
@@ -740,12 +846,43 @@ export class WeaponSystem {
       }
     });
 
+    // ── Fade-out dos decais de bala (material compartilhado → fade por-mesh) ──
+    if (this._decalPool && this._decalPool.length) {
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+      for (let i = this._decalPool.length - 1; i >= 0; i--) {
+        const d = this._decalPool[i];
+        if (!d || d.isDisposed?.()) { this._decalPool.splice(i, 1); continue; }
+        const age = now - (d._bholeBorn || now);
+        if (age > this._decalLife) {
+          const t = (age - this._decalLife) / this._decalFade;
+          if (t >= 1) { try { d.dispose(); } catch (_) {} this._decalPool.splice(i, 1); }
+          else d.visibility = 1 - t;
+        }
+      }
+    }
+
     this._recoilVel += (0 - this._recoilPitch) * 20 * dt;
     this._recoilVel *= 0.8;
     this._recoilPitch += this._recoilVel * dt;
 
+    // ── Dip procedural de recarga (sem clipe dedicado) ───────────────
+    //  Curva sino (sin) sobre a duração: a arma abaixa + inclina pra dentro
+    //  e volta ao 0 ao terminar. Em VR não mexe (arma presa na mão).
+    let reloadDip = 0, reloadDrop = 0;
+    if (this.reloading && !this._vrMode) {
+      const dur = this._reloadDur || 1.5;
+      const k = Math.min(1, Math.max(0, 1 - (this._reloadT / dur)));  // 0..1
+      const bell = Math.sin(k * Math.PI);   // 0→1→0
+      reloadDip  = bell * 0.5;              // tilt em rad (~28°)
+      reloadDrop = bell * 0.10;             // queda em metros
+    }
+    // suaviza a queda/volta
+    this._reloadDipAmt  = (this._reloadDipAmt  ?? 0) + (reloadDip  - (this._reloadDipAmt  ?? 0)) * Math.min(1, dt * 12);
+    this._reloadDropAmt = (this._reloadDropAmt ?? 0) + (reloadDrop - (this._reloadDropAmt ?? 0)) * Math.min(1, dt * 12);
+
     if (this._root) {
-        this._root.rotation.x = BABYLON.Tools.ToRadians(this._recoilPitch * 2);
+        this._root.rotation.x = BABYLON.Tools.ToRadians(this._recoilPitch * 2) + this._reloadDipAmt;
+        this._root.position.y = -this._reloadDropAmt;
     }
 
     // ── Camera recoil ──
@@ -767,6 +904,24 @@ export class WeaponSystem {
       const w = this.getCurrentWeapon();
       if (w && w.applyToMesh) w.applyToMesh(this._glbRoot, false, this._aimAmount);
     }
+
+    // ── Crosshair bloom (spread visual) ──────────────────────────────
+    //  Movimento abre devagar; tiro dá pico e decai; ADS fecha. Dirige o
+    //  elemento #crosshair (no HUD/index.html — NÃO é arquivo deste sistema)
+    //  via letter-spacing, que abre o "+" sem brigar com o transform de centro.
+    this._moveBloom = (this._moveBloom ?? 0) + ((this._moveBloomTarget ?? 0) - (this._moveBloom ?? 0)) * Math.min(1, dt * 8);
+    this._fireBloom = Math.max(0, (this._fireBloom ?? 0) - dt * 2.2);
+    try {
+      if (typeof document !== 'undefined') {
+        const ch = (this._crosshairEl ||= document.getElementById('crosshair'));
+        if (ch) {
+          const bloom = this.getSpreadBloom();
+          // até ~10px de abertura + leve escala — visível mas discreto
+          ch.style.letterSpacing = (bloom * 10).toFixed(1) + 'px';
+          ch.style.opacity = String(0.6 + bloom * 0.4);
+        }
+      }
+    } catch (_) {}
   }
 
   /**
@@ -784,8 +939,44 @@ export class WeaponSystem {
     return this._recoilKick;
   }
 
+  /**
+   * Consome o recoil HORIZONTAL (yaw) acumulado — o "spray pattern".
+   * Mesma curva de decaimento do pitch (*0.85/frame). O Player aplica como
+   * offset de yaw (sem mexer no yaw base), então a mira volta ao centro.
+   * @param {number} dt segundos do frame
+   * @returns {number} kick de yaw atual em GRAUS (pode ser ±)
+   */
+  consumeRecoilYaw(dt) {
+    const decay = Math.pow(0.85, Math.max(0, dt) * 60);
+    this._recoilYaw = (this._recoilYaw ?? 0) * decay;
+    if (Math.abs(this._recoilYaw) < 1e-3) this._recoilYaw = 0;
+    return this._recoilYaw;
+  }
+
   /** Chamado pelo Player a cada frame: aiming = true/false */
   setAiming(aiming) { this._aimTarget = aiming ? 1 : 0; }
+
+  /**
+   * Bloom do crosshair (0..1). Abre com movimento/disparo, fecha ao mirar
+   * (ADS). Exposto pro HUD desenhar a abertura do retículo. O Player chama
+   * setMovementBloom(speed) por frame; o fire injeta um pico via _fireBloom.
+   * @returns {number} abertura normalizada 0 (fechado) .. 1 (aberto)
+   */
+  getSpreadBloom() {
+    const w = this.getCurrentWeapon();
+    const baseSpread = (w?.spread ?? 0.025);
+    const move = Math.min(1, (this._moveBloom ?? 0));
+    const fire = Math.min(1, (this._fireBloom ?? 0));
+    const aim  = this._aimAmount ?? 0;
+    // combina movimento + recuo de tiro, depois fecha proporcional ao ADS
+    let bloom = Math.min(1, move * 0.6 + fire * 0.7);
+    bloom *= (1 - aim * 0.85);                 // mirar fecha quase tudo
+    bloom *= (baseSpread > 0 ? 1 : 0.5);       // arma sem spread → retículo mais estável
+    return bloom;
+  }
+
+  /** Player informa a velocidade horizontal por frame pra abrir o bloom. */
+  setMovementBloom(speed01) { this._moveBloomTarget = Math.min(1, Math.max(0, speed01 || 0)); }
 
   // Chamado pelo Player no wall jump — inclina visualmente a arma
   applyWallJumpTilt(deg) {

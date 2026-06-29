@@ -40,6 +40,41 @@ export class Player {
     this.WALL_SLIDE  = 3.5;
     this.GROUND_SNAP = -0.6;
 
+    // ── Game-feel novos (todos guardados; defaults mantêm o jogo igual) ──
+    // Variable jump: soltar Space subindo corta o impulso (pulo mais curto).
+    this.JUMP_CUT_MULT = 0.5;   // velY *= isto ao soltar cedo
+    // Air-strafe: aceleração tangencial extra no ar (bônus limitado).
+    this.AIR_STRAFE_ACCEL = 1.6;   // u/s² de aceleração tangencial no ar
+    this.AIR_STRAFE_BONUS = 4;     // teto de velocidade EXTRA acima do air cap
+    // Slope sliding: rampas mais íngremes que isto escorregam. Limiar ABAIXO
+    //  do maxSlopeCosine das escadas (0.45) pra NÃO escorregar nas escadas
+    //  walkable — só rampas realmente íngremes (>~66°) deslizam.
+    this.SLOPE_SLIDE_COS = 0.42;   // cos do ângulo a partir do qual desliza
+    this.SLOPE_SLIDE_ACCEL = 22;   // aceleração ao longo da rampa
+    // Fall damage + roll.
+    this.FALL_DMG_VEL    = 35;     // |velY| de pouso a partir do qual machuca
+    this.FALL_DMG_SCALE  = 2.2;    // dano por (|velY|-FALL_DMG_VEL)
+    this.FALL_ROLL_REDUCE = 0.5;   // segurar agachar ao pousar reduz o dano
+    this.onFallDamage    = null;   // hook: (dmg, impactVel) => void (se HP mora fora)
+    // Landing sound: só ramp acima deste impacto; pousos leves silenciosos.
+    this.LAND_SND_MIN    = 10;     // u/s
+    // Crouch dedicado (sem precisar sprintar).
+    this.CROUCH_SPEED_MULT = 0.5;  // velocidade ao agachar
+    this._crouching      = false;
+    this._crouchCamDrop  = 0;
+    // Head bob.
+    this.HEADBOB_ENABLED = true;
+    this.HEADBOB_AMP     = 0.045;  // amplitude vertical (m)
+    this.HEADBOB_FREQ    = 9.5;    // cadência (rad/s na velocidade base)
+    this._bobPhase       = 0;
+    this._bobOffset      = 0;
+    // Sprint FOV.
+    this.FOV_SPRINT_ADD  = 0.10;   // alargamento ao sprintar (rad)
+    this._sprintFovExtra = 0;      // estado lerpado do alargamento
+    // Hitstun público (trava ataque/ação) + slowmo de morte.
+    this._actionLockT    = 0;
+    this._deathSlowmoT    = 0;
+
     this._vx = 0;
     this._vz = 0;
     this.velY = 0;
@@ -47,6 +82,7 @@ export class Player {
     this._wasGrounded = false;
 
     this._wasSpace = false;
+    this._jumpHeld = false;   // variable jump: true enquanto segura Space após pular
     this._wasR     = false;
     this._wasV     = false;
     this._wasDigit1 = false;
@@ -75,6 +111,7 @@ export class Player {
     // Recoil de câmera (kick vertical visual ao atirar) — SÓ pitch, decai a 0.
     // Offset em GRAUS aplicado no _updateCamera; NUNCA altera this.pitch (base).
     this._recoilOffset = 0;
+    this._recoilYawOffset = 0;
 
     // Damage shake + knockback
     this._dmgShakeT   = 0;
@@ -249,7 +286,13 @@ export class Player {
     if (!physicsReady()) { this._cc = null; return; }
     try {
       this._charGravity     = new BABYLON.Vector3(0, -this.GRAVITY, 0);
-      this._charGravityWeak = new BABYLON.Vector3(0, -1.5, 0);  // grude no chão sem escorregar
+      // Item 13: em vez de gravidade quase-nula (-1.5, flutuante), usamos uma
+      // gravidade MODERADA pra baixo e confiamos no staticFriction alto (0.95)
+      // do CC pra SEGURAR em escadas/rampas rasas (sem escorregar). Mais firme
+      // que -1.5 (tira o "floaty feel") mas longe da gravidade cheia, que
+      // venceria o atrito e escorregaria nas escadas. Rampas íngremes (item 3)
+      // escorregam via _vx/_vz no update.
+      this._charGravityWeak = new BABYLON.Vector3(0, -4.0, 0);
       this._ccDown          = new BABYLON.Vector3(0, -1, 0);
       this._cc = new BABYLON.PhysicsCharacterController(
         new BABYLON.Vector3(0, 2.5, 0),
@@ -685,10 +728,33 @@ export class Player {
     this.groundedVisual = this.isGrounded || (this._coyoteT > 0 && this.velY <= 0.5);
 
     if (!this._wasGrounded && this.isGrounded && this.velY < -5) {
-      this._landMag   = Math.min(Math.abs(this.velY), 25);
+      const impactVel = Math.abs(this.velY);
+      this._landMag   = Math.min(impactVel, 25);
       this._landShake = 1.0;
-      // Som de aterrissagem (mais forte = queda maior)
-      this.sounds?.playNow?.('ground_hit', Math.min(1, 0.4 + this._landMag / 40));
+      // Item 8: só ramp o volume ACIMA de um impacto real (LAND_SND_MIN).
+      //  Pousos leves (queda curta) ficam quietos/silenciosos. Acima do limiar,
+      //  o volume sobe com a magnitude do impacto.
+      if (impactVel > this.LAND_SND_MIN) {
+        const vol = Math.min(1, 0.2 + (impactVel - this.LAND_SND_MIN) / 30);
+        this.sounds?.playNow?.('ground_hit', vol);
+      }
+      // Item 4: dano de queda acima do limiar forte + roll/recover.
+      //  Segurar agachar (Ctrl/C/Shift-roll) ao pousar reduz o dano (roll).
+      if (impactVel > this.FALL_DMG_VEL) {
+        let dmg = (impactVel - this.FALL_DMG_VEL) * this.FALL_DMG_SCALE;
+        const rolling = this.input?.isDown?.('ControlLeft') || this.input?.isDown?.('ControlRight') ||
+                        this.input?.isDown?.('KeyC');
+        if (rolling) {
+          dmg *= this.FALL_ROLL_REDUCE;
+          try {
+            if (this.animCtrl && this.animLib?.has?.('vault_roll')) {
+              this.animCtrl.play('vault_roll', { loop: false, speed: 1.2, fade: 0.06 });
+            }
+          } catch (_) {}
+        }
+        dmg = Math.round(dmg);
+        if (dmg > 0) this._applyFallDamage(dmg, impactVel);
+      }
     }
 
     // ── 3. Gravidade manual ──────────────────────────────────────────
@@ -705,8 +771,68 @@ export class Player {
       this.velY  = Math.max(this.velY, -this.MAX_FALL);
     }
 
-    if (this.wallJump.isOnWall() && this.velY < -this.WALL_SLIDE) {
-      this.velY = BABYLON.Scalar.Lerp(this.velY, -this.WALL_SLIDE, 0.30);
+    // ── Item 3+13: SLIDE em rampa íngreme ────────────────────────────
+    //  O CC sobe rampas até maxSlopeCosine (~0.45). Em rampas walkable porém
+    //  íngremes (normal.y entre SLOPE_SLIDE_COS e 1), aplicamos uma componente
+    //  de gravidade AO LONGO da rampa em _vx/_vz → o player escorrega/acelera
+    //  ladeira abaixo em vez de tratar como chão plano (anti "floaty"). Rampas
+    //  rasas seguem seguras pelo staticFriction (não escorregam).
+    if (ccGrounded && this._cc && this._support && this._dashT <= 0 && this._slideT <= 0) {
+      const n = this._support.averageSurfaceNormal;
+      if (n && Number.isFinite(n.y) && n.y > 0.05 && n.y < this.SLOPE_SLIDE_COS) {
+        const gx = n.x, gz = n.z;            // aponta ladeira abaixo (horizontal)
+        const gl = Math.hypot(gx, gz);
+        if (gl > 1e-3) {
+          const steep = 1 - n.y;             // 0..1 (mais íngreme = mais força)
+          const accel = this.SLOPE_SLIDE_ACCEL * steep * dt;
+          this._vx += (gx / gl) * accel;
+          this._vz += (gz / gl) * accel;
+        }
+      }
+    }
+
+    // Item 7: wall-slide com desaceleração GRADUAL (não clamp duro). Ao
+    //  encostar na parede caindo, a velocidade vertical é freada suavemente
+    //  em direção à velocidade de slide alvo — quanto mais rápido cai, mais
+    //  forte a fricção contra a parede, assentando perto de -WALL_SLIDE.
+    if (this.wallJump.isOnWall() && this.velY < 0) {
+      const target = -this.WALL_SLIDE;
+      if (this.velY < target) {
+        // Fricção proporcional ao excesso de velocidade (decai exponencial).
+        const friction = Math.min(1, dt * 6);
+        this.velY = BABYLON.Scalar.Lerp(this.velY, target, friction);
+      }
+    }
+
+    // ── Item 9: BOIA na água (buoyancy) ──────────────────────────────
+    //  O WaterSystem já amortece a velocidade horizontal *0.85 quando submerso.
+    //  Aqui o Player (dono da velocidade vertical) adiciona EMPUXO pra cima em
+    //  velY proporcional à profundidade submersa, com um bob senoidal sutil →
+    //  o player FLUTUA/balança em vez de só ser arrastado. Lê o flag/pool do
+    //  WaterSystem global; se não houver água ativa, é no-op (default seguro).
+    const _water = window._waterSystem;
+    if (_water?.isInWater?.() && Array.isArray(_water.pools)) {
+      const py = this.mesh.position.y;
+      let topY = null;
+      for (const p of _water.pools) {
+        if (Math.abs(this.mesh.position.x - p.cx) > p.w / 2) continue;
+        if (Math.abs(this.mesh.position.z - p.cz) > p.d / 2) continue;
+        if (topY === null || p.top > topY) topY = p.top;
+      }
+      if (topY !== null) {
+        // profundidade submersa: quanto a cabeça/corpo está abaixo da superfície.
+        const depth = Math.max(0, topY - (py - this.HEIGHT / 2));
+        const submerge = Math.min(1, depth / this.HEIGHT);   // 0..1
+        if (submerge > 0.05) {
+          // Empuxo: força pra cima cresce com a profundidade; bob senoidal leve.
+          this._bobPhaseW = (this._bobPhaseW || 0) + dt * 2.2;
+          const buoy = this.GRAVITY * submerge * 1.15;        // > gravidade quando fundo
+          this.velY += buoy * dt;
+          this.velY += Math.sin(this._bobPhaseW) * 0.6 * dt;  // bob
+          // Amortece o vertical pra não disparar (água é viscosa).
+          this.velY *= Math.exp(-dt * 2.0);
+        }
+      }
     }
 
     // ── 4. Wall jump update ──────────────────────────────────────────
@@ -887,6 +1013,12 @@ export class Player {
     const crouchPress = crouchNow && !this._wasCrouch;
     this._wasCrouch = crouchNow;
 
+    // ── Item 5: CROUCH dedicado (segurar tecla, SEM precisar sprintar) ──
+    //  Agachado: câmera/altura abaixam (reusa a matemática do _slideCamDrop) e a
+    //  velocidade cai. Só vale parado/andando no chão, fora de slide/dash/dodge.
+    this._crouching = crouchNow && this.isGrounded && !this._sprinting &&
+                      this._slideT <= 0 && this._dashT <= 0 && this._dodgeT <= 0;
+
     // Início: aperta agachar enquanto sprinta no chão e não está deslizando.
     if (crouchPress && this._sprinting && this.isGrounded && this._slideT <= 0 &&
         this._dashT <= 0 && this._dodgeT <= 0) {
@@ -919,6 +1051,7 @@ export class Player {
         spd *= (1 + this._sprintMomentumLeft * (this.SPRINT_MULT - 1));
       }
       else if (this._exhausted) spd *= 0.78;   // cansado → mais lento
+      if (this._crouching) spd *= this.CROUCH_SPEED_MULT;   // item 5: agachado anda devagar
       spd *= (this.isGrounded ? 1 : this.AIR_CTRL);
     }
 
@@ -967,11 +1100,58 @@ export class Player {
       }
       this._vx = BABYLON.Scalar.Lerp(this._vx, targetVx, smooth);
       this._vz = BABYLON.Scalar.Lerp(this._vz, targetVz, smooth);
+
+      // ── Item 2: AIR-STRAFE momentum (quake/source-like) ─────────────
+      //  No ar, a parte do input PERPENDICULAR à velocidade atual adiciona
+      //  uma pequena aceleração tangencial — strafe habilidoso ganha um
+      //  bônus de velocidade ACIMA do air cap, mas LIMITADO (AIR_STRAFE_BONUS),
+      //  nunca infinito. Não interfere no chão.
+      if (!this.isGrounded && moving) {
+        const sp = Math.hypot(this._vx, this._vz);
+        if (sp > 0.1) {
+          const ux = this._vx / sp, uz = this._vz / sp;        // direção atual
+          // Componente do input ortogonal à velocidade (seno do ângulo).
+          const along = moveDir.x * ux + moveDir.z * uz;        // -1..1
+          const tang  = Math.sqrt(Math.max(0, 1 - along * along));
+          const cap   = spd + this.AIR_STRAFE_BONUS;            // teto modesto
+          if (sp < cap && tang > 0.05) {
+            const add = this.AIR_STRAFE_ACCEL * tang * dt;
+            this._vx += moveDir.x * add;
+            this._vz += moveDir.z * add;
+            // Não deixa estourar o teto: reescala se passou.
+            const ns = Math.hypot(this._vx, this._vz);
+            if (ns > cap) { const k = cap / ns; this._vx *= k; this._vz *= k; }
+          }
+        }
+      }
     }
 
-    // ── Camera drop do slide: abaixa suave durante, sobe ao terminar ──
+    // ── Camera drop do slide + crouch: abaixa suave durante, sobe ao terminar ──
     const slideCamTarget = this._slideT > 0 ? this.HEIGHT * 0.38 : 0;
     this._slideCamDrop = BABYLON.Scalar.Lerp(this._slideCamDrop, slideCamTarget, Math.min(1, dt * 12));
+    // Item 5: crouch dedicado abaixa a câmera (reusa a mesma matemática do slide).
+    const crouchCamTarget = this._crouching ? this.HEIGHT * 0.30 : 0;
+    this._crouchCamDrop = BABYLON.Scalar.Lerp(this._crouchCamDrop, crouchCamTarget, Math.min(1, dt * 12));
+
+    // ── Item 43: HEAD BOB (offset senoidal sutil pela cadência do passo) ──
+    //  Frequência/amplitude crescem com a velocidade no chão; no ar/parado o
+    //  offset volta suave a 0. Pequeno por padrão; soma ao shake existente em
+    //  _updateCamera sem brigar com ele. Some durante slide (já abaixa a câmera).
+    if (this.HEADBOB_ENABLED) {
+      const hspeed = Math.hypot(this._vx, this._vz);
+      const bobbing = this.isGrounded && hspeed > 1.5 && this._slideT <= 0 && !this._dead;
+      if (bobbing) {
+        const sref = this.SPEED * this.SPRINT_MULT;
+        const rate = this.HEADBOB_FREQ * Math.min(1.6, 0.6 + hspeed / sref);
+        this._bobPhase += dt * rate;
+        const amp = this.HEADBOB_AMP * Math.min(1, hspeed / this.SPEED);
+        this._bobOffset = Math.sin(this._bobPhase) * amp;
+      } else {
+        this._bobOffset = BABYLON.Scalar.Lerp(this._bobOffset, 0, Math.min(1, dt * 8));
+      }
+    } else {
+      this._bobOffset = 0;
+    }
 
     // ── 5.3 Chute PLANTA o movimento ─────────────────────────────────
     //  Não dá pra correr E chutar com a perna (ficava bugado). Quando
@@ -1002,6 +1182,7 @@ export class Player {
     if (jumpPress) {
       if (this.isGrounded) {
         this.velY = this.JUMP_FORCE;
+        this._jumpHeld = true;   // item 1: arma o corte de pulo variável
         this.sounds?.playNow?.('jump', 1.0);   // pulo normal (Space 1x): som de pulo audível
         try { window._cs?.sendSfx?.('jump'); } catch (_) {}
       } else {
@@ -1012,11 +1193,22 @@ export class Player {
           this._vx  = BABYLON.Scalar.Lerp(this._vx, wjVel.x, 0.7);
           this._vz  = BABYLON.Scalar.Lerp(this._vz, wjVel.z, 0.7);
           this.velY = wjVel.y;
+          this._jumpHeld = true;
           this.weapon.applyWallJumpTilt(wjVel.x >= 0 ? 14 : -14);
           this.animator?.onWallJump();
         }
       }
     }
+
+    // ── Item 1: PULO VARIÁVEL (variable jump height) ─────────────────
+    //  Soltar Space enquanto AINDA SOBE corta o impulso vertical → pulo
+    //  curto. Continuar segurando = pulo cheio. O corte só ocorre 1x por
+    //  pulo (acima de um limiar de velocidade) pra não afetar a queda.
+    if (this._jumpHeld && !spaceNow) {
+      if (this.velY > 6) this.velY *= this.JUMP_CUT_MULT;
+      this._jumpHeld = false;
+    }
+    if (this.isGrounded && !spaceNow) this._jumpHeld = false;
 
     // ── 7. Knockback de ataque inimigo ──────────────────────────────
     if (Math.abs(this._kbVx) + Math.abs(this._kbVz) > 0.05) {
@@ -1118,7 +1310,8 @@ export class Player {
     const isArmed = this.stateMachine ? this.stateMachine.isArmedFlag : true;
     const curW = this.weapon.getCurrentWeapon?.();
     const isMelee = !!curW?.isMelee;
-    if (this._dead) {
+    // Item público: applyHitstun trava ataque/ação por _actionLockT segundos.
+    if (this._dead || this._actionLockT > 0) {
       this._stopMgLoop();
     } else if (isArmed && !isMelee && curW?.automatic) {
       // FULL-AUTO: SEGURA o botão → metralha (o fireRate controla a cadência).
@@ -1142,7 +1335,7 @@ export class Player {
 
     // ── RMB — chute (desarmado) / mira (arma fogo) / slash forte (espada) ─
     const rmbN = this.input.consumeRightClickCount();
-    if (rmbN > 0) {
+    if (rmbN > 0 && this._actionLockT <= 0 && !this._dead) {
       const isArmed_r = this.stateMachine ? this.stateMachine.isArmedFlag : true;
       if (!isArmed_r && this.combatSystem) {
         for (let i = 0; i < rmbN; i++) this.combatSystem.kickAttack();
@@ -1166,7 +1359,14 @@ export class Player {
       const wantAim = this._aiming && !this._tpsMode;
       const targetFov = wantAim ? this.FOV_AIM : this.FOV_NORMAL;
       this._aimFovCur = BABYLON.Scalar.Lerp(this._aimFovCur ?? this.FOV_NORMAL, targetFov, Math.min(1, dt * 10));
-      this.camera.fov = this._aimFovCur;
+      // ── Item 44: SPRINT FOV widen ──────────────────────────────────
+      //  Alarga o FOV ao sprintar (sensação de velocidade), com lerp suave.
+      //  NUNCA aplica enquanto mira (wantAim) → não briga com a lógica de ADS:
+      //  o extra lerpa pra 0 ao mirar, então o zoom de mira fica intacto.
+      const wantSprintFov = this._sprinting && !wantAim;
+      const sprintTarget = wantSprintFov ? this.FOV_SPRINT_ADD : 0;
+      this._sprintFovExtra = BABYLON.Scalar.Lerp(this._sprintFovExtra, sprintTarget, Math.min(1, dt * 8));
+      this.camera.fov = this._aimFovCur + this._sprintFovExtra;
     }
 
     // ── Indicador de mira no HUD ─────────────────────────────────
@@ -1464,6 +1664,11 @@ export class Player {
     this._recoilOffset = this.weapon?.consumeRecoilPitch
       ? this.weapon.consumeRecoilPitch(dt)
       : 0;
+    // Recoil horizontal (yaw): spray pattern da arma. Mesmo princípio do pitch —
+    // offset só pra montar a câmera, não mexe em this.yaw base.
+    this._recoilYawOffset = this.weapon?.consumeRecoilYaw
+      ? this.weapon.consumeRecoilYaw(dt)
+      : 0;
     this._updateCamera();
 
     // Em TPS: passa ponto de origem do ray para a arma (nível dos olhos, sem parallaxe)
@@ -1478,6 +1683,14 @@ export class Player {
     // Mira ADS só vale em FPS armado; em TPS a arma fica na mão (sem ADS de viewmodel)
     this.weapon.setAiming(this._aiming && !this._tpsMode);
     this.weapon.update(dt, moving, Math.hypot(this._vx, this._vz));
+
+    // Crosshair bloom por movimento: abre a mira conforme a velocidade horizontal
+    // (0..1 normalizado pela vel. máxima de sprint). Fecha parado/em ADS.
+    if (this.weapon?.setMovementBloom) {
+      const maxSpd = this.SPEED * (this.SPRINT_MULT || 1);
+      const speed01 = Math.min(1, Math.hypot(this._vx, this._vz) / (maxSpd || 1));
+      this.weapon.setMovementBloom(this._aiming ? speed01 * 0.25 : speed01);
+    }
 
     // ── Passos em LOOP (correndo no chão) ────────────────────────────
     this._updateFootsteps(moving);
@@ -1498,6 +1711,15 @@ export class Player {
     this._damageFlashT = Math.max(0, this._damageFlashT - dt);
     this._hitStunT     = Math.max(0, (this._hitStunT || 0) - dt);
     this._pvpStunT     = Math.max(0, (this._pvpStunT || 0) - dt);
+    this._actionLockT  = Math.max(0, (this._actionLockT || 0) - dt);
+    // Slowmo de morte: ao zerar o timer, restaura a escala de tempo da cena.
+    if (this._deathSlowmoT > 0) {
+      this._deathSlowmoT -= dt;
+      if (this._deathSlowmoT <= 0) {
+        this._deathSlowmoT = 0;
+        try { this.scene.animationTimeScale = this._slowmoPrevScale ?? 1; } catch (_) {}
+      }
+    }
   }
 
   // ── Seta o modelo 3D do personagem com animator ───────────────────
@@ -1661,6 +1883,9 @@ export class Player {
       
       if (attackType === 'slam' || kbForce > 20) {
         this.velY = attackType === 'slam' ? 7 : 4; // arremessa um pouco para cima se for forte
+      } else if (force > 3 && (this.isGrounded || this.velY <= 0.1)) {
+        // Item 10: pop vertical em golpes fortes escalando com a força do KB.
+        this.velY = Math.max(this.velY, Math.min(10, force * 0.4));
       }
     }
 
@@ -1716,6 +1941,11 @@ export class Player {
     // Soma na velocidade de knockback (decai sozinha no update via kbDrag).
     this._kbVx += dx * f;
     this._kbVz += dz * f;
+    // Item 10: golpe forte adiciona POP vertical (escala com a força do KB).
+    //  kb>3 → velY += kb*0.4 (no chão). Mantém o pop de crit como piso.
+    if (f > 3 && (this.isGrounded || this.velY <= 0.1)) {
+      this.velY = Math.max(this.velY, Math.min(12, f * 0.4));
+    }
     // Golpe pesado arremessa levemente pra cima se estiver no chão.
     if (crit && this.isGrounded) this.velY = Math.max(this.velY, 4);
     // Stun curto trava locomoção (canMove). Clamp 80-400ms por segurança.
@@ -1780,6 +2010,56 @@ export class Player {
       // pop vertical só se estiver no chão (não somar em pleno pulo)
       if (this.isGrounded || this.velY <= 0.1) this.velY = Math.max(this.velY, kby);
     }
+  }
+
+  /**
+   * Item 4: aplica dano de queda. Usa a API de dano existente se houver HP
+   * local; senão dispara o hook onFallDamage(dmg, impactVel) pra quem mora
+   * fora gerenciar o HP. Self-contained e seguro (não duplica feedback).
+   * @param {number} dmg        dano calculado
+   * @param {number} impactVel  |velY| do pouso (pra escala de shake/som)
+   */
+  _applyFallDamage(dmg, impactVel) {
+    if (this._dead || dmg <= 0) return;
+    // Shake/feedback proporcional ao impacto.
+    this._dmgShakeT = Math.max(this._dmgShakeT, 0.30);
+    this._dmgShakeMag = Math.max(this._dmgShakeMag, Math.min(0.45, 0.12 + impactVel / 120));
+    // Hook externo (HP mora fora) — tem prioridade se definido.
+    if (typeof this.onFallDamage === 'function') {
+      try { this.onFallDamage(dmg, impactVel); } catch (_) {}
+      return;
+    }
+    // Senão usa a API de dano local (takeDamage cuida de hp/flash/morte).
+    try { this.takeDamage(dmg, 'fall'); } catch (_) {}
+  }
+
+  /**
+   * PÚBLICO: trava brevemente o input de AÇÃO/ATAQUE do player (hitstun).
+   * Outros sistemas (combate/golpe) chamam pra "congelar" os ataques sem
+   * matar a locomoção. Self-contained: só seta _actionLockT (consumido nos
+   * blocos de LMB/RMB) e decai no update.
+   * @param {number} ms duração em milissegundos
+   */
+  applyHitstun(ms) {
+    const s = Math.max(0, (+ms || 0) / 1000);
+    if (s <= 0) return;
+    this._actionLockT = Math.max(this._actionLockT || 0, s);
+  }
+
+  /**
+   * PÚBLICO: dispara uma desaceleração curta de tempo (slowmo) na morte.
+   * Self-contained: escala scene.animationTimeScale (hook de tempo padrão do
+   * Babylon) e restaura no update ao zerar o timer. Reentrante-safe.
+   * @param {number} [ms=900] duração do slowmo
+   * @param {number} [scale=0.35] fator de tempo durante o slowmo
+   */
+  triggerDeathSlowmo(ms = 900, scale = 0.35) {
+    if (this._deathSlowmoT > 0) return;   // já ativo
+    try {
+      this._slowmoPrevScale = this.scene.animationTimeScale ?? 1;
+      this.scene.animationTimeScale = Math.max(0.05, Math.min(1, scale));
+    } catch (_) { this._slowmoPrevScale = 1; }
+    this._deathSlowmoT = Math.max(0.05, (+ms || 900) / 1000);
   }
 
   /**
@@ -2000,6 +2280,7 @@ export class Player {
     //  renascer. _bodyYaw=null cobre o caminho PlayerAnimator (re-init).
     this.yaw = 0; this.pitch = 0;
     this._recoilOffset = 0;
+    this._recoilYawOffset = 0;
     if (this.animator?.root) {
       try {
         if (this.animator.root.rotationQuaternion) this.animator.root.rotationQuaternion = null;
@@ -2036,7 +2317,7 @@ export class Player {
   _updateCamera() {
     // VR ativo: WebXRDefaultExperience controla câmera; pula update manual
     if (this._vrControlsCamera) return;
-    const yR = BABYLON.Tools.ToRadians(this.yaw);
+    const yR = BABYLON.Tools.ToRadians(this.yaw + (this._recoilYawOffset || 0));
     // Pitch efetivo = pitch base − recoilOffset (sobe a mira no kick).
     // SÓ pra montar a câmera/raycast: this.pitch base permanece intacto, então
     // ao decair o offset a mira volta exatamente pro centro. Clamp ±89 garante
@@ -2140,8 +2421,11 @@ export class Player {
     } else {
       // ── Câmera FPS (padrão) ─────────────────────────────────────
       const eye = this.mesh.position.clone();
-      // _slideCamDrop abaixa a câmera durante o slide (sensação de agachar).
-      eye.y += this.HEIGHT / 2 - 0.10 + shakeY - (this._slideCamDrop || 0);
+      // _slideCamDrop/_crouchCamDrop abaixam a câmera (slide/agachar); _bobOffset
+      // é o head bob (item 43) somado por cima do shake existente (item 43 respeita
+      // o shake — apenas adiciona, não substitui).
+      eye.y += this.HEIGHT / 2 - 0.10 + shakeY - (this._slideCamDrop || 0)
+             - (this._crouchCamDrop || 0) + (this._bobOffset || 0);
       eye.x += shakeX;
       eye.z += shakeZ;
 

@@ -64,15 +64,39 @@ export class ImpactEffectSystem {
     core.scaling.setAll(scale);
     sparks.push(core);
 
+    // ── Anti-pierce (item 12): limita o quanto a estrela de faíscas pode
+    //  CRESCER perto de uma parede, pra não esticar pra dentro da geometria.
+    //  As faíscas ficam ancoradas no ponto de impacto (não viajam), então
+    //  basta cortar a expansão quando há parede colada (raycast curto p/ baixo
+    //  e nos eixos cardeais — barato e tolerante a falha).
+    let maxGrow = 3.0;   // teto padrão de expansão
+    try {
+      const dirs = [BABYLON.Vector3.Up(), BABYLON.Vector3.Down(),
+                    BABYLON.Vector3.Left(), BABYLON.Vector3.Right(),
+                    BABYLON.Vector3.Forward(), BABYLON.Vector3.Backward()];
+      let nearest = Infinity;
+      for (const d of dirs) {
+        const r = new BABYLON.Ray(pos.clone(), d, 1.2);
+        const h = this.scene.pickWithRay(r, mm =>
+          mm.isEnabled?.() && mm.isPickable !== false && mm.checkCollisions &&
+          !mm.name.startsWith('spark') && !mm.name.startsWith('hit'));
+        if (h?.hit && h.distance < nearest) nearest = h.distance;
+      }
+      if (nearest < 1.2) maxGrow = Math.max(1.2, nearest / Math.max(0.01, scale));
+    } catch (_) {}
+
     // Animação super rápida (pop e some)
     let life = 1.0;
+    let grown = 1.0;
     const timer = setInterval(() => {
       // Se as sparks já foram descartadas (cena trocada/limpa), encerra o timer.
       if (sparks.every(s => s.isDisposed?.())) { clearInterval(timer); return; }
       life -= 0.15;
+      const canGrow = grown < maxGrow;
+      if (canGrow) grown *= 1.1;
       sparks.forEach(s => {
         if (s.isDisposed?.()) return;
-        s.scaling.scaleInPlace(1.1); // Expande rápido
+        if (canGrow) s.scaling.scaleInPlace(1.1); // Expande rápido (clampado perto de parede)
         if (s.material) s.material.alpha = Math.max(0, life);
       });
 
