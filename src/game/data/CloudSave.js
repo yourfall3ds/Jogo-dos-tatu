@@ -27,6 +27,21 @@ async function _uid() {
 
 // Cache do settings.data inteiro pra fazer patch sem clobber de outras chaves.
 let _settingsCache = null;
+// User id que o cache pertence — se o usuário mudar (logout/troca de conta),
+// invalida pra não vazar settings de um usuário pro outro.
+let _settingsCacheUid = null;
+
+/** Invalida o cache de settings ao trocar/sair de usuário. Inscreve UMA vez
+ *  no onAuthStateChange do Supabase (logout/login/troca de conta). */
+let _authSubbed = false;
+async function _ensureAuthSub() {
+  if (_authSubbed) return;
+  _authSubbed = true;
+  try {
+    const supa = await getSupabase();
+    supa.auth.onAuthStateChange(() => { _settingsCache = null; _settingsCacheUid = null; });
+  } catch (_) { _authSubbed = false; }
+}
 
 // Timers de debounce por "kind".
 const _timers = {};
@@ -84,8 +99,11 @@ export const CloudSave = {
   // ── SETTINGS (stats + prefs + skin/classe durável) ──────────────
   /** Carrega o blob settings.data inteiro (e cacheia p/ patches). */
   async _loadSettingsData() {
-    if (_settingsCache) return _settingsCache;
+    _ensureAuthSub();
     const id = await _uid();
+    // Cache só vale para o MESMO usuário — troca/logout invalida (cross-user).
+    if (id !== _settingsCacheUid) { _settingsCache = null; _settingsCacheUid = id; }
+    if (_settingsCache) return _settingsCache;
     if (!id) return (_settingsCache = {});
     try {
       const supa = await getSupabase();

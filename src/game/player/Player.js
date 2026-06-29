@@ -1101,7 +1101,7 @@ export class Player {
 
     // Detecta teto
     const actualDY = this.mesh.position.y - this._prevY;
-    if (this.velY > 0 && actualDY < this.velY * dt * 0.1) this.velY = 0;
+    if (this.velY > 0 && actualDY < 0.05) this.velY = 0;
     this._prevY = this.mesh.position.y;
 
     // ── 9. Reload + Tiro ─────────────────────────────────────────────
@@ -1516,8 +1516,7 @@ export class Player {
         });
       } catch (_) {}
       if (this.animator.root) {
-        this.animator.root.getDescendants().forEach(d => d.dispose());
-        this.animator.root.dispose();
+        this.animator.root.dispose();   // dispose() já descarta os descendentes
       }
       this.animator = null;
     }
@@ -1922,7 +1921,7 @@ export class Player {
         ps.start();
         setTimeout(() => {
           try { ps.stop(); } catch (_) {}
-          setTimeout(() => { try { ps.dispose(); emitter.dispose(); } catch (_) {} }, 1200);
+          setTimeout(() => { try { ps.dispose(); tex.dispose(); emitter.dispose(); } catch (_) {} }, 1200);
         }, 200);
       }
     } catch (_) {}
@@ -2179,6 +2178,12 @@ export class Player {
     }
     const back = dir.clone().normalize().scale(-6);
     let t = 0;
+    let disposeObs = null;
+    const cleanup = () => {
+      scene.onBeforeRenderObservable.remove(obs);
+      if (disposeObs) scene.onDisposeObservable.remove(disposeObs);
+      for (const it of items) { it.mat.dispose(); it.m.dispose(); }
+    };
     const obs = scene.onBeforeRenderObservable.add(() => {
       const dt2 = scene.getEngine().getDeltaTime() / 1000;
       t += dt2;
@@ -2187,8 +2192,10 @@ export class Player {
         it.m.position.z += back.z * dt2;
         it.mat.alpha = Math.max(0, 0.7 * (1 - t / 0.35));
       }
-      if (t >= 0.35) { scene.onBeforeRenderObservable.remove(obs); for (const it of items) { it.mat.dispose(); it.m.dispose(); } }
+      if (t >= 0.35) cleanup();
     });
+    // Se a cena for descartada no meio do efeito, remove o observer (senão vaza).
+    disposeObs = scene.onDisposeObservable.add(() => scene.onBeforeRenderObservable.remove(obs));
   }
 
   _toggleAim() {

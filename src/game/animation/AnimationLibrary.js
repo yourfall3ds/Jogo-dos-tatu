@@ -115,9 +115,13 @@ export class AnimationLibrary {
       if (finalAg) { finalAg.stop(); this.animations.set(name, finalAg); }
     }
 
-    // Limpeza pesada: destrói tudo o que veio no arquivo de animação (malhas e esqueletos extras)
-    result.meshes.forEach(m => m.dispose());
-    result.skeletons.forEach(s => s.dispose());
+    // Limpeza pesada: destrói tudo o que veio no arquivo de animação (malhas e esqueletos extras).
+    // Adia o dispose das malhas: descartar logo após o ImportMeshAsync pode atingir uma
+    // malha ainda em upload pra GPU e travar — o atraso garante que o upload terminou.
+    setTimeout(() => {
+      result.meshes.forEach(m => { try { if (!m.isDisposed?.()) m.dispose(); } catch (_) {} });
+      result.skeletons.forEach(s => { try { s.dispose(); } catch (_) {} });
+    }, 50);
     result.animationGroups.forEach(ag => { try { ag.dispose(); } catch (_) {} });
   }
 

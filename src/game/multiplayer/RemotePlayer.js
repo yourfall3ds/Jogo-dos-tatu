@@ -439,8 +439,10 @@ export class RemotePlayer {
         break;
       case 'class_id':
       case 'avatar_url':
-        // Player remoto trocou de CLASSE/skin (class_id) OU de avatar (avatar_url
-        //  dos 6 personagens novos) → recarrega o avatar ao vivo.
+      case 'equip_skin':
+        // Player remoto trocou de CLASSE/skin (class_id), avatar (avatar_url dos
+        //  6 personagens novos) OU de equip_skin (skin equipada via inventário)
+        //  → recarrega o avatar ao vivo pros outros verem a troca.
         try { this._swapClassModel(); } catch (e) { console.warn('[RemotePlayer] skin swap fail', e?.message); }
         break;
     }

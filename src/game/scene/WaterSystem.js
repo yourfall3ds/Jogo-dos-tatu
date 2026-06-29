@@ -231,7 +231,13 @@ export class WaterSystem {
     ps.manualEmitCount = 40;
     ps.start();
     setTimeout(() => { try { ps.stop(); } catch (_) {} }, 60);
-    setTimeout(() => { try { ps.dispose(); } catch (_) {} }, 1200);
+    // Dispose adiado. Se a cena sair antes dos 1200ms ela já descarta o ps —
+    // cancela o timeout (e guarda contra double-dispose) pra não bater 2x.
+    const tDispose = setTimeout(() => {
+      try { if (!ps.isDisposed) ps.dispose(); } catch (_) {}
+      try { this.scene?.onDisposeObservable?.remove(disposeObs); } catch (_) {}
+    }, 1200);
+    const disposeObs = this.scene.onDisposeObservable.addOnce(() => clearTimeout(tDispose));
   }
 
   isInWater() { return this._inWater; }

@@ -111,6 +111,9 @@ export class MobileControls {
     base.addEventListener('mousedown', start);
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', end);
+    // Guarda refs pra remover no dispose() (window listeners vazam senão).
+    this._winMove = move;
+    this._winUp = end;
   }
 
   /** Converte o vetor do joystick em teclas WASD (limiar 0.3). */
@@ -152,6 +155,24 @@ export class MobileControls {
     window.addEventListener('touchmove', onMove, { passive: true });
     window.addEventListener('touchend', onEnd, { passive: true });
     window.addEventListener('touchcancel', onEnd, { passive: true });
+    this._winTouchStart = onStart;
+    this._winTouchMove = onMove;
+    this._winTouchEnd = onEnd;
+  }
+
+  /** Remove os listeners de window (mousemove/mouseup + touch*) que de outra
+   *  forma vazam quando o componente é destruído. */
+  dispose() {
+    if (this._winMove) window.removeEventListener('mousemove', this._winMove);
+    if (this._winUp) window.removeEventListener('mouseup', this._winUp);
+    if (this._winTouchStart) window.removeEventListener('touchstart', this._winTouchStart);
+    if (this._winTouchMove) window.removeEventListener('touchmove', this._winTouchMove);
+    if (this._winTouchEnd) {
+      window.removeEventListener('touchend', this._winTouchEnd);
+      window.removeEventListener('touchcancel', this._winTouchEnd);
+    }
+    this._winMove = this._winUp = null;
+    this._winTouchStart = this._winTouchMove = this._winTouchEnd = null;
   }
 
   _onButton(el) {

@@ -67,15 +67,18 @@ export class ImpactEffectSystem {
     // Animação super rápida (pop e some)
     let life = 1.0;
     const timer = setInterval(() => {
+      // Se as sparks já foram descartadas (cena trocada/limpa), encerra o timer.
+      if (sparks.every(s => s.isDisposed?.())) { clearInterval(timer); return; }
       life -= 0.15;
       sparks.forEach(s => {
+        if (s.isDisposed?.()) return;
         s.scaling.scaleInPlace(1.1); // Expande rápido
         if (s.material) s.material.alpha = Math.max(0, life);
       });
-      
+
       if (life <= 0) {
         clearInterval(timer);
-        sparks.forEach(s => s.dispose());
+        sparks.forEach(s => { if (!s.isDisposed?.()) s.dispose(); });
       }
     }, 16);
   }

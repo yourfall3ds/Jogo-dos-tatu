@@ -88,10 +88,13 @@ export class EnemyManager {
   }
 
   async spawnWave(ids, count = 1) {
-    const out = [];
+    const pending = [];
     for (const id of ids)
       for (let i = 0; i < count; i++)
-        out.push(await this.spawn(id, this._randomSpawnNearPlayer(8 + Math.random() * 12)));
+        pending.push(this.spawn(id, this._randomSpawnNearPlayer(8 + Math.random() * 12)));
+    // Aguarda TODOS os spawns resolverem antes de filtrar — assim os null de
+    // spawns que falharam são descartados de fato (e os spawns correm em paralelo).
+    const out = await Promise.all(pending);
     return out.filter(Boolean);
   }
 

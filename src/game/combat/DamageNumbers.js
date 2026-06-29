@@ -72,10 +72,14 @@ export class DamageNumbers {
       plane.scaling.setAll(pop);
       mat.alpha = 1 - Math.max(0, (k - 0.45) / 0.55);     // fade na 2ª metade
       if (t >= dur) {
-        this.scene.onBeforeRenderObservable.remove(obs);
-        plane.dispose();
-        mat.dispose();
-        tex.dispose();
+        try {
+          plane.dispose();
+          mat.dispose();
+          tex.dispose();
+        } finally {
+          // Observer SEMPRE removido, mesmo se algum dispose lançar (sem leak/loop infinito)
+          this.scene.onBeforeRenderObservable.remove(obs);
+        }
       }
     });
   }

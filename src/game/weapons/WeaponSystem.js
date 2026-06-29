@@ -160,10 +160,12 @@ export class WeaponSystem {
     this.currentWeaponIndex = index;
     const w = this.getCurrentWeapon();
     
-    this.ammo = w.ammo;
-    this.maxAmmo = w.maxAmmo;
+    // Guard: switchWeapon pode rodar antes do _init() async terminar. Usa o
+    // valor da arma com fallback seguro pra ammo/maxAmmo nunca ficarem undefined.
+    this.ammo = w.ammo ?? w.maxAmmo ?? 0;
+    this.maxAmmo = w.maxAmmo ?? 0;
     this.FIRE_RATE = w.fireRate;
-    
+
     if (this._weaponMeshes[w.id]) {
       this._glbRoot = this._weaponMeshes[w.id];
       this._glbRoot.setEnabled(true);
@@ -327,7 +329,8 @@ export class WeaponSystem {
       this._decalPool.push(decal);
       // Remove o mais antigo quando ultrapassa o limite
       if (this._decalPool.length > this._decalMax) {
-        this._decalPool.shift().dispose();
+        const old = this._decalPool.shift();
+        if (old) old.dispose();
       }
     } catch (_) {
       // Algumas geometrias procedurais não suportam decals — ignora silenciosamente

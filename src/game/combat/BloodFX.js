@@ -261,7 +261,6 @@ export class BloodFX {
     ps.maxSize = preset.sizeMax * 0.85;
     ps.minLifeTime = 0.28;   // vida curta
     ps.maxLifeTime = 0.50;   // caem rápido e somem
-    ps.emitRate = count * 10;
     ps.gravity = new BABYLON.Vector3(0, -26, 0);   // gravidade FORTE = caem rápido
     // Espalhamento mais largo na direção do golpe = jato/leque de respingos
     ps.direction1 = new BABYLON.Vector3(dir.x * preset.speed - 3.5, preset.speed * 0.5, dir.z * preset.speed - 3.5);

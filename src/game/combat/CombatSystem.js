@@ -320,7 +320,8 @@ export class CombatSystem {
     // ── SAFETY: garante que o ataque termina ────────────────────────
     // O onComplete do AnimationGroup às vezes não dispara → o personagem
     // ficava TRAVADO em "attacking" pra sempre. Este timeout força o fim.
-    const animDur = (this.animController.getDuration?.(attackAnim) ?? 0.7) / speed;
+    const safeSpeed = Math.max(speed, 0.001);   // evita /0 → animDur = Infinity (safety nunca dispara)
+    const animDur = (this.animController.getDuration?.(attackAnim) ?? 0.7) / safeSpeed;
     clearTimeout(this._finishSafety);
     this._finishSafety = setTimeout(() => {
       if (token === this._comboToken && this.stateMachine.isAttacking()) {

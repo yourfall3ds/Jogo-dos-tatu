@@ -94,9 +94,15 @@ export class LocalAura {
     this._active = on;
     this._pickEmitter();
     if (on) {
-      this.ps.start(); this.sparks.start(); this.shell.setEnabled(true);
+      // _pickEmitter pode não anexar emitter (player sem mesh ainda); só inicia
+      // os sistemas que realmente existem pra não estourar.
+      if (this.ps) this.ps.start();
+      if (this.sparks) this.sparks.start();
+      if (this.shell) this.shell.setEnabled(true);
     } else {
-      this.ps.stop(); this.sparks.stop(); this.shell.setEnabled(false);
+      if (this.ps) this.ps.stop();
+      if (this.sparks) this.sparks.stop();
+      if (this.shell) this.shell.setEnabled(false);
     }
   }
 

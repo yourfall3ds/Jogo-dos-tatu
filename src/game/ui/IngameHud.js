@@ -17,7 +17,13 @@ export class ChatHud {
     this._wasT = false;
     this._build();
     this.cs.on('chat', (m) => this._append(m));
-    document.addEventListener('keydown', (e) => this._onKey(e));
+    this._onKeyDown = (e) => this._onKey(e);
+    document.addEventListener('keydown', this._onKeyDown);
+  }
+
+  dispose() {
+    if (this._onKeyDown) document.removeEventListener('keydown', this._onKeyDown);
+    this._onKeyDown = null;
   }
 
   _build() {
@@ -126,8 +132,17 @@ export class Scoreboard {
     this.auth = auth;
     this._visible = false;
     this._build();
-    document.addEventListener('keydown', (e) => this._onKey(e, true));
-    document.addEventListener('keyup', (e) => this._onKey(e, false));
+    this._onKeyDown = (e) => this._onKey(e, true);
+    this._onKeyUp = (e) => this._onKey(e, false);
+    document.addEventListener('keydown', this._onKeyDown);
+    document.addEventListener('keyup', this._onKeyUp);
+  }
+
+  dispose() {
+    if (this._onKeyDown) document.removeEventListener('keydown', this._onKeyDown);
+    if (this._onKeyUp) document.removeEventListener('keyup', this._onKeyUp);
+    this._onKeyDown = this._onKeyUp = null;
+    if (this._refreshT) { clearInterval(this._refreshT); this._refreshT = null; }
   }
 
   _build() {

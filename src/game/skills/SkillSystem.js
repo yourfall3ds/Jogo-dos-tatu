@@ -128,14 +128,19 @@ export class SkillSystem {
       }
       case 'slam': {
         p.velY = 12;   // salta
+        let landed = false;
         const checkLand = setInterval(() => {
+          if (landed) return;
           if (p.isGrounded && p.velY <= 0) {
+            landed = true;
             clearInterval(checkLand);
+            clearTimeout(failSafe);   // cancela o limpa-tudo: já caiu
             this._aoe(p.mesh.position, def.radius, dmg, 'slam');
             this._shockRing(p.mesh.position, def.radius);
           }
         }, 50);
-        setTimeout(() => clearInterval(checkLand), 3000);
+        // Failsafe: se nunca cair (preso no ar), encerra o interval em 3s
+        const failSafe = setTimeout(() => { landed = true; clearInterval(checkLand); }, 3000);
         break;
       }
       case 'parry': {

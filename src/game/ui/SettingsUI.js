@@ -7,6 +7,8 @@
 
 import { BLOOD_LEVELS } from '../combat/BloodFX.js';
 
+function _esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
 const BLOOD_INFO = {
   off:            { label: '✕ Desligado',     desc: 'Sem sangue. Família.', color: '#777' },
   normal:         { label: '💧 Normal',        desc: 'Respingos discretos, poças pequenas.', color: '#cc4444' },
@@ -97,7 +99,7 @@ export class SettingsUI {
     c.innerHTML = `
       <div style="font-size:11px;color:#aaa;margin-bottom:8px;">
         Status: <span style="color:${started ? '#7efa9a' : '#888'};font-weight:600;">${started ? (muted ? 'mudo' : 'tocando') : 'aguardando JOGAR'}</span>
-        ${started ? `<br><span style="color:#666;font-size:10px;">♪ ${trackName}</span>` : ''}
+        ${started ? `<br><span style="color:#666;font-size:10px;">♪ ${_esc(trackName)}</span>` : ''}
       </div>
       <label style="display:block;color:#ccc;font-size:10px;margin-bottom:4px;">VOLUME <span id="music-vol-val">${vol}%</span></label>
       <input id="music-vol" type="range" min="0" max="100" value="${vol}"

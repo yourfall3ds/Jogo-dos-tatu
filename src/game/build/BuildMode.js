@@ -75,31 +75,37 @@ export class BuildMode {
       const tag = document.activeElement?.tagName;
       return tag === 'INPUT' || tag === 'TEXTAREA';
     };
-    window.addEventListener('keydown', e => {
+    // Refs guardadas pra remover em dispose() (sem isto, anônimos acumulam no
+    // window a cada reload de cena = listeners empilhados + leak).
+    this._onKeyDown = e => {
       if (_isTyping()) return;
       this._keys[e.code] = true;
-    });
-    window.addEventListener('keyup', e => {
+    };
+    this._onKeyUp = e => {
       if (_isTyping()) return;
       this._keys[e.code] = false;
-    });
-    // Limpa teclas presas quando usuário foca num campo de texto
-    document.addEventListener('focusin', e => {
+    };
+    this._onFocusIn = e => {
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') this._keys = {};
-    });
+    };
+    window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener('keyup', this._onKeyUp);
+    // Limpa teclas presas quando usuário foca num campo de texto
+    document.addEventListener('focusin', this._onFocusIn);
 
     // ── Roda do mouse → GIRA o ghost (listener PRÓPRIO) ──────────────
     //  Independente do gameActive/pointer-lock do InputManager (o listener
     //  de wheel dele só acumula com pointer-lock ativo → quebrava quando o
     //  foco saía). Aqui acumulamos sempre que estiver em placing.
     this._wheelAccum = 0;
-    window.addEventListener('wheel', e => {
+    this._onWheel = e => {
       if (this._state === 'placing') {
         e.preventDefault?.();
         this._wheelAccum += Math.sign(e.deltaY);
       }
-    }, { passive: false });
+    };
+    window.addEventListener('wheel', this._onWheel, { passive: false });
 
     // ── Init ───────────────────────────────────────────────────────
     this._catalog = [];
@@ -112,6 +118,22 @@ export class BuildMode {
     this._sharedWorld = false;
     this._worldEntries = new Map();   // worldId(uuid) → entry colocado
     this._initSharedWorld();
+  }
+
+  /**
+   * Cleanup: remove os listeners de window/document (senão acumulam a cada
+   * reload de cena) e desinscreve o Realtime do mundo compartilhado. Idempotente.
+   */
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    try { window.removeEventListener('keydown', this._onKeyDown); } catch (_) {}
+    try { window.removeEventListener('keyup', this._onKeyUp); } catch (_) {}
+    try { document.removeEventListener('focusin', this._onFocusIn); } catch (_) {}
+    try { window.removeEventListener('wheel', this._onWheel, { passive: false }); } catch (_) {}
+    try { this._unsubWorld?.(); } catch (_) {}
+    this._unsubWorld = null;
+    try { this._disposeGhost(); } catch (_) {}
   }
 
   /**
@@ -281,6 +303,15 @@ export class BuildMode {
   /** Persiste um objeto recém-colocado no mundo compartilhado (Supabase). */
   async _persistPlaced(entry) {
     if (!this._sharedWorld || !entry?.record) return;
+    // B23: NÃO compartilha asset com url blob: — é local-only (upload pro Storage
+    // ainda não concluiu/falhou). Sem isto, os outros recebem o record mas a url
+    // blob: não resolve no navegador deles → objeto "sumido". Fica só local até
+    // existir uma url uploadada (https/storage público). Peças/frames não usam url.
+    const recUrl = entry.record.url;
+    if (typeof recUrl === 'string' && recUrl.startsWith('blob:')) {
+      console.warn('[BuildMode] asset blob: não compartilhado (sem upload concluído):', entry.record.id);
+      return;
+    }
     try { window._dbgLastOp = 'colocar peça'; } catch (_) {}
     const t0 = performance.now();
     try {

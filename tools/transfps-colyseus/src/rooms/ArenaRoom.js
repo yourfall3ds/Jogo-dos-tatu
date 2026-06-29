@@ -462,7 +462,15 @@ export class ArenaRoom extends Room {
       const existing = this.state.players.get(playerId);
       console.log(`[ArenaRoom] 🔄 reconectou ${existing.nickname} (${playerId.slice(0,8)})`);
       client.userData = { playerId };
-      // Se estava dead, mantém — cliente decide se respawnar
+      // RECONEXÃO: corrige hp/dead stale. No OPEN_WORLD mantém o estado atual
+      // (sala 24/7 — o cliente decide respawnar). Nos demais modos, se voltou
+      // morto OU com hp inválido (<=0/negativo), revive limpo pra não reconectar
+      // num estado de morte travado nem com hp negativo.
+      if (!this._isOpenWorld && (existing.dead || !(existing.hp > 0))) {
+        existing.dead = false;
+        existing.hp = existing.maxHp;
+        existing.respawn_at = 0;
+      }
       // Limpa flag de "saindo" (caso ainda esteja no grace)
       this._pendingLeaves = this._pendingLeaves || new Map();
       const pending = this._pendingLeaves.get(playerId);
@@ -496,6 +504,7 @@ export class ArenaRoom extends Room {
     p.anim_state = 'idle';
     p.weapon = 'unarmed';
     p.held_item = 'unarmed';
+    p.equip_skin = '';
     p.dead = false;
     p.xp = 0;
     p.level = 1;
@@ -928,6 +937,7 @@ export class ArenaRoom extends Room {
       this._spawnDropsFromMob(mob, attacker.id);
       setTimeout(() => {
         if (this.state.mobs.has(mob.id)) this.state.mobs.delete(mob.id);
+        this._cooldowns.delete(mob.id); // anti-leak: cooldown de IA do mob despawnado
       }, 2000);
     }
   }
@@ -1090,7 +1100,7 @@ export class ArenaRoom extends Room {
           this._awardKill(caster, mob);
           this.broadcast('mob_killed', { mob_id: mob.id, by: caster.id });
           this._spawnDropsFromMob(mob);
-          setTimeout(() => { if (this.state.mobs.has(mob.id)) this.state.mobs.delete(mob.id); }, 2000);
+          setTimeout(() => { if (this.state.mobs.has(mob.id)) this.state.mobs.delete(mob.id); this._cooldowns.delete(mob.id); }, 2000);
         }
       });
       // Players com PvP ON (exclui caster)
@@ -1286,6 +1296,7 @@ export class ArenaRoom extends Room {
       p.inv.equip_secondary = itemId;
     } else if (def.equipSlot === 'skin') {
       p.inv.equip_skin = itemId;
+      p.equip_skin = itemId; // espelha no PlayerState pros outros verem ao vivo (RemotePlayer)
     }
   }
 
@@ -1426,6 +1437,9 @@ export class ArenaRoom extends Room {
         break;
     }
 
+    // Guard atômico: se o drop já foi removido (pickup concorrente / expirou
+    // neste mesmo tick), não credita de novo nem re-deleta.
+    if (!this.state.drops.has(drop.id)) return;
     this.state.drops.delete(drop.id);
     this._trackQuestProgress(pid, 'collect_drop', 1);
   }
@@ -1523,6 +1537,10 @@ export class ArenaRoom extends Room {
       if (d < bestDist) { bestDist = d; best = p; }
     });
     if (!best) { boss.state = 'idle'; return; }
+    // Re-valida o alvo escolhido (defensivo): se sumiu/morreu, não persegue stale.
+    const tgt = this.state.players.get(best.id);
+    if (!tgt || tgt.dead) { boss.target_id = ''; boss.state = 'idle'; return; }
+    best = tgt;
     boss.target_id = best.id;
     const BOSS_SPEED = 4.5;
     const BOSS_RANGE = 4.0;
@@ -1603,7 +1621,7 @@ export class ArenaRoom extends Room {
   _enterBossWave() {
     this.state.match_state = 'BOSS_WAVE';
     // Limpa mobs comuns
-    this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
+    this.state.mobs.forEach((_, id) => { this.state.mobs.delete(id); this._cooldowns.delete(id); });
     // Spawn boss
     const BOSSES = [
       { kind: 'cb_stormKingBoss',    name: 'Storm King',    hp: 1500 },
@@ -1734,6 +1752,7 @@ export class ArenaRoom extends Room {
     Z.cz = 0;
     Z.radius_current = 500;
     Z.radius_target = 500;
+    Z._startR = 500; // raio inicial do shrink (sem isto, 1ª contração lia undefined → NaN)
     Z.shrink_starts_at = Date.now() + 90_000;  // 1m30 pra começar a fechar
     Z.shrink_ends_at = Date.now() + 90_000 + 60_000; // shrink em 60s
     Z.damage_per_sec = 0;
@@ -1912,7 +1931,7 @@ export class ArenaRoom extends Room {
       });
     }
     // Limpa mundo
-    this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
+    this.state.mobs.forEach((_, id) => { this.state.mobs.delete(id); this._cooldowns.delete(id); });
     this.state.drops.forEach((_, id) => this.state.drops.delete(id));
     this.state.props.forEach((_, id) => this.state.props.delete(id));
     this.state.fx.forEach((_, id) => this.state.fx.delete(id));
@@ -1944,7 +1963,7 @@ export class ArenaRoom extends Room {
   _onClearMobs(client) {
     const pid = client.userData?.playerId;
     if (pid !== this.state.host_id) return;
-    this.state.mobs.forEach((_, id) => this.state.mobs.delete(id));
+    this.state.mobs.forEach((_, id) => { this.state.mobs.delete(id); this._cooldowns.delete(id); });
   }
 
   _onRespawn(client) {

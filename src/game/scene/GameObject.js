@@ -30,7 +30,7 @@ export class GameObject {
 
     this.GRAVITY  = options.gravity ?? 26;
     this.BOUNCE   = options.bounce ?? 0.22;    // Coeficiente de ressalto
-    this.ANG_DAMP = 0.86;                      // Amortecimento angular
+    this.ANG_DAMP = 1.16e-4;                    // Amortecimento angular (fração restante por segundo; ≈0.86 por frame a 60fps)
     this.MAX_FALL = 32;
     this.MAX_SPD  = 18;
     this.MAX_ANG  = 11;
@@ -302,7 +302,7 @@ export class GameObject {
     this.mesh.rotation.x += this.angVel.x * dt;
     this.mesh.rotation.y += this.angVel.y * dt;
     this.mesh.rotation.z += this.angVel.z * dt;
-    this.angVel.scaleInPlace(Math.pow(this.ANG_DAMP, dt * 60));
+    this.angVel.scaleInPlace(Math.pow(this.ANG_DAMP, dt));
 
     // Sincroniza GLB (o visual segue o corpo físico)
     if (this._glb) {

@@ -15,6 +15,8 @@
 import { AssetGroups } from '../data/AssetGroups.js';
 import { LocalDB } from '../data/LocalDB.js';
 
+function _esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
 export class AssetGroupsUI {
   constructor(buildMode) {
     this.buildMode    = buildMode;
@@ -368,8 +370,8 @@ export class AssetGroupsUI {
     } else {
       const g  = this._groups.find(g => g.id === this._activeGroup);
       filtered = this._assets.filter(a => a.groupId === this._activeGroup);
-      title.innerHTML  = g ? `<span style="color:${g.color}">${g.icon} ${g.name}</span>` : '';
-      if (g?.props?.desc) title.innerHTML += ` <span style="color:#446;font-size:10px;margin-left:6px">${g.props.desc}</span>`;
+      title.innerHTML  = g ? `<span style="color:${g.color}">${_esc(g.icon)} ${_esc(g.name)}</span>` : '';
+      if (g?.props?.desc) title.insertAdjacentHTML('beforeend', ` <span style="color:#446;font-size:10px;margin-left:6px">${_esc(g.props.desc)}</span>`);
     }
 
     count.textContent = `${filtered.length} asset${filtered.length !== 1 ? 's' : ''}`;

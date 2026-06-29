@@ -518,7 +518,7 @@ export class RpgHUD {
         : `${def.icon || '📦'} `;
       name.innerHTML = `${head}<b style="color:#cde">${def.name}</b> ${this.inventory.count(slot.id) > 1 ? `×${this.inventory.count(slot.id)}` : ''}${eq}`;
       name.style.marginBottom = '6px';
-      if (def.desc) name.innerHTML += `<div style="color:#678;font-size:10px;margin-top:2px">${def.desc}</div>`;
+      if (def.desc) name.insertAdjacentHTML('beforeend', `<div style="color:#678;font-size:10px;margin-top:2px">${def.desc}</div>`);
       detail.appendChild(name);
 
       const action = def.type === 'consumable' ? '✓ Usar'

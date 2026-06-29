@@ -200,6 +200,7 @@ export class TerrainSystem {
       }
     }
 
+    if (!this.mesh) return;
     if (touchedGeo) {
       this.mesh.updateVerticesData(VB().PositionKind, pos, false, false);
       this._recomputeNormals();

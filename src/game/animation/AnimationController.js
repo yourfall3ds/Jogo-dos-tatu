@@ -10,6 +10,22 @@ export class AnimationController {
     this._prev    = null;
     this._fadeT   = 0;
     this._fadeDur = 0;
+
+    // Observer de onComplete pendente (e o observable em que vive). Se a
+    // animação for parada/reiniciada antes de terminar, addOnce nunca dispara
+    // e o observer ficaria pendurado — acumulando a cada replay. Guardamos a
+    // ref pra removê-lo manualmente.
+    this._completeObs    = null;
+    this._completeObable = null;
+  }
+
+  /** Remove um onComplete pendente que ainda não disparou (evita acúmulo). */
+  _clearCompleteObs() {
+    if (this._completeObs && this._completeObable) {
+      try { this._completeObable.remove(this._completeObs); } catch (_) {}
+    }
+    this._completeObs = null;
+    this._completeObable = null;
   }
 
   /**
@@ -62,9 +78,15 @@ export class AnimationController {
     // Callback de fim (usado pelos ataques para encadear combos).
     // onAnimationGroupEndObservable = fim do GRUPO inteiro (mais confiável
     // que onAnimationEndObservable, que dispara por animação-osso).
+    // Remove qualquer onComplete pendente de um play anterior (replay).
+    this._clearCompleteObs();
     if (!loop && options.onComplete) {
-      const obs = anim.onAnimationGroupEndObservable || anim.onAnimationEndObservable;
-      obs.addOnce(() => options.onComplete());
+      const obable = anim.onAnimationGroupEndObservable || anim.onAnimationEndObservable;
+      this._completeObable = obable;
+      this._completeObs = obable.addOnce(() => {
+        this._completeObs = null; this._completeObable = null;
+        options.onComplete();
+      });
     }
   }
 
@@ -118,6 +140,7 @@ export class AnimationController {
   }
 
   stopAll() {
+    this._clearCompleteObs();
     if (this._prev) { this._prev.stop(); this._prev = null; }
     if (this.currentAnim) { this.currentAnim.stop(); this.currentAnim = null; }
     this.currentName = "";
